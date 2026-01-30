@@ -1,5 +1,5 @@
 ---
-name: Orchestrator
+name: orchestrator
 description: Parent agent that clarifies requirements, then loops Plan → Implement → Review until done.
 argument-hint: "Describe the goal, constraints, and any pointers (files/branch/PR). I will ask clarifying questions and iterate."
 target: vscode
