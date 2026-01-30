@@ -1,5 +1,5 @@
 ---
-name: Review
+name: review
 description: Review the implementation and report findings back to the parent agent.
 argument-hint: "Tell me what was implemented (goal, scope, constraints) and where to look (PR/branch/files)."
 tools:
