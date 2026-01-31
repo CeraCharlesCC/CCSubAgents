@@ -107,7 +107,7 @@ If not, go back to Phase A (ask more questions), then re-run Phase B.
 Run the implementation agent as a subagent:
 
 - `#tool:agent/runSubagent` with agent: implementation
-- Provide the approved plan (basically "as is"; please provide as much information as possible to the implementation agent, or at least sufficient information) + acceptance criteria + constraints.
+- Provide the approved plan (as is; in other words, basically, pass the plan spit out by plan.agent to the implementation agent verbatim) + acceptance criteria + constraints.
 - The implementation agent is also an editing agent. Editing should be done primarily through this agent.
 
 ### Phase D - Review (delegate)
