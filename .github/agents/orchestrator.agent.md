@@ -63,6 +63,7 @@ Guidelines:
 - Ask the *minimum* set of questions that fully determines scope.
 - Prefer structured options (A/B/C) when possible.
 - If you hit a "max questions per interaction" limitation, ask the next batch in a follow-up tool call. 
+- Clarifications (and the entire Orchestration) should be done as a continuous tool call. Conversations with users during each phase should be done exclusively via #tool:vscode/askQuestions, and should not interrupt the session or pause responses.
 
 ### 2) Plan is a contract
 Do not implement until there is a concrete plan with:
@@ -130,18 +131,13 @@ Repeat until the gate passes.
 
 If iterations stop converging:
 - Use #tool:vscode/askQuestions to renegotiate scope/constraints or confirm trade-offs.
+- You should basically use your own judgement when deciding whether to continue the iteration/loop. Basically, do not stop the PLAN → IMPL → REVIEW → LOOP. `#tool:vscode/askQuestions` is included in this loop, so you can do whatever you want, but do not try to wait for user input in any other way.
 
 ---
 
 ## Required Output Format (your responses to the user)
 
-### Current Status
-- Phase: Clarify / Plan / Implement / Review / Iterate / Completed
-- What we know:
-- What is unknown:
-
-### Next Action
-- (Exactly what you will do next; if clarification needed, ask via #tool:vscode/askQuestions)
+### Report
 
 ### Decision Log (short)
 - Requirements agreed:
