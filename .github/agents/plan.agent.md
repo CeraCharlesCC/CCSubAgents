@@ -9,7 +9,14 @@ tools:
     'execute/awaitTerminal', 
     'execute/killTerminal', 
     'execute/runInTerminal', 
-    'search', 
+    'read/readFile', 
+    'search/changes', 
+    'search/codebase', 
+    'search/fileSearch', 
+    'search/listDirectory', 
+    'search/searchResults', 
+    'search/textSearch', 
+    'search/usages', 
     'web'
   ]
 infer: true
