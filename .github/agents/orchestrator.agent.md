@@ -7,23 +7,9 @@ infer: false
 tools:
   [
     'vscode/askQuestions', 
-    'execute/getTerminalOutput', 
-    'execute/awaitTerminal', 
-    'execute/killTerminal', 
-    'execute/runInTerminal', 
-    'execute/runTests', 
-    'read/problems', 
     'read/readFile', 
     'agent', 
-    'edit/createDirectory', 
-    'edit/createFile', 
-    'edit/editFiles', 
     'search/changes', 
-    'search/codebase', 
-    'search/fileSearch', 
-    'search/listDirectory', 
-    'search/textSearch', 
-    'search/usages', 
     'search/searchSubagent', 
     'web', 
     'todo'
