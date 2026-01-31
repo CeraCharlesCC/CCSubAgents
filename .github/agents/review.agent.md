@@ -10,7 +10,6 @@ tools:
     'execute/runInTerminal',
     'execute/runTests',
     'read/problems',
-    'read/readFile',
     'search',
     'web/fetch'
   ]

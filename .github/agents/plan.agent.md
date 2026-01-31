@@ -9,7 +9,6 @@ tools:
     'execute/awaitTerminal', 
     'execute/killTerminal', 
     'execute/runInTerminal', 
-    'read/readFile', 
     'search', 
     'web'
   ]

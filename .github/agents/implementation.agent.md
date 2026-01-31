@@ -12,7 +12,6 @@ tools:
     'execute/runTests', 
     'execute/testFailure', 
     'read/problems', 
-    'read/readFile', 
     'edit/createDirectory', 
     'edit/createFile', 
     'edit/editFiles', 
