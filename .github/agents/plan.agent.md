@@ -1,7 +1,7 @@
 ---
 name: plan
 description: Create a concrete implementation plan and report it back to the parent agent.
-argument-hint: "Describe the goal, constraints, and pointers (files/PR/branch) to inspect."
+argument-hint: "Describe the (detailed) goal, constraints, and pointers (files/PR/branch) to inspect."
 tools:
   [
     'vscode/askQuestions', 
