@@ -9,7 +9,6 @@ tools:
     'execute/awaitTerminal', 
     'execute/killTerminal', 
     'execute/runInTerminal', 
-    'edit/createFile',
     'search/changes', 
     'search/codebase', 
     'search/fileSearch', 
