@@ -14,7 +14,6 @@ tools:
     'execute/awaitTerminal', 
     'execute/killTerminal', 
     'search/changes', 
-    'search/searchSubagent', 
     'web', 
     'todo'
   ]
