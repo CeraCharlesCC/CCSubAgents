@@ -102,7 +102,7 @@ Run the implementation agent as a subagent:
 
 - `#tool:agent/runSubagent` with agent: implementation
 - Provide: the approved plan + acceptance criteria + constraints.
-- Require: minimal diffs, tests, and quick verification commands.
+- The implementation agent is also an editing agent. Editing should be done primarily through this agent.
 
 ### Phase D - Review (delegate)
 Run the review agent as a subagent:
@@ -131,7 +131,7 @@ If iterations stop converging:
 ## Required Output Format (your responses to the user)
 
 ### Current Status
-- Phase: Clarify / Plan / Implement / Review / Iterate
+- Phase: Clarify / Plan / Implement / Review / Iterate / Completed
 - What we know:
 - What is unknown:
 
