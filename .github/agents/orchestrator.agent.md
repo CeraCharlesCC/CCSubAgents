@@ -3,7 +3,8 @@ name: orchestrator
 description: Parent agent that clarifies requirements, then loops Plan → Implement → Review until done.
 argument-hint: "Describe the goal, constraints, and any pointers (files/branch/PR). I will ask clarifying questions and iterate."
 target: vscode
-infer: false
+user-invokable: true
+disable-model-invocation: true
 tools:
   [
     'vscode/askQuestions', 
@@ -17,20 +18,6 @@ tools:
     'web', 
     'todo'
   ]
-
-handoffs:
-  - label: Run Planning Subagent
-    agent: plan
-    prompt: "Create a concrete implementation plan. Assume you are read-only."
-    send: false
-  - label: Run Implementation Subagent
-    agent: implementation
-    prompt: "Implement the approved plan. Add tests and run quick checks where possible."
-    send: false
-  - label: Run Review Subagent
-    agent: review
-    prompt: "Review the implementation and report findings back."
-    send: false
 ---
 
 # Role: Orchestrator (Parent Agent)

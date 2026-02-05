@@ -8,12 +8,12 @@ tools:
     'execute/awaitTerminal',
     'execute/killTerminal',
     'execute/runInTerminal',
-    'execute/runTests',
     'read/problems',
     'search',
     'web/fetch'
   ]
-infer: true
+user-invokable: false
+disable-model-invocation: false
 ---
 
 # Role: Review Subagent (Read-only)

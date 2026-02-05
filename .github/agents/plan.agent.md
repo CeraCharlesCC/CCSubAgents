@@ -18,16 +18,8 @@ tools:
     'search/usages', 
     'web'
   ]
-infer: true
-handoffs:
-  - label: Start Implementation
-    agent: implementation
-    prompt: "Implement the approved plan above. Follow constraints. Summarize changes and verification."
-    send: false
-  - label: Request Review
-    agent: review
-    prompt: "Review the implementation changes and report findings."
-    send: false
+user-invokable: false
+disable-model-invocation: false
 ---
 
 # Role: Planning Subagent (Read-only)

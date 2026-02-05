@@ -9,7 +9,6 @@ tools:
     'execute/awaitTerminal', 
     'execute/killTerminal', 
     'execute/runInTerminal', 
-    'execute/runTests', 
     'execute/testFailure', 
     'read/problems', 
     'edit/createDirectory', 
@@ -23,12 +22,8 @@ tools:
     'search/textSearch', 
     'search/usages', 
   ]
-infer: true
-handoffs:
-  - label: Request Review
-    agent: review
-    prompt: "Review my implementation changes. Focus on correctness, security, and tests."
-    send: false
+user-invokable: false
+disable-model-invocation: false
 ---
 
 # Role: Implementation Subagent
