@@ -15,8 +15,6 @@ import (
 	"local-artifact-mcp/internal/domain"
 )
 
-const ProtocolVersion = "2025-11-25"
-
 type Server struct {
 	svc *domain.Service
 
@@ -170,159 +168,15 @@ func (s *Server) handleInitialize(params json.RawMessage) (any, *jsonRPCError) {
 		_ = json.Unmarshal(params, &p)
 	}
 
-	// Version negotiation: reply with our supported version.
-	serverInfo := map[string]any{
-		"name":        "local_artifact_store",
-		"title":       "Local Artifact Store",
-		"version":     "0.1.0",
-		"description": "Completely local MCP server that lets agents save and retrieve named artifacts (text, files, images).",
-	}
-
-	res := map[string]any{
-		"protocolVersion": ProtocolVersion,
-		"capabilities": map[string]any{
-			"tools": map[string]any{
-				"listChanged": false,
-			},
-			"resources": map[string]any{
-				"subscribe":    false,
-				"listChanged":  false,
-			},
-		},
-		"serverInfo": serverInfo,
-		"instructions": "Use artifact.save_text or artifact.save_blob to persist an artifact under a name. Use artifact.get with name or ref to retrieve. For very large blobs, prefer using resources/read via the artifact:// URI.",
-	}
-
 	_ = p // currently unused (capabilities)
 
-	return res, nil
+	return initializeResponse(), nil
 }
 
 // --- Tools ---
 
-type toolDef struct {
-	Name        string         `json:"name"`
-	Title       string         `json:"title,omitempty"`
-	Description string         `json:"description"`
-	InputSchema map[string]any `json:"inputSchema"`
-	OutputSchema map[string]any `json:"outputSchema,omitempty"`
-	Annotations map[string]any `json:"annotations,omitempty"`
-}
-
 func (s *Server) handleToolsList(_ json.RawMessage) (any, *jsonRPCError) {
-	tools := []toolDef{
-		{
-			Name:        "artifact.save_text",
-			Title:       "Save text artifact",
-			Description: "Save UTF-8 text under a name and return a stable ref and artifact:// URIs.",
-			InputSchema: map[string]any{
-				"type":                 "object",
-				"additionalProperties": false,
-				"properties": map[string]any{
-					"name":     map[string]any{"type": "string", "description": "Artifact name/alias (e.g. plan/task-123)."},
-					"text":     map[string]any{"type": "string", "description": "Text content to save."},
-					"mimeType": map[string]any{"type": "string", "description": "Optional MIME type. Defaults to text/plain; charset=utf-8."},
-				},
-				"required": []string{"name", "text"},
-			},
-			OutputSchema: saveOutputSchema(),
-			Annotations: map[string]any{"readOnlyHint": false},
-		},
-		{
-			Name:        "artifact.save_blob",
-			Title:       "Save file/image artifact",
-			Description: "Save a binary blob (e.g., a text file or image) under a name. Data is base64 encoded.",
-			InputSchema: map[string]any{
-				"type":                 "object",
-				"additionalProperties": false,
-				"properties": map[string]any{
-					"name":       map[string]any{"type": "string", "description": "Artifact name/alias."},
-					"dataBase64": map[string]any{"type": "string", "description": "Base64-encoded bytes."},
-					"mimeType":   map[string]any{"type": "string", "description": "MIME type (e.g., image/png, application/pdf, text/markdown)."},
-					"filename":   map[string]any{"type": "string", "description": "Optional original filename."},
-				},
-				"required": []string{"name", "dataBase64", "mimeType"},
-			},
-			OutputSchema: saveOutputSchema(),
-			Annotations: map[string]any{"readOnlyHint": false},
-		},
-		{
-			Name:        "artifact.resolve",
-			Title:       "Resolve name to ref",
-			Description: "Given a name, return the latest ref and URIs without loading the artifact body.",
-			InputSchema: map[string]any{
-				"type":                 "object",
-				"additionalProperties": false,
-				"properties": map[string]any{
-					"name": map[string]any{"type": "string"},
-				},
-				"required": []string{"name"},
-			},
-			OutputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"name": map[string]any{"type": "string"},
-					"ref":  map[string]any{"type": "string"},
-					"uriByName": map[string]any{"type": "string"},
-					"uriByRef":  map[string]any{"type": "string"},
-				},
-				"required": []string{"name", "ref", "uriByName", "uriByRef"},
-			},
-			Annotations: map[string]any{"readOnlyHint": true},
-		},
-		{
-			Name:        "artifact.get",
-			Title:       "Get artifact",
-			Description: "Fetch an artifact by ref or name. For binary, returns embedded resource (base64) unless mode=image.",
-			InputSchema: map[string]any{
-				"type":                 "object",
-				"additionalProperties": false,
-				"properties": map[string]any{
-					"ref":  map[string]any{"type": "string"},
-					"name": map[string]any{"type": "string"},
-					"mode": map[string]any{"type": "string", "enum": []string{"auto", "text", "resource", "image", "meta"}, "description": "auto=text for text/*, else resource"},
-				},
-			},
-			OutputSchema: map[string]any{"type": "object"},
-			Annotations: map[string]any{"readOnlyHint": true},
-		},
-		{
-			Name:        "artifact.list",
-			Title:       "List artifacts",
-			Description: "List latest artifacts by name prefix.",
-			InputSchema: map[string]any{
-				"type":                 "object",
-				"additionalProperties": false,
-				"properties": map[string]any{
-					"prefix": map[string]any{"type": "string", "description": "Optional name prefix filter."},
-					"limit":  map[string]any{"type": "integer", "description": "Max results (default 200)."},
-				},
-			},
-			OutputSchema: map[string]any{"type": "object"},
-			Annotations: map[string]any{"readOnlyHint": true},
-		},
-	}
-
-	return map[string]any{"tools": tools}, nil
-}
-
-func saveOutputSchema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"name":      map[string]any{"type": "string"},
-			"ref":       map[string]any{"type": "string"},
-			"kind":      map[string]any{"type": "string"},
-			"mimeType":  map[string]any{"type": "string"},
-			"filename":  map[string]any{"type": "string"},
-			"sizeBytes": map[string]any{"type": "integer"},
-			"sha256":    map[string]any{"type": "string"},
-			"createdAt": map[string]any{"type": "string"},
-			"uriByName": map[string]any{"type": "string"},
-			"uriByRef":  map[string]any{"type": "string"},
-		},
-		"required": []string{"name", "ref", "kind", "mimeType", "sizeBytes", "sha256", "createdAt", "uriByName", "uriByRef"},
-	}
+	return map[string]any{"tools": toolDefinitions()}, nil
 }
 
 // tools/call params
@@ -350,15 +204,15 @@ func (s *Server) handleToolsCall(ctx context.Context, params json.RawMessage) (a
 
 	// Dispatch
 	switch p.Name {
-	case "artifact.save_text":
+	case toolArtifactSaveText:
 		return s.toolSaveText(ctx, p.Arguments)
-	case "artifact.save_blob":
+	case toolArtifactSaveBlob:
 		return s.toolSaveBlob(ctx, p.Arguments)
-	case "artifact.resolve":
+	case toolArtifactResolve:
 		return s.toolResolve(ctx, p.Arguments)
-	case "artifact.get":
+	case toolArtifactGet:
 		return s.toolGet(ctx, p.Arguments)
-	case "artifact.list":
+	case toolArtifactList:
 		return s.toolList(ctx, p.Arguments)
 	default:
 		return nil, &jsonRPCError{Code: -32602, Message: fmt.Sprintf("Unknown tool: %s", p.Name)}
@@ -508,7 +362,7 @@ func (s *Server) toolGet(ctx context.Context, argsRaw json.RawMessage) (any, *js
 
 	mode := strings.TrimSpace(args.Mode)
 	if mode == "" {
-		mode = "auto"
+		mode = modeAuto
 	}
 
 	nameEsc := url.PathEscape(a.Name)
@@ -520,34 +374,34 @@ func (s *Server) toolGet(ctx context.Context, argsRaw json.RawMessage) (any, *js
 	isText := strings.HasPrefix(lowerMime, "text/") || a.Kind == domain.ArtifactKindText
 	isImage := strings.HasPrefix(lowerMime, "image/") || a.Kind == domain.ArtifactKindImage
 
-	if mode == "meta" {
+	if mode == modeMeta {
 		return toolResult{Content: []any{textContent(string(metaJSON))}, StructuredContent: meta}, nil
 	}
-	if mode == "auto" {
+	if mode == modeAuto {
 		if isText {
-			mode = "text"
+			mode = modeText
 		} else if isImage {
-			mode = "image"
+			mode = modeImage
 		} else {
-			mode = "resource"
+			mode = modeResource
 		}
 	}
 
 	content := make([]any, 0, 3)
 	switch mode {
-	case "text":
+	case modeText:
 		content = append(content, textContent(string(data)))
-	case "image":
+	case modeImage:
 		if !isImage {
 			// fall back to resource
 			content = append(content, embeddedBlob(meta.URIByRef, a.MimeType, data))
 		} else {
 			content = append(content, imageContent(a.MimeType, data))
 		}
-	case "resource":
+	case modeResource:
 		content = append(content, embeddedBlob(meta.URIByRef, a.MimeType, data))
 	default:
-		return toolError("mode must be one of auto|text|resource|image|meta"), nil
+		return toolError("mode must be one of " + modeAuto + "|" + modeText + "|" + modeResource + "|" + modeImage + "|" + modeMeta), nil
 	}
 	content = append(content, textContent(string(metaJSON)))
 	content = append(content, resourceLink(a.Name, meta.URIByName, a.MimeType, a.SizeBytes))
@@ -558,7 +412,9 @@ func (s *Server) toolGet(ctx context.Context, argsRaw json.RawMessage) (any, *js
 func (s *Server) toolList(ctx context.Context, argsRaw json.RawMessage) (any, *jsonRPCError) {
 	var args listArgs
 	if len(argsRaw) > 0 {
-		_ = json.Unmarshal(argsRaw, &args)
+		if err := json.Unmarshal(argsRaw, &args); err != nil {
+			return toolError("Invalid arguments: expected {prefix?, limit?}"), nil
+		}
 	}
 	arts, err := s.svc.List(ctx, args.Prefix, args.Limit)
 	if err != nil {
@@ -709,4 +565,3 @@ func selectorFromURI(raw string) (domain.Selector, error) {
 		return domain.Selector{}, fmt.Errorf("unsupported artifact uri host")
 	}
 }
-
