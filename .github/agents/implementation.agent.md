@@ -22,6 +22,7 @@ tools:
     'search/textSearch', 
     'search/usages', 
   ]
+model: [GPT-5.3-Codex (copilot)]
 user-invokable: false
 disable-model-invocation: false
 ---
@@ -54,7 +55,7 @@ You are an implementation specialist invoked by a parent agent after a plan exis
 4. Run quick verification (if `execute` is available).
 5. Prepare a report for the parent agent.
 
-## Output format (reply ONLY and MUST with this report)
+## Final Output format (reply ONLY and MUST with this report)
 ### Implementation Summary
 - What I changed: …
 - Why: …
