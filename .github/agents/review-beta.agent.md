@@ -11,10 +11,10 @@ tools:
     'read/readFile',
     'read/problems',
     'search',
-    'web/fetch'
+    'web'
   ]
 model: [Claude Opus 4.6 (copilot)]
-user-invokable: false
+user-invocable: false
 disable-model-invocation: false
 ---
 

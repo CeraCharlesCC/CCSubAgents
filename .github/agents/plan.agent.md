@@ -10,17 +10,11 @@ tools:
     'execute/killTerminal', 
     'execute/runInTerminal',
     'read/readFile', 
-    'search/changes', 
-    'search/codebase', 
-    'search/fileSearch', 
-    'search/listDirectory', 
-    'search/searchResults', 
-    'search/textSearch', 
-    'search/usages', 
+    'search',
     'web'
   ]
 model: [GPT-5.3-Codex (copilot)]
-user-invokable: false
+user-invocable: false
 disable-model-invocation: false
 ---
 

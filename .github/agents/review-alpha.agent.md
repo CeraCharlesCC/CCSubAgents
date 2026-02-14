@@ -11,10 +11,10 @@ tools:
     'read/readFile',
     'read/problems',
     'search',
-    'web/fetch'
+    'web'
   ]
 model: [GPT-5.3-Codex (copilot)]
-user-invokable: false
+user-invocable: false
 disable-model-invocation: false
 ---
 
