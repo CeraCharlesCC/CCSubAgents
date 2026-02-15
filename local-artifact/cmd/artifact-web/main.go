@@ -6,8 +6,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"local-artifact-mcp/internal/domain"
-	"local-artifact-mcp/internal/infrastructure/filestore"
 	"local-artifact-mcp/internal/presentation/web"
 )
 
@@ -27,9 +25,7 @@ func main() {
 		addr = "127.0.0.1:19130"
 	}
 
-	repo := filestore.New(root)
-	svc := domain.NewService(repo)
-	srv := web.New(svc)
+	srv := web.New(root)
 
 	fmt.Fprintln(os.Stderr, "artifact web UI listening on http://"+addr)
 	if err := srv.Serve(context.Background(), addr); err != nil {

@@ -13,13 +13,19 @@ Directory layout:
 
 ```
 $ARTIFACT_STORE_DIR/
-  names.json               # name -> latest ref
-  objects/<ref>            # raw bytes
-  meta/<ref>.json          # Artifact metadata (JSON)
+  <subspace-hash>/         # roots-derived subspace (64 lowercase hex)
+    names.json             # name -> latest ref
+    objects/<ref>          # raw bytes
+    meta/<ref>.json        # Artifact metadata (JSON)
+  names.json               # global fallback session store
+  objects/<ref>            # global fallback objects
+  meta/<ref>.json          # global fallback metadata
 ```
 
 Each `save_*` creates a new immutable `ref` and updates the `name` pointer in `names.json`.
 Aliases are now unique: saving with an existing `name` returns a conflict error instead of overwriting.
+
+When MCP client roots are available, the server requests `roots/list`, normalizes/sorts root URIs, hashes them with SHA-256, and stores artifacts under `$ARTIFACT_STORE_DIR/<hash>/`. On `roots/list` errors `-32601` or `-32603`, the server falls back to the global store (`$ARTIFACT_STORE_DIR/`) for that process session only.
 
 ## Exposed MCP tools
 
@@ -46,6 +52,12 @@ ARTIFACT_WEB_ADDR=127.0.0.1:19130 go run ./cmd/artifact-web
 ```
 
 Then open `http://127.0.0.1:19130`.
+
+The web UI includes a subspace selector (detected from hash directories) and the API supports:
+
+- `GET /api/subspaces`
+- `GET /api/artifacts?subspace=<64-hex>[&prefix=...&limit=...]`
+- `DELETE /api/artifacts?subspace=<64-hex>&name=...` (or `ref=...`)
 
 ## Example usage pattern for CCSubAgents
 
