@@ -25,7 +25,7 @@ $ARTIFACT_STORE_DIR/
 Each `save_*` creates a new immutable `ref` and updates the `name` pointer in `names.json`.
 Aliases are now unique: saving with an existing `name` returns a conflict error instead of overwriting.
 
-When MCP client roots are available, the server requests `roots/list`, normalizes/sorts root URIs, hashes them with SHA-256, and stores artifacts under `$ARTIFACT_STORE_DIR/<hash>/`. On `roots/list` errors `-32601` or `-32603`, the server falls back to the global store (`$ARTIFACT_STORE_DIR/`) for that process session only.
+When MCP client roots are available, the server requests `roots/list`, normalizes/sorts root URIs, hashes them with SHA-256, and stores artifacts under `$ARTIFACT_STORE_DIR/<hash>/`. If `roots/list` is unavailable, returns any RPC error (including JSON-RPC errors such as `-32601` or `-32603`), cannot be parsed successfully, or if the client does not advertise the roots capability, the server falls back to the global store (`$ARTIFACT_STORE_DIR/`) for that process session only.
 
 ## Exposed MCP tools
 
@@ -56,8 +56,8 @@ Then open `http://127.0.0.1:19130`.
 The web UI includes a subspace selector (detected from hash directories) and the API supports:
 
 - `GET /api/subspaces`
-- `GET /api/artifacts?subspace=<64-hex>[&prefix=...&limit=...]`
-- `DELETE /api/artifacts?subspace=<64-hex>&name=...` (or `ref=...`)
+- `GET /api/artifacts?subspace=<64-hex|global>[&prefix=...&limit=...]`
+- `DELETE /api/artifacts?subspace=<64-hex|global>&name=...` (or `ref=...`)
 
 ## Example usage pattern for CCSubAgents
 

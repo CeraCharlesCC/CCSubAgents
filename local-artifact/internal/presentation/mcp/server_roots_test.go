@@ -230,6 +230,49 @@ func TestRootsListProtocol_SuccessUsesScopedStore(t *testing.T) {
 	}
 }
 
+func TestRootsListProtocol_DefersRootsListUntilInitializedNotification(t *testing.T) {
+	storeRoot := t.TempDir()
+	h := newProtocolHarness(t, storeRoot)
+
+	h.send(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+		"params": map[string]any{
+			"capabilities": map[string]any{
+				"roots": map[string]any{"listChanged": true},
+			},
+		},
+	})
+	initializeResp := h.recv()
+	if string(initializeResp.ID) != "1" || initializeResp.Error != nil {
+		t.Fatalf("unexpected initialize response: %+v", initializeResp)
+	}
+
+	h.send(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name":      toolArtifactSaveText,
+			"arguments": map[string]any{"name": "tests/pre-init", "text": "ok"},
+		},
+	})
+	preInitResp := h.recv()
+	if preInitResp.Method == "roots/list" {
+		t.Fatalf("unexpected roots/list before initialized notification: %+v", preInitResp)
+	}
+	if string(preInitResp.ID) != "2" || preInitResp.Error != nil {
+		t.Fatalf("unexpected pre-init tool response: %+v", preInitResp)
+	}
+
+	h.send(map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"})
+	rootsReq := h.recv()
+	if rootsReq.Method != "roots/list" {
+		t.Fatalf("expected roots/list request after initialized notification, got: %+v", rootsReq)
+	}
+}
+
 func TestRootsListProtocol_FallbackOnMethodNotFoundAndInternalError(t *testing.T) {
 	cases := []struct {
 		name string

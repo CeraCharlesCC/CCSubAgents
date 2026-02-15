@@ -92,6 +92,9 @@ func TestServiceFromQuerySubspaceSupportsGlobal(t *testing.T) {
 	if _, err := s.serviceFromQuerySubspace(globalSubspaceSelector); err != nil {
 		t.Fatalf("expected global subspace to resolve, got error: %v", err)
 	}
+	if _, err := s.serviceFromQuerySubspace(""); err != nil {
+		t.Fatalf("expected empty subspace selector to resolve to global, got error: %v", err)
+	}
 
 	hash := strings.Repeat("c", 64)
 	if _, err := s.serviceFromQuerySubspace(hash); err == nil || !strings.Contains(err.Error(), "selected subspace not found") {
@@ -112,6 +115,13 @@ func TestAPIArtifactsAndDeleteSupportGlobalSubspace(t *testing.T) {
 
 	if _, err := s.serviceForSubspace(globalSubspaceSelector).SaveText(context.Background(), domain.SaveTextInput{Name: "global/item", Text: "ok"}); err != nil {
 		t.Fatalf("seed global artifact: %v", err)
+	}
+
+	defaultReq := httptest.NewRequest(http.MethodGet, "/api/artifacts", nil)
+	defaultRR := httptest.NewRecorder()
+	s.handleAPIArtifacts(defaultRR, defaultReq)
+	if defaultRR.Code != http.StatusOK {
+		t.Fatalf("default list status=%d body=%s", defaultRR.Code, defaultRR.Body.String())
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/artifacts?subspace=global", nil)
@@ -186,5 +196,22 @@ func TestAPISubspacesIncludesGlobalAndSortedHashes(t *testing.T) {
 	want := []string{globalSubspaceSelector, hashA, hashB}
 	if !reflect.DeepEqual(res.Items, want) {
 		t.Fatalf("subspace items mismatch\nwant=%v\ngot=%v", want, res.Items)
+	}
+}
+
+func TestAPISubspacesReturnsInternalServerErrorOnDiscoverFailure(t *testing.T) {
+	parent := t.TempDir()
+	filePath := filepath.Join(parent, "not-a-dir")
+	if err := os.WriteFile(filePath, []byte("x"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	s := New(filePath)
+	req := httptest.NewRequest(http.MethodGet, "/api/subspaces", nil)
+	rr := httptest.NewRecorder()
+	s.handleAPISubspaces(rr, req)
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
 }

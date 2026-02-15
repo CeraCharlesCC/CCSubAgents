@@ -106,12 +106,14 @@ func (s *Server) handleIncomingLine(ctx context.Context, line []byte, reqCh chan
 		Error  *jsonRPCError   `json:"error,omitempty"`
 	}
 	if err := json.Unmarshal(line, &envelope); err != nil {
+		log.Printf("event=incoming_unmarshal_failed stage=envelope error=%q", err.Error())
 		return
 	}
 
 	if envelope.Method == "" && len(envelope.ID) > 0 && (len(envelope.Result) > 0 || envelope.Error != nil) {
 		var resp jsonRPCResponse
 		if err := json.Unmarshal(line, &resp); err != nil {
+			log.Printf("event=incoming_unmarshal_failed stage=response error=%q", err.Error())
 			return
 		}
 		s.deliverResponse(resp)
@@ -124,6 +126,7 @@ func (s *Server) handleIncomingLine(ctx context.Context, line []byte, reqCh chan
 
 	var msg jsonRPCRequest
 	if err := json.Unmarshal(line, &msg); err != nil {
+		log.Printf("event=incoming_unmarshal_failed stage=request error=%q", err.Error())
 		return
 	}
 
@@ -141,7 +144,7 @@ func (s *Server) handleRequest(ctx context.Context, msg jsonRPCRequest) {
 	case "initialize":
 		res, rpcErr := s.handleInitialize(msg.Params)
 		if !isNotification {
-			_ = s.writeResponse(msg.ID, res, rpcErr)
+			s.writeResponseAndLog(msg.Method, msg.ID, res, rpcErr)
 		}
 	case "notifications/initialized":
 		s.setInitialized(true)
@@ -150,41 +153,41 @@ func (s *Server) handleRequest(ctx context.Context, msg jsonRPCRequest) {
 		s.resolveSessionStore(ctx, true)
 	case "ping":
 		if !isNotification {
-			_ = s.writeResponse(msg.ID, map[string]any{}, nil)
+			s.writeResponseAndLog(msg.Method, msg.ID, map[string]any{}, nil)
 		}
 	case "tools/list":
 		res, rpcErr := s.handleToolsList(msg.Params)
 		if !isNotification {
-			_ = s.writeResponse(msg.ID, res, rpcErr)
+			s.writeResponseAndLog(msg.Method, msg.ID, res, rpcErr)
 		}
 	case "tools/call":
 		res, rpcErr := s.handleToolsCall(ctx, msg.Params)
 		if !isNotification {
-			_ = s.writeResponse(msg.ID, res, rpcErr)
+			s.writeResponseAndLog(msg.Method, msg.ID, res, rpcErr)
 		}
 	case "resources/list":
 		res, rpcErr := s.handleResourcesList(ctx, msg.Params)
 		if !isNotification {
-			_ = s.writeResponse(msg.ID, res, rpcErr)
+			s.writeResponseAndLog(msg.Method, msg.ID, res, rpcErr)
 		}
 	case "resources/read":
 		res, rpcErr := s.handleResourcesRead(ctx, msg.Params)
 		if !isNotification {
-			_ = s.writeResponse(msg.ID, res, rpcErr)
+			s.writeResponseAndLog(msg.Method, msg.ID, res, rpcErr)
 		}
 	case "resources/templates/list":
 		res := map[string]any{"resourceTemplates": []any{}}
 		if !isNotification {
-			_ = s.writeResponse(msg.ID, res, nil)
+			s.writeResponseAndLog(msg.Method, msg.ID, res, nil)
 		}
 	case "prompts/list":
 		res := map[string]any{"prompts": []any{}}
 		if !isNotification {
-			_ = s.writeResponse(msg.ID, res, nil)
+			s.writeResponseAndLog(msg.Method, msg.ID, res, nil)
 		}
 	default:
 		if !isNotification {
-			_ = s.writeResponse(msg.ID, nil, &jsonRPCError{Code: -32601, Message: "Method not found"})
+			s.writeResponseAndLog(msg.Method, msg.ID, nil, &jsonRPCError{Code: -32601, Message: "Method not found"})
 		}
 	}
 }
@@ -221,6 +224,12 @@ func (s *Server) writeResponse(id json.RawMessage, result any, rpcErr *jsonRPCEr
 		resp.Result = b
 	}
 	return s.writeJSON(resp)
+}
+
+func (s *Server) writeResponseAndLog(method string, id json.RawMessage, result any, rpcErr *jsonRPCError) {
+	if err := s.writeResponse(id, result, rpcErr); err != nil {
+		log.Printf("event=write_response_failed method=%q error=%q", method, err.Error())
+	}
 }
 
 func (s *Server) writeJSON(v any) error {
@@ -325,6 +334,10 @@ func (s *Server) handleInitialize(params json.RawMessage) (any, *jsonRPCError) {
 func (s *Server) resolveSessionStore(ctx context.Context, force bool) {
 	s.resolveMu.Lock()
 	defer s.resolveMu.Unlock()
+
+	if !s.isInitialized() {
+		return
+	}
 
 	if !force && s.isSessionResolved() {
 		return

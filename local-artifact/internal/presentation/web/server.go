@@ -474,7 +474,7 @@ func (s *Server) handleAPISubspaces(w http.ResponseWriter, r *http.Request) {
 	}
 	subspaces, err := s.discoverSubspaces()
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": subspaces})
@@ -531,6 +531,9 @@ func (s *Server) handleAPIDelete(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) serviceFromQuerySubspace(rawSubspace string) (*domain.Service, error) {
 	subspace := normalizeSubspaceSelector(rawSubspace)
+	if subspace == "" {
+		subspace = globalSubspaceSelector
+	}
 	if !isValidSubspaceSelector(subspace) {
 		return nil, errors.New("subspace must be 64 lowercase hex or global")
 	}
