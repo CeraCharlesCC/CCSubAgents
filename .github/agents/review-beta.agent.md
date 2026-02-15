@@ -33,6 +33,7 @@ This project uses **artifact-mcp** to pass structured data between agents. The p
 |---|---|
 | `artifact-mcp/get_artifact` | **Read the plan artifact** to understand what was supposed to be built. |
 | `artifact-mcp/resolve_artifact` | Optionally, check the ref/metadata of an artifact without loading the full body. |
+| `artifact-mcp/save_artifact_text` | Save review results back to the parent agent. |
 
 ### How to use the plan artifact in your review
 
@@ -88,12 +89,14 @@ Identify which files and modules were touched and what behavior changed.
 ### 6. Run Checks (If Possible)
 - If you cannot run commands, list the exact commands the parent agent should run.
 
-## Final Output Format
+### Artifact naming convention
 
-When your review is complete, reply with **only** the report below. Use this exact structure.
+- Use the name pattern: **`review-beta/<short-goal-slug>`** (e.g. `review-beta/add-user-auth`, `review-beta/refactor-db-layer`).
+- The slug should be a concise, kebab-case summary of the goal (2–5 words).
 
----
+## Review Format (save as the artifact body)
 
+```md
 ### Review Summary
 - **Verdict:** Approve / Approve with nits / Request changes
 - **Plan artifact reviewed:** `<artifact name>` (ref: `<ref>`)
@@ -125,3 +128,19 @@ Same structure as above.
 
 ### Message to Parent Agent
 A short, direct summary (5–10 lines) that the parent agent can paste into the main conversation thread.
+```
+
+## Reply format (message back to the parent agent)
+
+After saving the review as an artifact, reply to the parent with **only** this:
+
+```
+### Review Artifact
+- **Name:** `review-beta/<slug>`
+- **Ref:** `<ref from save response>`
+
+### Summary
+<5–10 line summary of the review findings>
+```
+
+Do **not** paste the full review into your reply. The parent agent and other subagents will read it from the artifact.
