@@ -6,8 +6,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"local-artifact-mcp/internal/domain"
-	"local-artifact-mcp/internal/infrastructure/filestore"
 	"local-artifact-mcp/internal/presentation/mcp"
 )
 
@@ -22,9 +20,7 @@ func main() {
 		root = filepath.Join(home, ".local", "share", "ccsubagents", "artifacts")
 	}
 
-	repo := filestore.New(root)
-	svc := domain.NewService(repo)
-	srv := mcp.New(svc)
+	srv := mcp.New(root)
 
 	// MCP stdio transport requires newline-delimited JSON-RPC messages on stdout.
 	// Write any diagnostics only to stderr.
