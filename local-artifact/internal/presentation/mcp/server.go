@@ -575,19 +575,25 @@ type readResourceParams struct {
 func (s *Server) handleResourcesRead(ctx context.Context, params json.RawMessage) (any, *jsonRPCError) {
 	var p readResourceParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, &jsonRPCError{Code: -32602, Message: "Invalid params"}
+		return resourceReadErrorResult("", "invalid params: expected {uri}"), nil
 	}
 	uri := strings.TrimSpace(p.URI)
 	if uri == "" {
-		return nil, &jsonRPCError{Code: -32602, Message: "uri is required"}
+		return resourceReadErrorResult("", "invalid params: uri is required"), nil
 	}
 
 	sel, err := selectorFromURI(uri)
 	if err != nil {
+		if isRecoverableReadErr(err) {
+			return resourceReadErrorResult(uri, resourceReadErrorMessage(err)), nil
+		}
 		return nil, rpcErrorFromErr(err)
 	}
 	a, data, err := s.svc.Get(ctx, sel)
 	if err != nil {
+		if isRecoverableReadErr(err) {
+			return resourceReadErrorResult(uri, resourceReadErrorMessage(err)), nil
+		}
 		return nil, rpcErrorFromErr(err)
 	}
 
@@ -608,6 +614,19 @@ func (s *Server) handleResourcesRead(ctx context.Context, params json.RawMessage
 		}}
 	}
 	return map[string]any{"contents": contents}, nil
+}
+
+func resourceReadErrorResult(uri, msg string) map[string]any {
+	if strings.TrimSpace(uri) == "" {
+		uri = "artifact://error"
+	}
+	return map[string]any{
+		"contents": []map[string]any{{
+			"uri":      uri,
+			"mimeType": "text/plain",
+			"text":     "error: " + msg,
+		}},
+	}
 }
 
 func selectorFromURI(raw string) (domain.Selector, error) {
@@ -642,18 +661,28 @@ func selectorFromURI(raw string) (domain.Selector, error) {
 
 func rpcErrorFromErr(err error) *jsonRPCError {
 	switch {
-	case errors.Is(err, domain.ErrNotFound):
-		return &jsonRPCError{Code: -32602, Message: "not found"}
-	case errors.Is(err, domain.ErrInvalidInput),
-		errors.Is(err, domain.ErrNameRequired),
-		errors.Is(err, domain.ErrRefRequired),
-		errors.Is(err, domain.ErrRefOrName),
-		errors.Is(err, domain.ErrRefAndNameMutuallyExclusive),
-		errors.Is(err, domain.ErrInvalidName),
-		errors.Is(err, domain.ErrInvalidRef),
-		errors.Is(err, domain.ErrUnsupportedURI):
-		return &jsonRPCError{Code: -32602, Message: err.Error()}
+	case isRecoverableReadErr(err):
+		return &jsonRPCError{Code: -32602, Message: resourceReadErrorMessage(err)}
 	default:
 		return &jsonRPCError{Code: -32603, Message: err.Error()}
 	}
+}
+
+func isRecoverableReadErr(err error) bool {
+	return errors.Is(err, domain.ErrNotFound) ||
+		errors.Is(err, domain.ErrInvalidInput) ||
+		errors.Is(err, domain.ErrNameRequired) ||
+		errors.Is(err, domain.ErrRefRequired) ||
+		errors.Is(err, domain.ErrRefOrName) ||
+		errors.Is(err, domain.ErrRefAndNameMutuallyExclusive) ||
+		errors.Is(err, domain.ErrInvalidName) ||
+		errors.Is(err, domain.ErrInvalidRef) ||
+		errors.Is(err, domain.ErrUnsupportedURI)
+}
+
+func resourceReadErrorMessage(err error) string {
+	if errors.Is(err, domain.ErrNotFound) {
+		return "not found"
+	}
+	return err.Error()
 }
