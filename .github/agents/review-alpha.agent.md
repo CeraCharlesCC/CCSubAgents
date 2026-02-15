@@ -12,7 +12,9 @@ tools:
     'read/problems',
     'search',
     'web',
-    'artifact-mcp/*'
+    'artifact-mcp/get_artifact',
+    'artifact-mcp/resolve_artifact',
+    'artifact-mcp/get_artifact_list',
   ]
 model: [GPT-5.3-Codex (copilot)]
 user-invocable: false
