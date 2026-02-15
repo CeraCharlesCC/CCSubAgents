@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -25,9 +26,9 @@ type SaveTextInput struct {
 }
 
 func (s *Service) SaveText(ctx context.Context, in SaveTextInput) (Artifact, error) {
-	name := strings.TrimSpace(in.Name)
-	if name == "" {
-		return Artifact{}, ErrNameRequired
+	name, err := normalizeAndValidateName(in.Name)
+	if err != nil {
+		return Artifact{}, err
 	}
 	mime := strings.TrimSpace(in.MimeType)
 	if mime == "" {
@@ -45,9 +46,9 @@ type SaveBlobInput struct {
 }
 
 func (s *Service) SaveBlob(ctx context.Context, in SaveBlobInput) (Artifact, error) {
-	name := strings.TrimSpace(in.Name)
-	if name == "" {
-		return Artifact{}, ErrNameRequired
+	name, err := normalizeAndValidateName(in.Name)
+	if err != nil {
+		return Artifact{}, err
 	}
 	mime := strings.TrimSpace(in.MimeType)
 	if mime == "" {
@@ -66,11 +67,16 @@ func (s *Service) save(ctx context.Context, name string, kind ArtifactKind, mime
 	if data == nil {
 		data = []byte{}
 	}
+
+	if _, err := s.repo.Resolve(ctx, name); err == nil {
+		return Artifact{}, fmt.Errorf("%w: %s", ErrAliasExists, name)
+	} else if !errors.Is(err, ErrNotFound) {
+		return Artifact{}, err
+	}
+
 	ref := newRef()
 	sum := sha256.Sum256(data)
 	shaHex := hex.EncodeToString(sum[:])
-
-	prevRef, _ := s.repo.Resolve(ctx, name) // ignore errors; empty prevRef if not found
 
 	a := Artifact{
 		Ref:       ref,
@@ -80,40 +86,59 @@ func (s *Service) save(ctx context.Context, name string, kind ArtifactKind, mime
 		Filename:  filename,
 		SizeBytes: int64(len(data)),
 		SHA256:    shaHex,
-		CreatedAt: time.Now().UTC(),
-		PrevRef:   prevRef,
+		CreatedAt: nowUTCSecond(),
 	}
 
 	return s.repo.Save(ctx, a, data)
 }
 
 func (s *Service) Resolve(ctx context.Context, name string) (string, error) {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return "", ErrNameRequired
+	norm, err := normalizeAndValidateName(name)
+	if err != nil {
+		return "", err
 	}
-	return s.repo.Resolve(ctx, name)
+	return s.repo.Resolve(ctx, norm)
 }
 
 func (s *Service) Get(ctx context.Context, sel Selector) (Artifact, []byte, error) {
-	if strings.TrimSpace(sel.Ref) == "" && strings.TrimSpace(sel.Name) == "" {
-		return Artifact{}, nil, ErrRefOrName
+	normSel, err := normalizeSelector(sel)
+	if err != nil {
+		return Artifact{}, nil, err
 	}
-	return s.repo.Get(ctx, sel)
+	return s.repo.Get(ctx, normSel)
+}
+
+func (s *Service) Delete(ctx context.Context, sel Selector) (Artifact, error) {
+	normSel, err := normalizeSelector(sel)
+	if err != nil {
+		return Artifact{}, err
+	}
+	return s.repo.Delete(ctx, normSel)
 }
 
 func (s *Service) List(ctx context.Context, prefix string, limit int) ([]Artifact, error) {
+	normPrefix, err := normalizePrefix(prefix)
+	if err != nil {
+		return nil, err
+	}
 	if limit <= 0 {
 		limit = 200
 	}
-	return s.repo.List(ctx, prefix, limit)
+	if limit > 1000 {
+		return nil, fmt.Errorf("%w: limit must be <= 1000", ErrInvalidInput)
+	}
+	return s.repo.List(ctx, normPrefix, limit)
 }
 
 func newRef() string {
 	// Timestamp + 8 bytes of randomness; safe as a filename.
-	// Example: 20260214T083112.123Z-1a2b3c4d5e6f7788
-	ts := time.Now().UTC().Format("20060102T150405.000Z")
+	// Example: 20260214T083112Z-1a2b3c4d5e6f7788
+	ts := nowUTCSecond().Format("20060102T150405Z")
 	rnd := make([]byte, 8)
 	_, _ = rand.Read(rnd)
 	return ts + "-" + hex.EncodeToString(rnd)
+}
+
+func nowUTCSecond() time.Time {
+	return time.Now().UTC().Truncate(time.Second)
 }

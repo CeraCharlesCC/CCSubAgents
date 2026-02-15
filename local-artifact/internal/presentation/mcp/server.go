@@ -187,9 +187,9 @@ type callToolParams struct {
 }
 
 type toolResult struct {
-	Content          []any `json:"content"`
-	StructuredContent any  `json:"structuredContent,omitempty"`
-	IsError          bool  `json:"isError,omitempty"`
+	Content           []any `json:"content"`
+	StructuredContent any   `json:"structuredContent,omitempty"`
+	IsError           bool  `json:"isError,omitempty"`
 }
 
 func (s *Server) handleToolsCall(ctx context.Context, params json.RawMessage) (any, *jsonRPCError) {
@@ -214,6 +214,10 @@ func (s *Server) handleToolsCall(ctx context.Context, params json.RawMessage) (a
 		return s.toolGet(ctx, p.Arguments)
 	case toolArtifactList:
 		return s.toolList(ctx, p.Arguments)
+	case toolArtifactDelete:
+		return s.toolDelete(ctx, p.Arguments)
+	case "deleteArtifact":
+		return s.toolDelete(ctx, p.Arguments)
 	default:
 		return nil, &jsonRPCError{Code: -32602, Message: fmt.Sprintf("Unknown tool: %s", p.Name)}
 	}
@@ -249,6 +253,11 @@ type listArgs struct {
 	Limit  int    `json:"limit,omitempty"`
 }
 
+type deleteArgs struct {
+	Ref  string `json:"ref,omitempty"`
+	Name string `json:"name,omitempty"`
+}
+
 type saveOut struct {
 	Name      string `json:"name"`
 	Ref       string `json:"ref"`
@@ -272,7 +281,7 @@ func toSaveOut(a domain.Artifact, nameEscaped string) saveOut {
 		Filename:  a.Filename,
 		SizeBytes: a.SizeBytes,
 		SHA256:    a.SHA256,
-		CreatedAt: a.CreatedAt.Format(time.RFC3339Nano),
+		CreatedAt: a.CreatedAt.Format(time.RFC3339),
 		URIByName: domain.URIByName(nameEscaped),
 		URIByRef:  a.URIByRef(),
 		PrevRef:   a.PrevRef,
@@ -286,7 +295,7 @@ func (s *Server) toolSaveText(ctx context.Context, argsRaw json.RawMessage) (any
 	}
 	a, err := s.svc.SaveText(ctx, domain.SaveTextInput{Name: args.Name, Text: args.Text, MimeType: args.MimeType})
 	if err != nil {
-		return toolError(err.Error()), nil
+		return toolErrorFromErr(err), nil
 	}
 	nameEsc := url.PathEscape(a.Name)
 	out := toSaveOut(a, nameEsc)
@@ -312,7 +321,7 @@ func (s *Server) toolSaveBlob(ctx context.Context, argsRaw json.RawMessage) (any
 	}
 	a, err := s.svc.SaveBlob(ctx, domain.SaveBlobInput{Name: args.Name, Data: data, MimeType: args.MimeType, Filename: args.Filename})
 	if err != nil {
-		return toolError(err.Error()), nil
+		return toolErrorFromErr(err), nil
 	}
 	nameEsc := url.PathEscape(a.Name)
 	out := toSaveOut(a, nameEsc)
@@ -334,18 +343,18 @@ func (s *Server) toolResolve(ctx context.Context, argsRaw json.RawMessage) (any,
 	}
 	ref, err := s.svc.Resolve(ctx, args.Name)
 	if err != nil {
-		return toolError(err.Error()), nil
+		return toolErrorFromErr(err), nil
 	}
 	nameEsc := url.PathEscape(strings.TrimSpace(args.Name))
 	out := map[string]any{
-		"name":     strings.TrimSpace(args.Name),
-		"ref":      ref,
+		"name":      strings.TrimSpace(args.Name),
+		"ref":       ref,
 		"uriByName": domain.URIByName(nameEsc),
 		"uriByRef":  "artifact://ref/" + ref,
 	}
 	jsonStr, _ := json.Marshal(out)
 	return toolResult{
-		Content: []any{textContent(string(jsonStr))},
+		Content:           []any{textContent(string(jsonStr))},
 		StructuredContent: out,
 	}, nil
 }
@@ -357,7 +366,7 @@ func (s *Server) toolGet(ctx context.Context, argsRaw json.RawMessage) (any, *js
 	}
 	a, data, err := s.svc.Get(ctx, domain.Selector{Ref: args.Ref, Name: args.Name})
 	if err != nil {
-		return toolError(err.Error()), nil
+		return toolErrorFromErr(err), nil
 	}
 
 	mode := strings.TrimSpace(args.Mode)
@@ -418,7 +427,7 @@ func (s *Server) toolList(ctx context.Context, argsRaw json.RawMessage) (any, *j
 	}
 	arts, err := s.svc.List(ctx, args.Prefix, args.Limit)
 	if err != nil {
-		return toolError(err.Error()), nil
+		return toolErrorFromErr(err), nil
 	}
 	items := make([]saveOut, 0, len(arts))
 	for _, a := range arts {
@@ -427,13 +436,69 @@ func (s *Server) toolList(ctx context.Context, argsRaw json.RawMessage) (any, *j
 	out := map[string]any{"items": items}
 	jsonStr, _ := json.Marshal(out)
 	return toolResult{
-		Content: []any{textContent(string(jsonStr))},
+		Content:           []any{textContent(string(jsonStr))},
+		StructuredContent: out,
+	}, nil
+}
+
+func (s *Server) toolDelete(ctx context.Context, argsRaw json.RawMessage) (any, *jsonRPCError) {
+	var args deleteArgs
+	if len(argsRaw) > 0 {
+		if err := json.Unmarshal(argsRaw, &args); err != nil {
+			return toolError("Invalid arguments: expected {ref?, name?}"), nil
+		}
+	}
+
+	a, err := s.svc.Delete(ctx, domain.Selector{Ref: args.Ref, Name: args.Name})
+	if err != nil {
+		return toolErrorFromErr(err), nil
+	}
+
+	out := map[string]any{
+		"deleted":  true,
+		"ref":      a.Ref,
+		"uriByRef": "artifact://ref/" + a.Ref,
+	}
+	if name := strings.TrimSpace(a.Name); name != "" {
+		nameEsc := url.PathEscape(name)
+		out["name"] = name
+		out["uriByName"] = domain.URIByName(nameEsc)
+	}
+	jsonStr, _ := json.Marshal(out)
+	return toolResult{
+		Content: []any{
+			textContent("deleted"),
+			textContent(string(jsonStr)),
+		},
 		StructuredContent: out,
 	}, nil
 }
 
 func toolError(msg string) toolResult {
 	return toolResult{Content: []any{textContent(msg)}, IsError: true}
+}
+
+func toolErrorFromErr(err error) toolResult {
+	if err == nil {
+		return toolError("internal error")
+	}
+	switch {
+	case errors.Is(err, domain.ErrNotFound):
+		return toolError("not found")
+	case errors.Is(err, domain.ErrAliasExists), errors.Is(err, domain.ErrConflict):
+		return toolError("conflict: " + err.Error())
+	case errors.Is(err, domain.ErrInvalidInput),
+		errors.Is(err, domain.ErrNameRequired),
+		errors.Is(err, domain.ErrRefRequired),
+		errors.Is(err, domain.ErrRefOrName),
+		errors.Is(err, domain.ErrRefAndNameMutuallyExclusive),
+		errors.Is(err, domain.ErrInvalidName),
+		errors.Is(err, domain.ErrInvalidRef),
+		errors.Is(err, domain.ErrUnsupportedURI):
+		return toolError("invalid input: " + err.Error())
+	default:
+		return toolError("internal error: " + err.Error())
+	}
 }
 
 func textContent(text string) map[string]any {
@@ -507,14 +572,11 @@ func (s *Server) handleResourcesRead(ctx context.Context, params json.RawMessage
 
 	sel, err := selectorFromURI(uri)
 	if err != nil {
-		return nil, &jsonRPCError{Code: -32602, Message: err.Error()}
+		return nil, rpcErrorFromErr(err)
 	}
 	a, data, err := s.svc.Get(ctx, sel)
 	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			return nil, &jsonRPCError{Code: -32602, Message: "not found"}
-		}
-		return nil, &jsonRPCError{Code: -32603, Message: err.Error()}
+		return nil, rpcErrorFromErr(err)
 	}
 
 	lowerMime := strings.ToLower(a.MimeType)
@@ -539,29 +601,47 @@ func (s *Server) handleResourcesRead(ctx context.Context, params json.RawMessage
 func selectorFromURI(raw string) (domain.Selector, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return domain.Selector{}, fmt.Errorf("invalid uri")
+		return domain.Selector{}, fmt.Errorf("%w: invalid uri", domain.ErrInvalidInput)
 	}
 	if u.Scheme != "artifact" {
-		return domain.Selector{}, fmt.Errorf("unsupported uri scheme")
+		return domain.Selector{}, fmt.Errorf("%w: unsupported uri scheme %q", domain.ErrUnsupportedURI, u.Scheme)
 	}
 	kind := u.Host
 	val := strings.TrimPrefix(u.Path, "/")
 	switch kind {
 	case "ref":
 		if val == "" {
-			return domain.Selector{}, fmt.Errorf("ref uri missing value")
+			return domain.Selector{}, fmt.Errorf("%w: ref uri missing value", domain.ErrInvalidInput)
 		}
 		return domain.Selector{Ref: val}, nil
 	case "name":
 		if val == "" {
-			return domain.Selector{}, fmt.Errorf("name uri missing value")
+			return domain.Selector{}, fmt.Errorf("%w: name uri missing value", domain.ErrInvalidInput)
 		}
 		name, err := url.PathUnescape(val)
 		if err != nil {
-			name = val
+			return domain.Selector{}, fmt.Errorf("%w: invalid name uri encoding", domain.ErrInvalidInput)
 		}
 		return domain.Selector{Name: name}, nil
 	default:
-		return domain.Selector{}, fmt.Errorf("unsupported artifact uri host")
+		return domain.Selector{}, fmt.Errorf("%w: unsupported artifact uri host %q", domain.ErrUnsupportedURI, kind)
+	}
+}
+
+func rpcErrorFromErr(err error) *jsonRPCError {
+	switch {
+	case errors.Is(err, domain.ErrNotFound):
+		return &jsonRPCError{Code: -32602, Message: "not found"}
+	case errors.Is(err, domain.ErrInvalidInput),
+		errors.Is(err, domain.ErrNameRequired),
+		errors.Is(err, domain.ErrRefRequired),
+		errors.Is(err, domain.ErrRefOrName),
+		errors.Is(err, domain.ErrRefAndNameMutuallyExclusive),
+		errors.Is(err, domain.ErrInvalidName),
+		errors.Is(err, domain.ErrInvalidRef),
+		errors.Is(err, domain.ErrUnsupportedURI):
+		return &jsonRPCError{Code: -32602, Message: err.Error()}
+	default:
+		return &jsonRPCError{Code: -32603, Message: err.Error()}
 	}
 }

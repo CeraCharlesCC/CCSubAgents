@@ -15,4 +15,5 @@ type Repository interface {
 	Resolve(ctx context.Context, name string) (ref string, err error)
 	Get(ctx context.Context, sel Selector) (Artifact, []byte, error)
 	List(ctx context.Context, prefix string, limit int) ([]Artifact, error)
+	Delete(ctx context.Context, sel Selector) (Artifact, error)
 }

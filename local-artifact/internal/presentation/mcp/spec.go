@@ -3,11 +3,11 @@ package mcp
 const ProtocolVersion = "2025-11-25"
 
 const (
-	serverName        = "local_artifact_store"
-	serverTitle       = "Local Artifact Store"
-	serverVersion     = "0.1.0"
-	serverDescription = "Completely local MCP server that lets agents save and retrieve named artifacts (text, files, images)."
-	serverInstructions = "Use artifact.save_text or artifact.save_blob to persist an artifact under a name. Use artifact.get with name or ref to retrieve. For very large blobs, prefer using resources/read via the artifact:// URI."
+	serverName         = "local_artifact_store"
+	serverTitle        = "Local Artifact Store"
+	serverVersion      = "0.1.0"
+	serverDescription  = "Completely local MCP server that lets agents save and retrieve named artifacts (text, files, images)."
+	serverInstructions = "Use artifact.save_text or artifact.save_blob to persist an artifact under a unique name. Use artifact.get with name or ref to retrieve, artifact.delete to remove an artifact, and artifact.list to inspect current aliases."
 )
 
 const (
@@ -16,6 +16,7 @@ const (
 	toolArtifactResolve  = "artifact.resolve"
 	toolArtifactGet      = "artifact.get"
 	toolArtifactList     = "artifact.list"
+	toolArtifactDelete   = "artifact.delete"
 )
 
 const (
@@ -65,8 +66,8 @@ func toolDefinitions() []toolDef {
 			Description: "Save UTF-8 text under a name and return a stable ref and artifact:// URIs.",
 			InputSchema: objectSchema(
 				map[string]any{
-					"name": stringProp("Artifact name/alias (e.g. plan/task-123)."),
-					"text": stringProp("Text content to save."),
+					"name":     stringProp("Artifact name/alias (e.g. plan/task-123)."),
+					"text":     stringProp("Text content to save."),
 					"mimeType": stringProp("Optional MIME type. Defaults to text/plain; charset=utf-8."),
 				},
 				"name", "text",
@@ -142,6 +143,19 @@ func toolDefinitions() []toolDef {
 			),
 			Annotations: readOnlyHint(true),
 		},
+		{
+			Name:        toolArtifactDelete,
+			Title:       "Delete artifact",
+			Description: "Delete an artifact by name or ref. If ref is provided, all names pointing to that ref are removed.",
+			InputSchema: objectSchema(
+				map[string]any{
+					"ref":  stringProp("Artifact ref to delete."),
+					"name": stringProp("Artifact alias/name to delete."),
+				},
+			),
+			OutputSchema: deleteOutputSchema(),
+			Annotations:  readOnlyHint(false),
+		},
 	}
 }
 
@@ -195,6 +209,19 @@ func resolveOutputSchema() map[string]any {
 			"uriByRef":  map[string]any{"type": "string"},
 		},
 		"name", "ref", "uriByName", "uriByRef",
+	)
+}
+
+func deleteOutputSchema() map[string]any {
+	return objectSchema(
+		map[string]any{
+			"name":      map[string]any{"type": "string"},
+			"ref":       map[string]any{"type": "string"},
+			"deleted":   map[string]any{"type": "boolean"},
+			"uriByName": map[string]any{"type": "string"},
+			"uriByRef":  map[string]any{"type": "string"},
+		},
+		"ref", "deleted", "uriByRef",
 	)
 }
 
