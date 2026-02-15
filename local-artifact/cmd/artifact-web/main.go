@@ -24,7 +24,7 @@ func main() {
 
 	addr := os.Getenv("ARTIFACT_WEB_ADDR")
 	if addr == "" {
-		addr = "127.0.0.1:5488"
+		addr = "127.0.0.1:19130"
 	}
 
 	repo := filestore.New(root)

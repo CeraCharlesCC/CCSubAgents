@@ -42,10 +42,10 @@ go build ./cmd/artifact-web
 Run a simple local web UI to inspect and delete current artifacts:
 
 ```
-ARTIFACT_WEB_ADDR=127.0.0.1:5488 go run ./cmd/artifact-web
+ARTIFACT_WEB_ADDR=127.0.0.1:19130 go run ./cmd/artifact-web
 ```
 
-Then open `http://127.0.0.1:5488`.
+Then open `http://127.0.0.1:19130`.
 
 ## Example usage pattern for CCSubAgents
 
