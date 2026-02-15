@@ -28,7 +28,9 @@ const globalSubspaceSelector = "global"
 type Server struct {
 	baseStoreRoot string
 
-	mu                sync.Mutex
+	mu sync.Mutex
+	// Intentionally unbounded for this developer/operator tool.
+	// Operators are responsible for controlling subspace churn over process lifetime.
 	serviceBySelector map[string]*domain.Service
 }
 
@@ -361,7 +363,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items := make([]pageItem, 0)
+	var items []pageItem
 	if subspace != "" {
 		svc := s.serviceForSubspace(subspace)
 		arts, listErr := svc.List(r.Context(), prefix, limit)

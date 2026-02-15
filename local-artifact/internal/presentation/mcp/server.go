@@ -331,21 +331,25 @@ func (s *Server) handleInitialize(params json.RawMessage) (any, *jsonRPCError) {
 	return initializeResponse(), nil
 }
 
-func (s *Server) resolveSessionStore(ctx context.Context, force bool) {
+func (s *Server) resolveSessionStore(ctx context.Context, force bool) *domain.Service {
+	if !force && s.isSessionResolved() {
+		return s.currentService()
+	}
+
 	s.resolveMu.Lock()
 	defer s.resolveMu.Unlock()
 
 	if !s.isInitialized() {
-		return
+		return s.currentService()
 	}
 
 	if !force && s.isSessionResolved() {
-		return
+		return s.currentService()
 	}
 
 	if !s.clientSupportsRoots() {
 		s.useGlobalFallbackSession("roots capability unavailable")
-		return
+		return s.currentService()
 	}
 
 	callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -354,26 +358,28 @@ func (s *Server) resolveSessionStore(ctx context.Context, force bool) {
 	resultRaw, rpcErr, err := s.callClient(callCtx, "roots/list", nil)
 	if err != nil {
 		s.useGlobalFallbackSession("roots/list request failed: " + err.Error())
-		return
+		return s.currentService()
 	}
 	if rpcErr != nil {
 		if rpcErr.Code == -32601 || rpcErr.Code == -32603 {
 			s.useGlobalFallbackSession(fmt.Sprintf("roots/list returned code=%d message=%s", rpcErr.Code, rpcErr.Message))
-			return
+			return s.currentService()
 		}
 		s.useGlobalFallbackSession(fmt.Sprintf("roots/list returned error code=%d message=%s", rpcErr.Code, rpcErr.Message))
-		return
+		return s.currentService()
 	}
 
 	normalized, err := normalizeRootURIsFromResult(resultRaw)
 	if err != nil {
 		s.useGlobalFallbackSession("roots/list parse failed: " + err.Error())
-		return
+		return s.currentService()
 	}
 
 	hash := computeSubspaceHash(normalized)
-	s.setSessionService(domain.NewService(filestore.New(filepath.Join(s.baseStoreRoot, hash))), true)
+	svc := domain.NewService(filestore.New(filepath.Join(s.baseStoreRoot, hash)))
+	s.setSessionService(svc, true)
 	log.Printf("event=roots_list_success root_count=%d subspace_hash=%s", len(normalized), hash)
+	return svc
 }
 
 func (s *Server) useGlobalFallbackSession(reason string) {
@@ -483,10 +489,7 @@ func computeSubspaceHash(normalizedSortedRoots []string) string {
 }
 
 func (s *Server) service(ctx context.Context) *domain.Service {
-	s.resolveSessionStore(ctx, false)
-	s.sessionMu.RLock()
-	defer s.sessionMu.RUnlock()
-	return s.svc
+	return s.resolveSessionStore(ctx, false)
 }
 
 func (s *Server) isInitialized() bool {
@@ -512,6 +515,12 @@ func (s *Server) setSessionService(svc *domain.Service, resolved bool) {
 	defer s.sessionMu.Unlock()
 	s.svc = svc
 	s.sessionResolved = resolved
+}
+
+func (s *Server) currentService() *domain.Service {
+	s.sessionMu.RLock()
+	defer s.sessionMu.RUnlock()
+	return s.svc
 }
 
 // --- Tools ---
