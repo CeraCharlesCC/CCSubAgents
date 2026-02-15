@@ -3,112 +3,191 @@ package mcp
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/url"
+	"path"
+	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"local-artifact-mcp/internal/domain"
+	"local-artifact-mcp/internal/infrastructure/filestore"
 )
 
 type Server struct {
-	svc *domain.Service
+	baseStoreRoot string
 
-	initialized bool
+	sessionMu sync.RWMutex
+	svc       *domain.Service
+
+	initialized        bool
+	clientCapabilities map[string]any
+	sessionResolved    bool
+
+	resolveMu sync.Mutex
+
+	enc     *json.Encoder
+	writeMu sync.Mutex
+
+	pendingMu sync.Mutex
+	pending   map[string]chan jsonRPCResponse
+	requestID int64
 }
 
-func New(svc *domain.Service) *Server {
-	return &Server{svc: svc}
+func New(baseStoreRoot string) *Server {
+	globalRepo := filestore.New(baseStoreRoot)
+	return &Server{
+		baseStoreRoot: baseStoreRoot,
+		svc:           domain.NewService(globalRepo),
+		pending:       map[string]chan jsonRPCResponse{},
+	}
 }
 
 func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 	enc := json.NewEncoder(out)
 	enc.SetEscapeHTML(false)
+	s.enc = enc
 
 	r := bufio.NewReader(in)
+	reqCh := make(chan jsonRPCRequest, 16)
+	errCh := make(chan error, 1)
+	go s.readLoop(ctx, r, reqCh, errCh)
+
 	for {
-		line, err := r.ReadBytes('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
-			return err
-		}
-		if len(line) == 0 {
-			if errors.Is(err, io.EOF) {
-				return nil
-			}
-			continue
-		}
-		line = bytesTrimNL(line)
-
-		var msg jsonRPCRequest
-		if e := json.Unmarshal(line, &msg); e != nil {
-			// Malformed JSON-RPC message; can't respond w/o id.
-			continue
-		}
-
-		// Notifications have no id. Requests have id.
-		isNotification := len(msg.ID) == 0
-
-		switch msg.Method {
-		case "initialize":
-			res, rpcErr := s.handleInitialize(msg.Params)
-			if !isNotification {
-				_ = s.writeResponse(enc, msg.ID, res, rpcErr)
-			}
-		case "notifications/initialized":
-			s.initialized = true
-			// no response
-		case "ping":
-			if !isNotification {
-				_ = s.writeResponse(enc, msg.ID, map[string]any{}, nil)
-			}
-		case "tools/list":
-			res, rpcErr := s.handleToolsList(msg.Params)
-			if !isNotification {
-				_ = s.writeResponse(enc, msg.ID, res, rpcErr)
-			}
-		case "tools/call":
-			res, rpcErr := s.handleToolsCall(ctx, msg.Params)
-			if !isNotification {
-				_ = s.writeResponse(enc, msg.ID, res, rpcErr)
-			}
-		case "resources/list":
-			res, rpcErr := s.handleResourcesList(ctx, msg.Params)
-			if !isNotification {
-				_ = s.writeResponse(enc, msg.ID, res, rpcErr)
-			}
-		case "resources/read":
-			res, rpcErr := s.handleResourcesRead(ctx, msg.Params)
-			if !isNotification {
-				_ = s.writeResponse(enc, msg.ID, res, rpcErr)
-			}
-		case "resources/templates/list":
-			res := map[string]any{"resourceTemplates": []any{}}
-			if !isNotification {
-				_ = s.writeResponse(enc, msg.ID, res, nil)
-			}
-		case "prompts/list":
-			res := map[string]any{"prompts": []any{}}
-			if !isNotification {
-				_ = s.writeResponse(enc, msg.ID, res, nil)
-			}
-		default:
-			if !isNotification {
-				_ = s.writeResponse(enc, msg.ID, nil, &jsonRPCError{Code: -32601, Message: "Method not found"})
-			}
-		}
-
-		if errors.Is(err, io.EOF) {
-			return nil
-		}
-
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		default:
+		case err := <-errCh:
+			if err == nil || errors.Is(err, io.EOF) {
+				return nil
+			}
+			return err
+		case msg := <-reqCh:
+			s.handleRequest(ctx, msg)
+		}
+	}
+}
+
+func (s *Server) readLoop(ctx context.Context, r *bufio.Reader, reqCh chan<- jsonRPCRequest, errCh chan<- error) {
+	for {
+		line, err := r.ReadBytes('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			errCh <- err
+			return
+		}
+
+		if len(line) > 0 {
+			line = bytesTrimNL(line)
+			s.handleIncomingLine(ctx, line, reqCh)
+		}
+
+		if errors.Is(err, io.EOF) {
+			errCh <- nil
+			return
+		}
+	}
+}
+
+func (s *Server) handleIncomingLine(ctx context.Context, line []byte, reqCh chan<- jsonRPCRequest) {
+	var envelope struct {
+		ID     json.RawMessage `json:"id,omitempty"`
+		Method string          `json:"method,omitempty"`
+		Result json.RawMessage `json:"result,omitempty"`
+		Error  *jsonRPCError   `json:"error,omitempty"`
+	}
+	if err := json.Unmarshal(line, &envelope); err != nil {
+		log.Printf("event=incoming_unmarshal_failed stage=envelope error=%q", err.Error())
+		return
+	}
+
+	if envelope.Method == "" && len(envelope.ID) > 0 && (len(envelope.Result) > 0 || envelope.Error != nil) {
+		var resp jsonRPCResponse
+		if err := json.Unmarshal(line, &resp); err != nil {
+			log.Printf("event=incoming_unmarshal_failed stage=response error=%q", err.Error())
+			return
+		}
+		s.deliverResponse(resp)
+		return
+	}
+
+	if envelope.Method == "" {
+		return
+	}
+
+	var msg jsonRPCRequest
+	if err := json.Unmarshal(line, &msg); err != nil {
+		log.Printf("event=incoming_unmarshal_failed stage=request error=%q", err.Error())
+		return
+	}
+
+	select {
+	case <-ctx.Done():
+		return
+	case reqCh <- msg:
+	}
+}
+
+func (s *Server) handleRequest(ctx context.Context, msg jsonRPCRequest) {
+	isNotification := len(msg.ID) == 0
+
+	switch msg.Method {
+	case "initialize":
+		res, rpcErr := s.handleInitialize(msg.Params)
+		if !isNotification {
+			s.writeResponseAndLog(msg.Method, msg.ID, res, rpcErr)
+		}
+	case "notifications/initialized":
+		s.setInitialized(true)
+		s.resolveSessionStore(ctx, false)
+	case "notifications/roots/list_changed":
+		s.resolveSessionStore(ctx, true)
+	case "ping":
+		if !isNotification {
+			s.writeResponseAndLog(msg.Method, msg.ID, map[string]any{}, nil)
+		}
+	case "tools/list":
+		res, rpcErr := s.handleToolsList(msg.Params)
+		if !isNotification {
+			s.writeResponseAndLog(msg.Method, msg.ID, res, rpcErr)
+		}
+	case "tools/call":
+		res, rpcErr := s.handleToolsCall(ctx, msg.Params)
+		if !isNotification {
+			s.writeResponseAndLog(msg.Method, msg.ID, res, rpcErr)
+		}
+	case "resources/list":
+		res, rpcErr := s.handleResourcesList(ctx, msg.Params)
+		if !isNotification {
+			s.writeResponseAndLog(msg.Method, msg.ID, res, rpcErr)
+		}
+	case "resources/read":
+		res, rpcErr := s.handleResourcesRead(ctx, msg.Params)
+		if !isNotification {
+			s.writeResponseAndLog(msg.Method, msg.ID, res, rpcErr)
+		}
+	case "resources/templates/list":
+		res := map[string]any{"resourceTemplates": []any{}}
+		if !isNotification {
+			s.writeResponseAndLog(msg.Method, msg.ID, res, nil)
+		}
+	case "prompts/list":
+		res := map[string]any{"prompts": []any{}}
+		if !isNotification {
+			s.writeResponseAndLog(msg.Method, msg.ID, res, nil)
+		}
+	default:
+		if !isNotification {
+			s.writeResponseAndLog(msg.Method, msg.ID, nil, &jsonRPCError{Code: -32601, Message: "Method not found"})
 		}
 	}
 }
@@ -118,14 +197,14 @@ func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 type jsonRPCRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id,omitempty"`
-	Method  string          `json:"method"`
+	Method  string          `json:"method,omitempty"`
 	Params  json.RawMessage `json:"params,omitempty"`
 }
 
 type jsonRPCResponse struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id"`
-	Result  any             `json:"result,omitempty"`
+	Result  json.RawMessage `json:"result,omitempty"`
 	Error   *jsonRPCError   `json:"error,omitempty"`
 }
 
@@ -135,9 +214,31 @@ type jsonRPCError struct {
 	Data    any    `json:"data,omitempty"`
 }
 
-func (s *Server) writeResponse(enc *json.Encoder, id json.RawMessage, result any, rpcErr *jsonRPCError) error {
-	resp := jsonRPCResponse{JSONRPC: "2.0", ID: id, Result: result, Error: rpcErr}
-	return enc.Encode(resp)
+func (s *Server) writeResponse(id json.RawMessage, result any, rpcErr *jsonRPCError) error {
+	resp := jsonRPCResponse{JSONRPC: "2.0", ID: id, Error: rpcErr}
+	if result != nil {
+		b, err := json.Marshal(result)
+		if err != nil {
+			return err
+		}
+		resp.Result = b
+	}
+	return s.writeJSON(resp)
+}
+
+func (s *Server) writeResponseAndLog(method string, id json.RawMessage, result any, rpcErr *jsonRPCError) {
+	if err := s.writeResponse(id, result, rpcErr); err != nil {
+		log.Printf("event=write_response_failed method=%q error=%q", method, err.Error())
+	}
+}
+
+func (s *Server) writeJSON(v any) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if s.enc == nil {
+		return errors.New("encoder not initialized")
+	}
+	return s.enc.Encode(v)
 }
 
 func bytesTrimNL(b []byte) []byte {
@@ -154,6 +255,62 @@ func bytesTrimSuffix(b []byte, c byte) []byte {
 	return b
 }
 
+func (s *Server) deliverResponse(resp jsonRPCResponse) {
+	key := string(resp.ID)
+	s.pendingMu.Lock()
+	ch, ok := s.pending[key]
+	s.pendingMu.Unlock()
+	if !ok {
+		return
+	}
+	select {
+	case ch <- resp:
+	default:
+	}
+}
+
+func (s *Server) callClient(ctx context.Context, method string, params any) (json.RawMessage, *jsonRPCError, error) {
+	id := atomic.AddInt64(&s.requestID, 1)
+	idRaw, err := json.Marshal(id)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	ch := make(chan jsonRPCResponse, 1)
+	key := string(idRaw)
+	s.pendingMu.Lock()
+	s.pending[key] = ch
+	s.pendingMu.Unlock()
+	defer func() {
+		s.pendingMu.Lock()
+		delete(s.pending, key)
+		s.pendingMu.Unlock()
+	}()
+
+	req := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"method":  method,
+	}
+	if params != nil {
+		req["params"] = params
+	}
+
+	if err := s.writeJSON(req); err != nil {
+		return nil, nil, err
+	}
+
+	select {
+	case <-ctx.Done():
+		return nil, nil, ctx.Err()
+	case resp := <-ch:
+		if resp.Error != nil {
+			return nil, resp.Error, nil
+		}
+		return resp.Result, nil, nil
+	}
+}
+
 // --- Lifecycle: initialize ---
 
 type initializeParams struct {
@@ -167,10 +324,203 @@ func (s *Server) handleInitialize(params json.RawMessage) (any, *jsonRPCError) {
 	if len(params) > 0 {
 		_ = json.Unmarshal(params, &p)
 	}
-
-	_ = p // currently unused (capabilities)
+	s.sessionMu.Lock()
+	s.clientCapabilities = p.Capabilities
+	s.sessionMu.Unlock()
 
 	return initializeResponse(), nil
+}
+
+func (s *Server) resolveSessionStore(ctx context.Context, force bool) *domain.Service {
+	if !force && s.isSessionResolved() {
+		return s.currentService()
+	}
+
+	s.resolveMu.Lock()
+	defer s.resolveMu.Unlock()
+
+	if !s.isInitialized() {
+		return s.currentService()
+	}
+
+	if !force && s.isSessionResolved() {
+		return s.currentService()
+	}
+
+	if !s.clientSupportsRoots() {
+		s.useGlobalFallbackSession("roots capability unavailable")
+		return s.currentService()
+	}
+
+	callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	resultRaw, rpcErr, err := s.callClient(callCtx, "roots/list", nil)
+	if err != nil {
+		s.useGlobalFallbackSession("roots/list request failed: " + err.Error())
+		return s.currentService()
+	}
+	if rpcErr != nil {
+		if rpcErr.Code == -32601 || rpcErr.Code == -32603 {
+			s.useGlobalFallbackSession(fmt.Sprintf("roots/list returned code=%d message=%s", rpcErr.Code, rpcErr.Message))
+			return s.currentService()
+		}
+		s.useGlobalFallbackSession(fmt.Sprintf("roots/list returned error code=%d message=%s", rpcErr.Code, rpcErr.Message))
+		return s.currentService()
+	}
+
+	normalized, err := normalizeRootURIsFromResult(resultRaw)
+	if err != nil {
+		s.useGlobalFallbackSession("roots/list parse failed: " + err.Error())
+		return s.currentService()
+	}
+
+	hash := computeSubspaceHash(normalized)
+	svc := domain.NewService(filestore.New(filepath.Join(s.baseStoreRoot, hash)))
+	s.setSessionService(svc, true)
+	log.Printf("event=roots_list_success root_count=%d subspace_hash=%s", len(normalized), hash)
+	return svc
+}
+
+func (s *Server) useGlobalFallbackSession(reason string) {
+	s.setSessionService(domain.NewService(filestore.New(s.baseStoreRoot)), true)
+	log.Printf("event=roots_list_fallback fallback=global scope=session reason=%q", reason)
+}
+
+func (s *Server) clientSupportsRoots() bool {
+	s.sessionMu.RLock()
+	caps := s.clientCapabilities
+	s.sessionMu.RUnlock()
+	if len(caps) == 0 {
+		return false
+	}
+	rootCap, ok := caps["roots"]
+	if !ok {
+		return false
+	}
+	if rootCap == nil {
+		return false
+	}
+	if _, ok := rootCap.(map[string]any); !ok {
+		return false
+	}
+	return true
+}
+
+func normalizeRootURIsFromResult(resultRaw json.RawMessage) ([]string, error) {
+	type root struct {
+		URI string `json:"uri"`
+	}
+	type rootsListResult struct {
+		Roots []root `json:"roots"`
+	}
+
+	var result rootsListResult
+	if err := json.Unmarshal(resultRaw, &result); err != nil {
+		return nil, err
+	}
+
+	uris := make([]string, 0, len(result.Roots))
+	for _, r := range result.Roots {
+		uris = append(uris, r.URI)
+	}
+	return normalizeRootURIs(uris)
+}
+
+func normalizeRootURIs(roots []string) ([]string, error) {
+	set := map[string]struct{}{}
+	for _, raw := range roots {
+		normalized, err := normalizeRootURI(raw)
+		if err != nil {
+			continue
+		}
+		set[normalized] = struct{}{}
+	}
+	if len(set) == 0 {
+		return nil, errors.New("no valid file roots")
+	}
+
+	out := make([]string, 0, len(set))
+	for uri := range set {
+		out = append(out, uri)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func normalizeRootURI(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", errors.New("empty root uri")
+	}
+
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", err
+	}
+	if !strings.EqualFold(u.Scheme, "file") {
+		return "", errors.New("root uri must use file scheme")
+	}
+	if strings.TrimSpace(u.Path) == "" {
+		return "", errors.New("root uri path is required")
+	}
+
+	u.Scheme = "file"
+	host := strings.ToLower(strings.TrimSpace(u.Host))
+	if host == "localhost" {
+		host = ""
+	}
+	u.Host = host
+	u.RawQuery = ""
+	u.Fragment = ""
+	u.Path = path.Clean(u.Path)
+	if !strings.HasPrefix(u.Path, "/") {
+		u.Path = "/" + u.Path
+	}
+	u.RawPath = ""
+
+	return u.String(), nil
+}
+
+func computeSubspaceHash(normalizedSortedRoots []string) string {
+	joined := strings.Join(normalizedSortedRoots, "\n")
+	sum := sha256.Sum256([]byte(joined))
+	return hex.EncodeToString(sum[:])
+}
+
+func (s *Server) service(ctx context.Context) *domain.Service {
+	return s.resolveSessionStore(ctx, false)
+}
+
+func (s *Server) isInitialized() bool {
+	s.sessionMu.RLock()
+	defer s.sessionMu.RUnlock()
+	return s.initialized
+}
+
+func (s *Server) setInitialized(v bool) {
+	s.sessionMu.Lock()
+	defer s.sessionMu.Unlock()
+	s.initialized = v
+}
+
+func (s *Server) isSessionResolved() bool {
+	s.sessionMu.RLock()
+	defer s.sessionMu.RUnlock()
+	return s.sessionResolved
+}
+
+func (s *Server) setSessionService(svc *domain.Service, resolved bool) {
+	s.sessionMu.Lock()
+	defer s.sessionMu.Unlock()
+	s.svc = svc
+	s.sessionResolved = resolved
+}
+
+func (s *Server) currentService() *domain.Service {
+	s.sessionMu.RLock()
+	defer s.sessionMu.RUnlock()
+	return s.svc
 }
 
 // --- Tools ---
@@ -193,7 +543,7 @@ type toolResult struct {
 }
 
 func (s *Server) handleToolsCall(ctx context.Context, params json.RawMessage) (any, *jsonRPCError) {
-	if !s.initialized {
+	if !s.isInitialized() {
 		// Be lenient: some clients call tools before notifications/initialized.
 	}
 
@@ -305,7 +655,8 @@ func (s *Server) toolSaveText(ctx context.Context, argsRaw json.RawMessage) (any
 	if err := json.Unmarshal(argsRaw, &args); err != nil {
 		return toolError("Invalid arguments: expected {name, text, mimeType?}"), nil
 	}
-	a, err := s.svc.SaveText(ctx, domain.SaveTextInput{Name: args.Name, Text: args.Text, MimeType: args.MimeType})
+	svc := s.service(ctx)
+	a, err := svc.SaveText(ctx, domain.SaveTextInput{Name: args.Name, Text: args.Text, MimeType: args.MimeType})
 	if err != nil {
 		return toolErrorFromErr(err), nil
 	}
@@ -331,7 +682,8 @@ func (s *Server) toolSaveBlob(ctx context.Context, argsRaw json.RawMessage) (any
 	if err != nil {
 		return toolError("dataBase64 is not valid base64"), nil
 	}
-	a, err := s.svc.SaveBlob(ctx, domain.SaveBlobInput{Name: args.Name, Data: data, MimeType: args.MimeType, Filename: args.Filename})
+	svc := s.service(ctx)
+	a, err := svc.SaveBlob(ctx, domain.SaveBlobInput{Name: args.Name, Data: data, MimeType: args.MimeType, Filename: args.Filename})
 	if err != nil {
 		return toolErrorFromErr(err), nil
 	}
@@ -353,7 +705,8 @@ func (s *Server) toolResolve(ctx context.Context, argsRaw json.RawMessage) (any,
 	if err := json.Unmarshal(argsRaw, &args); err != nil {
 		return toolError("Invalid arguments: expected {name}"), nil
 	}
-	ref, err := s.svc.Resolve(ctx, args.Name)
+	svc := s.service(ctx)
+	ref, err := svc.Resolve(ctx, args.Name)
 	if err != nil {
 		return toolErrorFromErr(err), nil
 	}
@@ -376,7 +729,8 @@ func (s *Server) toolGet(ctx context.Context, argsRaw json.RawMessage) (any, *js
 	if err := json.Unmarshal(argsRaw, &args); err != nil {
 		return toolError("Invalid arguments: expected {ref?, name?, mode?}"), nil
 	}
-	a, data, err := s.svc.Get(ctx, domain.Selector{Ref: args.Ref, Name: args.Name})
+	svc := s.service(ctx)
+	a, data, err := svc.Get(ctx, domain.Selector{Ref: args.Ref, Name: args.Name})
 	if err != nil {
 		return toolErrorFromErr(err), nil
 	}
@@ -437,7 +791,8 @@ func (s *Server) toolList(ctx context.Context, argsRaw json.RawMessage) (any, *j
 			return toolError("Invalid arguments: expected {prefix?, limit?}"), nil
 		}
 	}
-	arts, err := s.svc.List(ctx, args.Prefix, args.Limit)
+	svc := s.service(ctx)
+	arts, err := svc.List(ctx, args.Prefix, args.Limit)
 	if err != nil {
 		return toolErrorFromErr(err), nil
 	}
@@ -461,7 +816,8 @@ func (s *Server) toolDelete(ctx context.Context, argsRaw json.RawMessage) (any, 
 		}
 	}
 
-	a, err := s.svc.Delete(ctx, domain.Selector{Ref: args.Ref, Name: args.Name})
+	svc := s.service(ctx)
+	a, err := svc.Delete(ctx, domain.Selector{Ref: args.Ref, Name: args.Name})
 	if err != nil {
 		return toolErrorFromErr(err), nil
 	}
@@ -550,7 +906,8 @@ func resourceLink(name, uri, mime string, size int64) map[string]any {
 // --- Resources ---
 
 func (s *Server) handleResourcesList(ctx context.Context, _ json.RawMessage) (any, *jsonRPCError) {
-	arts, err := s.svc.List(ctx, "", 200)
+	svc := s.service(ctx)
+	arts, err := svc.List(ctx, "", 200)
 	if err != nil {
 		return nil, &jsonRPCError{Code: -32603, Message: err.Error()}
 	}
@@ -589,7 +946,8 @@ func (s *Server) handleResourcesRead(ctx context.Context, params json.RawMessage
 		}
 		return nil, rpcErrorFromErr(err)
 	}
-	a, data, err := s.svc.Get(ctx, sel)
+	svc := s.service(ctx)
+	a, data, err := svc.Get(ctx, sel)
 	if err != nil {
 		if isRecoverableReadErr(err) {
 			return resourceReadErrorResult(uri, resourceReadErrorMessage(err)), nil
