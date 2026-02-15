@@ -44,7 +44,8 @@ func TestIsValidSubspaceSelector(t *testing.T) {
 	}{
 		{name: "global", input: globalSubspaceSelector, expects: true},
 		{name: "hash", input: validHash, expects: true},
-		{name: "uppercase global", input: "GLOBAL", expects: false},
+		{name: "uppercase global", input: "GLOBAL", expects: true},
+		{name: "uppercase hash", input: strings.ToUpper(validHash), expects: true},
 		{name: "invalid hash", input: "xyz", expects: false},
 		{name: "empty", input: "", expects: false},
 	}

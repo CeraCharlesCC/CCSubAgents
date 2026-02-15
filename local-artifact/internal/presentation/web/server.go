@@ -633,7 +633,7 @@ func isValidSubspaceSelector(subspace string) bool {
 }
 
 func normalizeSubspaceSelector(subspace string) string {
-	return strings.TrimSpace(subspace)
+	return strings.ToLower(strings.TrimSpace(subspace))
 }
 
 func containsString(items []string, target string) bool {
