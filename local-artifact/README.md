@@ -23,12 +23,12 @@ Aliases are now unique: saving with an existing `name` returns a conflict error 
 
 ## Exposed MCP tools
 
-- `artifact.save_text`
-- `artifact.save_blob` (binary base64)
-- `artifact.resolve`
-- `artifact.get`
-- `artifact.list`
-- `artifact.delete`
+- `save_artifact_text`
+- `save_artifact_blob` (binary base64)
+- `resolve_artifact`
+- `get_artifact`
+- `get_artifact_list`
+- `delete_artifact`
 
 ## Build
 
@@ -49,6 +49,6 @@ Then open `http://127.0.0.1:19130`.
 
 ## Example usage pattern for CCSubAgents
 
-1. Planner calls `artifact.save_text` with name `plan/task-123`.
+1. Planner calls `save_artifact_text` with name `plan/task-123`.
 2. Orchestrator passes only the returned `ref` or `artifact://name/...` URI to the implementation subagent.
-3. Implementation subagent calls `artifact.get` (or `resources/read`) to load the plan when needed.
+3. Implementation subagent calls `get_artifact` (or `resources/read`) to load the plan when needed.

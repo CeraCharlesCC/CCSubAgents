@@ -206,15 +206,27 @@ func (s *Server) handleToolsCall(ctx context.Context, params json.RawMessage) (a
 	switch p.Name {
 	case toolArtifactSaveText:
 		return s.toolSaveText(ctx, p.Arguments)
+	case "artifact.save_text":
+		return s.toolSaveText(ctx, p.Arguments)
 	case toolArtifactSaveBlob:
+		return s.toolSaveBlob(ctx, p.Arguments)
+	case "artifact.save_blob":
 		return s.toolSaveBlob(ctx, p.Arguments)
 	case toolArtifactResolve:
 		return s.toolResolve(ctx, p.Arguments)
+	case "artifact.resolve":
+		return s.toolResolve(ctx, p.Arguments)
 	case toolArtifactGet:
+		return s.toolGet(ctx, p.Arguments)
+	case "artifact.get":
 		return s.toolGet(ctx, p.Arguments)
 	case toolArtifactList:
 		return s.toolList(ctx, p.Arguments)
+	case "artifact.list":
+		return s.toolList(ctx, p.Arguments)
 	case toolArtifactDelete:
+		return s.toolDelete(ctx, p.Arguments)
+	case "artifact.delete":
 		return s.toolDelete(ctx, p.Arguments)
 	case "deleteArtifact":
 		return s.toolDelete(ctx, p.Arguments)
