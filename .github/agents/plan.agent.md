@@ -66,6 +66,9 @@ This project uses **artifact-mcp** to pass structured data between agents. You h
 - Rollout: feature flags, config, docs, telemetry (if applicable)
 
 ## Plan content format (saved as the artifact body)
+
+You must save your plan as an artifact using `#tool:artifact-mcp/save_artifact_text`. The body of the artifact should follow this markdown format:
+
 ```markdown
 ### Goal & Scope
 - Goal: …
