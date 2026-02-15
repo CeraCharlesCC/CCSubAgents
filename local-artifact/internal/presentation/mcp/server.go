@@ -199,7 +199,7 @@ func (s *Server) handleToolsCall(ctx context.Context, params json.RawMessage) (a
 
 	var p callToolParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, &jsonRPCError{Code: -32602, Message: "Invalid params"}
+		return toolError("invalid params"), nil
 	}
 
 	// Dispatch
@@ -231,7 +231,7 @@ func (s *Server) handleToolsCall(ctx context.Context, params json.RawMessage) (a
 	case "deleteArtifact":
 		return s.toolDelete(ctx, p.Arguments)
 	default:
-		return nil, &jsonRPCError{Code: -32602, Message: fmt.Sprintf("Unknown tool: %s", p.Name)}
+		return toolError(fmt.Sprintf("unknown tool: %s", p.Name)), nil
 	}
 }
 
