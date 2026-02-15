@@ -96,6 +96,8 @@ Identify which files and modules were touched and what behavior changed.
 
 ## Review Format (save as the artifact body)
 
+You must save your review findings as an artifact using `#tool:artifact-mcp/save_artifact_text`. The body of the artifact should follow this markdown format:
+
 ```md
 ### Review Summary
 - **Verdict:** Approve / Approve with nits / Request changes
