@@ -64,12 +64,13 @@ jobs:
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.inputs.tag }}
         run: |
-          gh release create "${{ github.event.inputs.tag }}" \
+          gh release create "$RELEASE_TAG" \
             dist/agents.zip \
             dist/local-artifact-mcp \
             dist/local-artifact-web \
             dist/local-artifact \
             --target main \
-            --title "${{ github.event.inputs.tag }}" \
+            --title "$RELEASE_TAG" \
             --notes "Manual release from main"

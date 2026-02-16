@@ -292,6 +292,42 @@ func TestIsAllowedManagedPath(t *testing.T) {
 	}
 }
 
+func TestResolveInstallPaths_Defaults(t *testing.T) {
+	home := filepath.Join(string(os.PathSeparator), "home", "user")
+	t.Setenv(binaryInstallDirEnv, "")
+	t.Setenv(settingsPathEnv, "")
+	t.Setenv(mcpConfigPathEnv, "")
+
+	paths := resolveInstallPaths(home)
+	if paths.binaryDir != binaryInstallDir {
+		t.Fatalf("expected default binary dir %q, got %q", binaryInstallDir, paths.binaryDir)
+	}
+	if paths.settingsPath != filepath.Join(home, settingsRelativePath) {
+		t.Fatalf("expected default settings path under home, got %q", paths.settingsPath)
+	}
+	if paths.mcpPath != filepath.Join(home, mcpConfigRelativePath) {
+		t.Fatalf("expected default mcp path under home, got %q", paths.mcpPath)
+	}
+}
+
+func TestResolveInstallPaths_EnvOverrides(t *testing.T) {
+	home := filepath.Join(string(os.PathSeparator), "home", "user")
+	t.Setenv(binaryInstallDirEnv, "~/bin")
+	t.Setenv(settingsPathEnv, "custom/settings.json")
+	t.Setenv(mcpConfigPathEnv, filepath.Join(string(os.PathSeparator), "tmp", "custom-mcp.json"))
+
+	paths := resolveInstallPaths(home)
+	if paths.binaryDir != filepath.Join(home, "bin") {
+		t.Fatalf("expected home-relative binary dir, got %q", paths.binaryDir)
+	}
+	if paths.settingsPath != filepath.Join(home, "custom", "settings.json") {
+		t.Fatalf("expected home-relative settings path, got %q", paths.settingsPath)
+	}
+	if paths.mcpPath != filepath.Join(string(os.PathSeparator), "tmp", "custom-mcp.json") {
+		t.Fatalf("expected absolute mcp path override, got %q", paths.mcpPath)
+	}
+}
+
 func TestInstallOrUpdate_AttestationFailureBeforeMutation(t *testing.T) {
 	home := t.TempDir()
 	agentsArchive := zipBytes(t, map[string]string{"agents/example.agent.md": "content"})
@@ -373,105 +409,105 @@ func TestInstallOrUpdate_CorruptTrackedStateFails(t *testing.T) {
 }
 
 func TestInstallOrUpdate_UpdateStaleCleanupFailureRollsBackAndKeepsTrackedState(t *testing.T) {
-home := t.TempDir()
-agentsDir := filepath.Join(home, ".copilot", "agents")
-staleDir := filepath.Join(agentsDir, "stale-dir")
-if err := os.MkdirAll(staleDir, stateDirPerm); err != nil {
-t.Fatalf("create agents dir: %v", err)
-}
+	home := t.TempDir()
+	agentsDir := filepath.Join(home, ".copilot", "agents")
+	staleDir := filepath.Join(agentsDir, "stale-dir")
+	if err := os.MkdirAll(staleDir, stateDirPerm); err != nil {
+		t.Fatalf("create agents dir: %v", err)
+	}
 
-staleOne := filepath.Join(agentsDir, "stale-one.agent.md")
-if err := os.WriteFile(staleOne, []byte("old-one"), stateFilePerm); err != nil {
-t.Fatalf("seed stale file one: %v", err)
-}
-if err := os.WriteFile(filepath.Join(staleDir, "nested.agent.md"), []byte("old-two"), stateFilePerm); err != nil {
-t.Fatalf("seed stale directory content: %v", err)
-}
+	staleOne := filepath.Join(agentsDir, "stale-one.agent.md")
+	if err := os.WriteFile(staleOne, []byte("old-one"), stateFilePerm); err != nil {
+		t.Fatalf("seed stale file one: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(staleDir, "nested.agent.md"), []byte("old-two"), stateFilePerm); err != nil {
+		t.Fatalf("seed stale directory content: %v", err)
+	}
 
-stateDir := filepath.Join(home, ".local", "share", "ccsubagents")
-if err := os.MkdirAll(stateDir, stateDirPerm); err != nil {
-t.Fatalf("create state dir: %v", err)
-}
+	stateDir := filepath.Join(home, ".local", "share", "ccsubagents")
+	if err := os.MkdirAll(stateDir, stateDirPerm); err != nil {
+		t.Fatalf("create state dir: %v", err)
+	}
 
-previous := trackedState{
-Version:     trackedSchemaVersion,
-Repo:        releaseRepo,
-ReleaseID:   1,
-ReleaseTag:  "v-old",
-InstalledAt: "2026-01-01T00:00:00Z",
-Managed: managedState{
-Files: []string{staleOne, staleDir},
-},
-}
+	previous := trackedState{
+		Version:     trackedSchemaVersion,
+		Repo:        releaseRepo,
+		ReleaseID:   1,
+		ReleaseTag:  "v-old",
+		InstalledAt: "2026-01-01T00:00:00Z",
+		Managed: managedState{
+			Files: []string{staleOne, staleDir},
+		},
+	}
 
-m := &Manager{
-httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-status := http.StatusOK
-switch req.URL.String() {
-case releaseLatestURL:
-body := fmt.Sprintf(`{"id":202,"tag_name":"v-new","assets":[{"name":"%s","browser_download_url":"https://example.invalid/assets/%s"},{"name":"%s","browser_download_url":"https://example.invalid/assets/%s"},{"name":"%s","browser_download_url":"https://example.invalid/assets/%s"}]}`,
-assetAgentsZip, assetAgentsZip,
-assetArtifactMCP, assetArtifactMCP,
-assetArtifactWeb, assetArtifactWeb,
-)
-return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
-case "https://example.invalid/assets/" + assetAgentsZip:
-archive := zipBytes(t, map[string]string{"agents/current.agent.md": "new"})
-return &http.Response{StatusCode: status, Body: io.NopCloser(bytes.NewReader(archive)), Header: make(http.Header)}, nil
-case "https://example.invalid/assets/" + assetArtifactMCP:
-return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader("mcp")), Header: make(http.Header)}, nil
-case "https://example.invalid/assets/" + assetArtifactWeb:
-return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader("web")), Header: make(http.Header)}, nil
-default:
-return nil, fmt.Errorf("unexpected request URL: %s", req.URL.String())
-}
-})},
-now:        func() time.Time { return time.Unix(0, 0).UTC() },
-homeDir:    func() (string, error) { return home, nil },
-lookPath:   func(string) (string, error) { return "/usr/bin/gh", nil },
-runCommand: func(context.Context, string, ...string) ([]byte, error) { return []byte("ok"), nil },
-}
+	m := &Manager{
+		httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			status := http.StatusOK
+			switch req.URL.String() {
+			case releaseLatestURL:
+				body := fmt.Sprintf(`{"id":202,"tag_name":"v-new","assets":[{"name":"%s","browser_download_url":"https://example.invalid/assets/%s"},{"name":"%s","browser_download_url":"https://example.invalid/assets/%s"},{"name":"%s","browser_download_url":"https://example.invalid/assets/%s"}]}`,
+					assetAgentsZip, assetAgentsZip,
+					assetArtifactMCP, assetArtifactMCP,
+					assetArtifactWeb, assetArtifactWeb,
+				)
+				return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+			case "https://example.invalid/assets/" + assetAgentsZip:
+				archive := zipBytes(t, map[string]string{"agents/current.agent.md": "new"})
+				return &http.Response{StatusCode: status, Body: io.NopCloser(bytes.NewReader(archive)), Header: make(http.Header)}, nil
+			case "https://example.invalid/assets/" + assetArtifactMCP:
+				return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader("mcp")), Header: make(http.Header)}, nil
+			case "https://example.invalid/assets/" + assetArtifactWeb:
+				return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader("web")), Header: make(http.Header)}, nil
+			default:
+				return nil, fmt.Errorf("unexpected request URL: %s", req.URL.String())
+			}
+		})},
+		now:        func() time.Time { return time.Unix(0, 0).UTC() },
+		homeDir:    func() (string, error) { return home, nil },
+		lookPath:   func(string) (string, error) { return "/usr/bin/gh", nil },
+		runCommand: func(context.Context, string, ...string) ([]byte, error) { return []byte("ok"), nil },
+	}
 
-if err := m.saveTrackedState(stateDir, previous); err != nil {
-t.Fatalf("seed tracked state: %v", err)
-}
-trackedPath := filepath.Join(stateDir, trackedFileName)
-originalTracked, err := os.ReadFile(trackedPath)
-if err != nil {
-t.Fatalf("read seeded tracked state: %v", err)
-}
+	if err := m.saveTrackedState(stateDir, previous); err != nil {
+		t.Fatalf("seed tracked state: %v", err)
+	}
+	trackedPath := filepath.Join(stateDir, trackedFileName)
+	originalTracked, err := os.ReadFile(trackedPath)
+	if err != nil {
+		t.Fatalf("read seeded tracked state: %v", err)
+	}
 
-prevInstallBinary := installBinaryFunc
-installBinaryFunc = func(string, string) error { return nil }
-t.Cleanup(func() { installBinaryFunc = prevInstallBinary })
+	prevInstallBinary := installBinaryFunc
+	installBinaryFunc = func(string, string) error { return nil }
+	t.Cleanup(func() { installBinaryFunc = prevInstallBinary })
 
-err = m.installOrUpdate(context.Background(), true)
-if err == nil {
-t.Fatalf("expected stale cleanup failure")
-}
-if !strings.Contains(err.Error(), "cannot snapshot directory for rollback") {
-t.Fatalf("expected stale cleanup error, got: %v", err)
-}
+	err = m.installOrUpdate(context.Background(), true)
+	if err == nil {
+		t.Fatalf("expected stale cleanup failure")
+	}
+	if !strings.Contains(err.Error(), "cannot snapshot directory for rollback") {
+		t.Fatalf("expected stale cleanup error, got: %v", err)
+	}
 
-staleOneData, err := os.ReadFile(staleOne)
-if err != nil {
-t.Fatalf("expected stale file one restored: %v", err)
-}
-if string(staleOneData) != "old-one" {
-t.Fatalf("expected stale file one content restored, got %q", string(staleOneData))
-}
+	staleOneData, err := os.ReadFile(staleOne)
+	if err != nil {
+		t.Fatalf("expected stale file one restored: %v", err)
+	}
+	if string(staleOneData) != "old-one" {
+		t.Fatalf("expected stale file one content restored, got %q", string(staleOneData))
+	}
 
-if _, statErr := os.Stat(filepath.Join(agentsDir, "current.agent.md")); !errors.Is(statErr, os.ErrNotExist) {
-t.Fatalf("expected newly extracted file rolled back, stat err: %v", statErr)
-}
+	if _, statErr := os.Stat(filepath.Join(agentsDir, "current.agent.md")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("expected newly extracted file rolled back, stat err: %v", statErr)
+	}
 
-currentTracked, err := os.ReadFile(trackedPath)
-if err != nil {
-t.Fatalf("read tracked state after failed update: %v", err)
-}
-if !bytes.Equal(originalTracked, currentTracked) {
-t.Fatalf("expected tracked state unchanged after failed update")
-}
+	currentTracked, err := os.ReadFile(trackedPath)
+	if err != nil {
+		t.Fatalf("read tracked state after failed update: %v", err)
+	}
+	if !bytes.Equal(originalTracked, currentTracked) {
+		t.Fatalf("expected tracked state unchanged after failed update")
+	}
 }
 
 func TestExtractAgentsArchive_StripsTopLevelAgentsDirectory(t *testing.T) {
@@ -487,7 +523,7 @@ func TestExtractAgentsArchive_StripsTopLevelAgentsDirectory(t *testing.T) {
 		"agents/nested/child.agent.md": "child",
 	})
 
-	files, _, err := extractAgentsArchive(zipPath, dest)
+	files, _, err := extractAgentsArchiveWithHook(zipPath, dest, nil)
 	if err != nil {
 		t.Fatalf("extract archive: %v", err)
 	}
@@ -569,58 +605,58 @@ func TestUninstall_FailsWhenMCPServersObjectIsMalformed(t *testing.T) {
 }
 
 func TestUninstall_AllowsTrackedConfigParentDirs(t *testing.T) {
-home := t.TempDir()
-m := &Manager{
-httpClient: &http.Client{},
-now:        func() time.Time { return time.Unix(0, 0).UTC() },
-homeDir:    func() (string, error) { return home, nil },
-lookPath:   func(string) (string, error) { return "/usr/bin/gh", nil },
-runCommand: func(context.Context, string, ...string) ([]byte, error) { return nil, nil },
-}
+	home := t.TempDir()
+	m := &Manager{
+		httpClient: &http.Client{},
+		now:        func() time.Time { return time.Unix(0, 0).UTC() },
+		homeDir:    func() (string, error) { return home, nil },
+		lookPath:   func(string) (string, error) { return "/usr/bin/gh", nil },
+		runCommand: func(context.Context, string, ...string) ([]byte, error) { return nil, nil },
+	}
 
-stateDir := filepath.Join(home, ".local", "share", "ccsubagents")
-if err := os.MkdirAll(stateDir, stateDirPerm); err != nil {
-t.Fatalf("create state dir: %v", err)
-}
+	stateDir := filepath.Join(home, ".local", "share", "ccsubagents")
+	if err := os.MkdirAll(stateDir, stateDirPerm); err != nil {
+		t.Fatalf("create state dir: %v", err)
+	}
 
-settingsParent := filepath.Dir(filepath.Join(home, settingsRelativePath))
-mcpParent := filepath.Dir(filepath.Join(home, mcpConfigRelativePath))
-if err := os.MkdirAll(settingsParent, stateDirPerm); err != nil {
-t.Fatalf("create settings parent dir: %v", err)
-}
-if err := os.MkdirAll(mcpParent, stateDirPerm); err != nil {
-t.Fatalf("create mcp parent dir: %v", err)
-}
+	settingsParent := filepath.Dir(filepath.Join(home, settingsRelativePath))
+	mcpParent := filepath.Dir(filepath.Join(home, mcpConfigRelativePath))
+	if err := os.MkdirAll(settingsParent, stateDirPerm); err != nil {
+		t.Fatalf("create settings parent dir: %v", err)
+	}
+	if err := os.MkdirAll(mcpParent, stateDirPerm); err != nil {
+		t.Fatalf("create mcp parent dir: %v", err)
+	}
 
-state := trackedState{
-Version:     trackedSchemaVersion,
-Repo:        releaseRepo,
-ReleaseID:   1,
-ReleaseTag:  "v1.0.0",
-InstalledAt: "2026-01-01T00:00:00Z",
-Managed: managedState{
-Dirs: []string{settingsParent, mcpParent},
-},
-JSONEdits: trackedJSONOps{
-Settings: settingsEdit{},
-MCP:      mcpEdit{},
-},
-}
-if err := m.saveTrackedState(stateDir, state); err != nil {
-t.Fatalf("seed tracked state: %v", err)
-}
+	state := trackedState{
+		Version:     trackedSchemaVersion,
+		Repo:        releaseRepo,
+		ReleaseID:   1,
+		ReleaseTag:  "v1.0.0",
+		InstalledAt: "2026-01-01T00:00:00Z",
+		Managed: managedState{
+			Dirs: []string{settingsParent, mcpParent},
+		},
+		JSONEdits: trackedJSONOps{
+			Settings: settingsEdit{},
+			MCP:      mcpEdit{},
+		},
+	}
+	if err := m.saveTrackedState(stateDir, state); err != nil {
+		t.Fatalf("seed tracked state: %v", err)
+	}
 
-if err := m.uninstall(context.Background()); err != nil {
-t.Fatalf("uninstall should allow tracked config parent dirs: %v", err)
-}
+	if err := m.uninstall(context.Background()); err != nil {
+		t.Fatalf("uninstall should allow tracked config parent dirs: %v", err)
+	}
 
-if _, err := os.Stat(settingsParent); !errors.Is(err, os.ErrNotExist) {
-t.Fatalf("expected settings parent dir removed, stat err: %v", err)
-}
-if _, err := os.Stat(mcpParent); !errors.Is(err, os.ErrNotExist) {
-t.Fatalf("expected mcp parent dir removed, stat err: %v", err)
-}
-if _, err := os.Stat(filepath.Join(stateDir, trackedFileName)); !errors.Is(err, os.ErrNotExist) {
-t.Fatalf("expected tracked state removed, stat err: %v", err)
-}
+	if _, err := os.Stat(settingsParent); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected settings parent dir removed, stat err: %v", err)
+	}
+	if _, err := os.Stat(mcpParent); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected mcp parent dir removed, stat err: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(stateDir, trackedFileName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected tracked state removed, stat err: %v", err)
+	}
 }

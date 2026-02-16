@@ -27,3 +27,5 @@ jobs:
       - name: Build local-artifact-web
         run: go build -o /tmp/local-artifact-web ./cmd/local-artifact-web
 
+      - name: Build local-artifact
+        run: go build -o /tmp/local-artifact ./cmd/local-artifact

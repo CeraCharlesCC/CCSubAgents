@@ -29,9 +29,12 @@ const (
 	assetArtifactMCP           = "local-artifact-mcp"
 	assetArtifactWeb           = "local-artifact-web"
 	binaryInstallDir           = "/usr/local/bin"
+	binaryInstallDirEnv        = "LOCAL_ARTIFACT_BIN_DIR"
 	trackedFileName            = "tracked.json"
 	settingsRelativePath       = ".vscode-server-insiders/data/Machine/settings.json"
+	settingsPathEnv            = "LOCAL_ARTIFACT_SETTINGS_PATH"
 	mcpConfigRelativePath      = ".vscode-server-insiders/data/User/mcp.json"
+	mcpConfigPathEnv           = "LOCAL_ARTIFACT_MCP_PATH"
 	mcpServerKey               = "artifact-mcp"
 	settingsAgentPathKey       = "chat.agentFilesLocations"
 	settingsModeFlat           = "flat"
@@ -67,6 +70,49 @@ func NewManager() *Manager {
 		lookPath:   exec.LookPath,
 		runCommand: runCommand,
 	}
+}
+
+type installPaths struct {
+	binaryDir    string
+	settingsPath string
+	mcpPath      string
+}
+
+func resolveInstallPaths(home string) installPaths {
+	paths := installPaths{
+		binaryDir:    binaryInstallDir,
+		settingsPath: filepath.Join(home, settingsRelativePath),
+		mcpPath:      filepath.Join(home, mcpConfigRelativePath),
+	}
+
+	if override := resolveConfiguredPath(home, os.Getenv(binaryInstallDirEnv)); override != "" {
+		paths.binaryDir = override
+	}
+	if override := resolveConfiguredPath(home, os.Getenv(settingsPathEnv)); override != "" {
+		paths.settingsPath = override
+	}
+	if override := resolveConfiguredPath(home, os.Getenv(mcpConfigPathEnv)); override != "" {
+		paths.mcpPath = override
+	}
+
+	return paths
+}
+
+func resolveConfiguredPath(home, value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	if trimmed == "~" {
+		return filepath.Clean(home)
+	}
+	if strings.HasPrefix(trimmed, "~"+string(os.PathSeparator)) {
+		return filepath.Join(home, trimmed[2:])
+	}
+	if filepath.IsAbs(trimmed) {
+		return filepath.Clean(trimmed)
+	}
+	return filepath.Join(home, trimmed)
 }
 
 func runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
@@ -237,6 +283,7 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 	if err != nil {
 		return fmt.Errorf("determine home directory: %w", err)
 	}
+	paths := resolveInstallPaths(home)
 
 	stateDir := filepath.Join(home, ".local", "share", "ccsubagents")
 	if err := os.MkdirAll(stateDir, stateDirPerm); err != nil {
@@ -304,30 +351,37 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 	}
 
 	binaryPaths := []string{
-		filepath.Join(binaryInstallDir, assetArtifactMCP),
-		filepath.Join(binaryInstallDir, assetArtifactWeb),
+		filepath.Join(paths.binaryDir, assetArtifactMCP),
+		filepath.Join(paths.binaryDir, assetArtifactWeb),
+	}
+
+	if err := os.MkdirAll(paths.binaryDir, stateDirPerm); err != nil {
+		if errors.Is(err, os.ErrPermission) {
+			return fmt.Errorf("create binary install directory %s: %w (requires privileges to write %s)", paths.binaryDir, err, paths.binaryDir)
+		}
+		return fmt.Errorf("create binary install directory %s: %w", paths.binaryDir, err)
 	}
 
 	for _, binaryName := range []string{assetArtifactMCP, assetArtifactWeb} {
 		src := downloaded[binaryName]
-		dst := filepath.Join(binaryInstallDir, binaryName)
+		dst := filepath.Join(paths.binaryDir, binaryName)
 		if err := rollback.captureFile(dst); err != nil {
 			return err
 		}
-if err := installBinaryFunc(src, dst); err != nil {
-if errors.Is(err, os.ErrPermission) {
-return fmt.Errorf("install %s into %s: %w (requires privileges to write %s)", binaryName, binaryInstallDir, err, binaryInstallDir)
-}
-return fmt.Errorf("install %s into %s: %w", binaryName, binaryInstallDir, err)
-}
-}
+		if err := installBinaryFunc(src, dst); err != nil {
+			if errors.Is(err, os.ErrPermission) {
+				return fmt.Errorf("install %s into %s: %w (requires privileges to write %s)", binaryName, paths.binaryDir, err, paths.binaryDir)
+			}
+			return fmt.Errorf("install %s into %s: %w", binaryName, paths.binaryDir, err)
+		}
+	}
 
 	extractedFiles, extractedDirs, err := extractAgentsArchiveWithHook(downloaded[assetAgentsZip], agentsDir, rollback.captureFile)
 	if err != nil {
 		return fmt.Errorf("extract %s into %s: %w", assetAgentsZip, agentsDir, err)
 	}
 
-	settingsPath := filepath.Join(home, settingsRelativePath)
+	settingsPath := paths.settingsPath
 	if created, err := ensureParentDir(settingsPath); err != nil {
 		return err
 	} else if created {
@@ -344,7 +398,7 @@ return fmt.Errorf("install %s into %s: %w", binaryName, binaryInstallDir, err)
 		return err
 	}
 
-	mcpPath := filepath.Join(home, mcpConfigRelativePath)
+	mcpPath := paths.mcpPath
 	if created, err := ensureParentDir(mcpPath); err != nil {
 		return err
 	} else if created {
@@ -356,7 +410,7 @@ return fmt.Errorf("install %s into %s: %w", binaryName, binaryInstallDir, err)
 			return err
 		}
 	}
-	mcpEdit, err := applyMCPEdit(mcpPath, filepath.Join(binaryInstallDir, assetArtifactMCP), previousState)
+	mcpEdit, err := applyMCPEdit(mcpPath, filepath.Join(paths.binaryDir, assetArtifactMCP), previousState)
 	if err != nil {
 		return err
 	}
@@ -377,17 +431,17 @@ return fmt.Errorf("install %s into %s: %w", binaryName, binaryInstallDir, err)
 		},
 	}
 
-if isUpdate && previousState != nil {
-if err := removeStaleAgentFilesWithHook(previousState.Managed.Files, extractedFiles, agentsDir, rollback.captureFile); err != nil {
-return err
-}
-}
+	if isUpdate && previousState != nil {
+		if err := removeStaleAgentFilesWithHook(previousState.Managed.Files, extractedFiles, agentsDir, rollback.captureFile); err != nil {
+			return err
+		}
+	}
 
-if err := m.saveTrackedState(stateDir, state); err != nil {
-return err
-}
+	if err := m.saveTrackedState(stateDir, state); err != nil {
+		return err
+	}
 
-return nil
+	return nil
 }
 
 func (m *Manager) uninstall(ctx context.Context) error {
@@ -396,6 +450,7 @@ func (m *Manager) uninstall(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("determine home directory: %w", err)
 	}
+	paths := resolveInstallPaths(home)
 
 	stateDir := filepath.Join(home, ".local", "share", "ccsubagents")
 	state, err := m.loadTrackedState(stateDir)
@@ -406,14 +461,14 @@ func (m *Manager) uninstall(ctx context.Context) error {
 		return err
 	}
 
-agentsDir := filepath.Join(home, ".copilot", "agents")
-settingsParentDir := filepath.Dir(filepath.Join(home, settingsRelativePath))
-mcpParentDir := filepath.Dir(filepath.Join(home, mcpConfigRelativePath))
-allowedConfigParentDirs := []string{settingsParentDir, mcpParentDir}
-allowedBinaries := []string{
-filepath.Join(binaryInstallDir, assetArtifactMCP),
-filepath.Join(binaryInstallDir, assetArtifactWeb),
-}
+	agentsDir := filepath.Join(home, ".copilot", "agents")
+	settingsParentDir := filepath.Dir(paths.settingsPath)
+	mcpParentDir := filepath.Dir(paths.mcpPath)
+	allowedConfigParentDirs := []string{settingsParentDir, mcpParentDir}
+	allowedBinaries := []string{
+		filepath.Join(paths.binaryDir, assetArtifactMCP),
+		filepath.Join(paths.binaryDir, assetArtifactWeb),
+	}
 
 	for _, path := range state.Managed.Files {
 		clean := filepath.Clean(path)
@@ -422,7 +477,7 @@ filepath.Join(binaryInstallDir, assetArtifactWeb),
 		}
 		if err := os.Remove(clean); err != nil && !errors.Is(err, os.ErrNotExist) {
 			if errors.Is(err, os.ErrPermission) {
-				return fmt.Errorf("remove %s: %w (requires privileges for %s)", clean, err, binaryInstallDir)
+				return fmt.Errorf("remove %s: %w (requires privileges for %s)", clean, err, paths.binaryDir)
 			}
 			return fmt.Errorf("remove %s: %w", clean, err)
 		}
@@ -439,12 +494,12 @@ filepath.Join(binaryInstallDir, assetArtifactWeb),
 	sort.SliceStable(dirs, func(i, j int) bool {
 		return len(dirs[i]) > len(dirs[j])
 	})
-for _, dir := range dirs {
-clean := filepath.Clean(dir)
-if !isAllowedManagedDirectory(clean, agentsDir, allowedConfigParentDirs) {
-return fmt.Errorf("refusing to delete unsafe tracked directory: %s", clean)
-}
-if err := os.Remove(clean); err != nil {
+	for _, dir := range dirs {
+		clean := filepath.Clean(dir)
+		if !isAllowedManagedDirectory(clean, agentsDir, allowedConfigParentDirs) {
+			return fmt.Errorf("refusing to delete unsafe tracked directory: %s", clean)
+		}
+		if err := os.Remove(clean); err != nil {
 			if errors.Is(err, os.ErrNotExist) || strings.Contains(strings.ToLower(err.Error()), "directory not empty") {
 				continue
 			}
@@ -623,10 +678,6 @@ func installBinary(srcPath, dstPath string) error {
 	return nil
 }
 
-func extractAgentsArchive(zipPath, destDir string) ([]string, []string, error) {
-	return extractAgentsArchiveWithHook(zipPath, destDir, nil)
-}
-
 func extractAgentsArchiveWithHook(zipPath, destDir string, beforeWrite func(string) error) (filesOut []string, dirsOut []string, retErr error) {
 	r, err := zip.OpenReader(zipPath)
 	if err != nil {
@@ -742,33 +793,29 @@ func shouldStripAgentsPrefix(files []*zip.File) (bool, error) {
 	return seen, nil
 }
 
-func removeStaleAgentFiles(oldFiles, newFiles []string, agentsDir string) error {
-return removeStaleAgentFilesWithHook(oldFiles, newFiles, agentsDir, nil)
-}
-
 func removeStaleAgentFilesWithHook(oldFiles, newFiles []string, agentsDir string, beforeRemove func(string) error) error {
-newSet := map[string]struct{}{}
-for _, path := range newFiles {
-newSet[filepath.Clean(path)] = struct{}{}
-}
+	newSet := map[string]struct{}{}
+	for _, path := range newFiles {
+		newSet[filepath.Clean(path)] = struct{}{}
+	}
 
 	for _, path := range oldFiles {
 		clean := filepath.Clean(path)
 		if !isPathWithinDir(clean, agentsDir) {
 			continue
 		}
-if _, keep := newSet[clean]; keep {
-continue
-}
-if beforeRemove != nil {
-if err := beforeRemove(clean); err != nil {
-return err
-}
-}
-if err := os.Remove(clean); err != nil && !errors.Is(err, os.ErrNotExist) {
-return fmt.Errorf("remove stale managed agent file %s: %w", clean, err)
-}
-}
+		if _, keep := newSet[clean]; keep {
+			continue
+		}
+		if beforeRemove != nil {
+			if err := beforeRemove(clean); err != nil {
+				return err
+			}
+		}
+		if err := os.Remove(clean); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove stale managed agent file %s: %w", clean, err)
+		}
+	}
 	return nil
 }
 
@@ -1056,19 +1103,19 @@ func isAllowedManagedPath(path, agentsDir string, allowedBinaries []string) bool
 }
 
 func isAllowedManagedDirectory(path, agentsDir string, allowedConfigParentDirs []string) bool {
-clean := filepath.Clean(path)
-if clean == filepath.Clean(filepath.Dir(agentsDir)) {
-return true
-}
-if isPathWithinDir(clean, agentsDir) {
-return true
-}
-for _, configParentDir := range allowedConfigParentDirs {
-if clean == filepath.Clean(configParentDir) {
-return true
-}
-}
-return false
+	clean := filepath.Clean(path)
+	if clean == filepath.Clean(filepath.Dir(agentsDir)) {
+		return true
+	}
+	if isPathWithinDir(clean, agentsDir) {
+		return true
+	}
+	for _, configParentDir := range allowedConfigParentDirs {
+		if clean == filepath.Clean(configParentDir) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Manager) trackedStatePath(stateDir string) string {
