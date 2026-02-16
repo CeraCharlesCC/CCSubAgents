@@ -114,6 +114,27 @@ func resolveConfiguredPath(home, value string) string {
 	return filepath.Join(home, trimmed)
 }
 
+func toHomeTildePath(home, path string) string {
+	cleanPath := filepath.Clean(path)
+	cleanHome := filepath.Clean(home)
+	if cleanHome == "" || cleanHome == "." {
+		return filepath.ToSlash(cleanPath)
+	}
+
+	rel, err := filepath.Rel(cleanHome, cleanPath)
+	if err == nil {
+		rel = filepath.Clean(rel)
+		if rel == "." {
+			return "~"
+		}
+		if rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+			return "~/" + filepath.ToSlash(rel)
+		}
+	}
+
+	return filepath.ToSlash(cleanPath)
+}
+
 func runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	var stderr bytes.Buffer
@@ -392,11 +413,6 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 			return err
 		}
 	}
-	settingsEdit, err := applySettingsEdit(settingsPath, agentsDir, previousState)
-	if err != nil {
-		return err
-	}
-
 	mcpPath := paths.mcpPath
 	if created, err := ensureParentDir(mcpPath); err != nil {
 		return err
@@ -409,7 +425,17 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 			return err
 		}
 	}
-	mcpEdit, err := applyMCPEdit(mcpPath, filepath.Join(paths.binaryDir, assetArtifactMCP), previousState)
+	// VS Code/Copilot config paths are user-scoped and should be stored as "~/".
+	// Absolute paths can be rejected or warned on by clients that validate path format.
+	settingsAgentPath := toHomeTildePath(home, agentsDir)
+	mcpCommandPath := toHomeTildePath(home, filepath.Join(paths.binaryDir, assetArtifactMCP))
+
+	settingsEdit, err := applySettingsEdit(settingsPath, settingsAgentPath, previousState)
+	if err != nil {
+		return err
+	}
+
+	mcpEdit, err := applyMCPEdit(mcpPath, mcpCommandPath, previousState)
 	if err != nil {
 		return err
 	}
@@ -829,6 +855,12 @@ func applySettingsEdit(settingsPath, agentsDir string, previous *trackedState) (
 		locations, ok := current.(map[string]any)
 		if !ok {
 			return settingsEdit{}, fmt.Errorf("settings %s must be an object when present", settingsAgentPathKey)
+		}
+		if previous != nil {
+			previousPath := strings.TrimSpace(previous.JSONEdits.Settings.AgentPath)
+			if previousPath != "" && previousPath != agentsDir {
+				delete(locations, previousPath)
+			}
 		}
 		if _, exists := locations[agentsDir]; !exists {
 			locations[agentsDir] = true

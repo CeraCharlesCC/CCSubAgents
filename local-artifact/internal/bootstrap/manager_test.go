@@ -102,6 +102,49 @@ func TestApplySettingsEdit_WrongTypeFails(t *testing.T) {
 	}
 }
 
+func TestApplySettingsEdit_MigratesTrackedPreviousPath(t *testing.T) {
+	dir := t.TempDir()
+	settingsPath := filepath.Join(dir, "settings.json")
+	seed := map[string]any{
+		"chat.agentFilesLocations": map[string]any{
+			"/home/user/.local/share/ccsubagents/agents": true,
+			"/existing": true,
+		},
+	}
+	if err := writeJSONFile(settingsPath, seed); err != nil {
+		t.Fatalf("seed settings file: %v", err)
+	}
+
+	previous := &trackedState{
+		JSONEdits: trackedJSONOps{
+			Settings: settingsEdit{
+				AgentPath: "/home/user/.local/share/ccsubagents/agents",
+				Added:     true,
+			},
+		},
+	}
+
+	edit, err := applySettingsEdit(settingsPath, "~/.local/share/ccsubagents/agents", previous)
+	if err != nil {
+		t.Fatalf("apply settings edit: %v", err)
+	}
+	if !edit.Added {
+		t.Fatalf("expected Added=true")
+	}
+
+	root, err := readJSONFile(settingsPath)
+	if err != nil {
+		t.Fatalf("read settings file: %v", err)
+	}
+	locations := root["chat.agentFilesLocations"].(map[string]any)
+	if locations["~/.local/share/ccsubagents/agents"] != true || locations["/existing"] != true {
+		t.Fatalf("unexpected locations: %#v", locations)
+	}
+	if _, exists := locations["/home/user/.local/share/ccsubagents/agents"]; exists {
+		t.Fatalf("expected tracked previous absolute path removed: %#v", locations)
+	}
+}
+
 func TestApplyMCPEdit_PreservesExistingServersAndInputs(t *testing.T) {
 	dir := t.TempDir()
 	mcpPath := filepath.Join(dir, "mcp.json")
@@ -332,6 +375,25 @@ func TestResolveInstallPaths_EnvOverrides(t *testing.T) {
 	}
 	if paths.mcpPath != filepath.Join(string(os.PathSeparator), "tmp", "custom-mcp.json") {
 		t.Fatalf("expected absolute mcp path override, got %q", paths.mcpPath)
+	}
+}
+
+func TestToHomeTildePath(t *testing.T) {
+	home := filepath.Join(string(os.PathSeparator), "home", "user")
+
+	got := toHomeTildePath(home, filepath.Join(home, ".local", "share", "ccsubagents", "agents"))
+	if got != "~/.local/share/ccsubagents/agents" {
+		t.Fatalf("expected home-relative tilde path, got %q", got)
+	}
+
+	got = toHomeTildePath(home, home)
+	if got != "~" {
+		t.Fatalf("expected home root to map to ~, got %q", got)
+	}
+
+	got = toHomeTildePath(home, filepath.Join(string(os.PathSeparator), "opt", "tool"))
+	if got != "/opt/tool" {
+		t.Fatalf("expected non-home path to remain absolute, got %q", got)
 	}
 }
 
