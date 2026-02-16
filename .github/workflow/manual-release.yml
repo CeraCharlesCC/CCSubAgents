@@ -1,0 +1,75 @@
+name: Manual Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish (for example: v0.1.0)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce main branch
+        run: |
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "manual-release must run from main; current ref is ${GITHUB_REF}" >&2
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: local-artifact/go.mod
+
+      - name: Build release artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          (cd local-artifact && go build -o "$GITHUB_WORKSPACE/dist/local-artifact-mcp" ./cmd/local-artifact-mcp)
+          (cd local-artifact && go build -o "$GITHUB_WORKSPACE/dist/local-artifact-web" ./cmd/local-artifact-web)
+          (cd local-artifact && go build -o "$GITHUB_WORKSPACE/dist/local-artifact" ./cmd/local-artifact)
+          (cd definition/.github/agents && zip -r "$GITHUB_WORKSPACE/dist/agents.zip" .)
+
+      - name: Attest agents.zip
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/agents.zip
+
+      - name: Attest local-artifact-mcp
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/local-artifact-mcp
+
+      - name: Attest local-artifact-web
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/local-artifact-web
+
+      - name: Attest local-artifact
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/local-artifact
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.event.inputs.tag }}" \
+            dist/agents.zip \
+            dist/local-artifact-mcp \
+            dist/local-artifact-web \
+            dist/local-artifact \
+            --target main \
+            --title "${{ github.event.inputs.tag }}" \
+            --notes "Manual release from main"

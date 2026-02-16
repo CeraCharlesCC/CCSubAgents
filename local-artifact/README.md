@@ -39,16 +39,46 @@ When MCP client roots are available, the server requests `roots/list`, normalize
 ## Build
 
 ```
-go build ./cmd/artifact-mcp
-go build ./cmd/artifact-web
+go build ./cmd/local-artifact
+go build ./cmd/local-artifact-mcp
+go build ./cmd/local-artifact-web
 ```
+
+## Bootstrap installer CLI
+
+The `local-artifact` binary manages install lifecycle for local CCSubAgents assets.
+
+Commands:
+
+```
+local-artifact install
+local-artifact update
+local-artifact uninstall
+```
+
+Behavior summary:
+
+- Installs from the latest release in `https://github.com/CeraCharlesCC/CCSubAgents`.
+- Verifies downloaded release assets with GitHub attestations before making install/update changes.
+- Installs `local-artifact-mcp` and `local-artifact-web` into `/usr/local/bin`.
+- Extracts `agents.zip` into `~/.copilot/agents`.
+- Appends `~/.copilot/agents` to `chat.agentFilesLocations` in `~/.vscode-server-insiders/data/Machine/settings.json` without overwriting existing entries.
+- Adds/updates only `servers.artifact-mcp` in `~/.vscode-server-insiders/data/User/mcp.json` and preserves other keys (including `inputs`).
+- Tracks managed files and config insertions in `~/.local/share/ccsubagents/tracked.json` for safe uninstall.
+
+Operational notes:
+
+- `install` and `update` require `gh` CLI in `PATH` for attestation verification (`gh attestation verify`).
+- Writing `/usr/local/bin` commonly requires elevated privileges.
+- `update` forcibly overwrites managed install artifacts to the latest release.
+- `uninstall` removes tracked artifacts and reverts only tracked JSON insertions.
 
 ## Web UI (optional)
 
 Run a simple local web UI to inspect and delete current artifacts:
 
 ```
-LOCAL_ARTIFACT_WEB_UI_ADDR=127.0.0.1:19130 go run ./cmd/artifact-web
+LOCAL_ARTIFACT_WEB_UI_ADDR=127.0.0.1:19130 go run ./cmd/local-artifact-web
 ```
 
 Then open `http://127.0.0.1:19130`.

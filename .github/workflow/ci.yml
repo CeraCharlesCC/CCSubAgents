@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  pull_request:
+
+jobs:
+  local-artifact:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: local-artifact
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: local-artifact/go.mod
+
+      - name: Test module
+        run: go test ./...
+
+      - name: Build local-artifact-mcp
+        run: go build -o /tmp/local-artifact-mcp ./cmd/local-artifact-mcp
+
+      - name: Build local-artifact-web
+        run: go build -o /tmp/local-artifact-web ./cmd/local-artifact-web
+
