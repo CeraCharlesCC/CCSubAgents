@@ -753,10 +753,13 @@ func extractBundleBinaries(zipPath, destDir string, names []string) (map[string]
 		if err != nil {
 			return nil, fmt.Errorf("open archive file %s: %w", file.Name, err)
 		}
-		content, err := io.ReadAll(rc)
-		_ = rc.Close()
-		if err != nil {
-			return nil, fmt.Errorf("read archive file %s: %w", file.Name, err)
+		content, readErr := io.ReadAll(rc)
+		closeErr := rc.Close()
+		if readErr != nil {
+			return nil, fmt.Errorf("read archive file %s: %w", file.Name, readErr)
+		}
+		if closeErr != nil {
+			return nil, fmt.Errorf("close archive file %s: %w", file.Name, closeErr)
 		}
 
 		destPath := filepath.Join(destDir, baseName)
@@ -848,10 +851,13 @@ func extractAgentsArchiveWithHook(zipPath, destDir string, beforeWrite func(stri
 		if err != nil {
 			return nil, nil, fmt.Errorf("open archive file %s: %w", file.Name, err)
 		}
-		content, err := io.ReadAll(rc)
-		_ = rc.Close()
-		if err != nil {
-			return nil, nil, fmt.Errorf("read archive file %s: %w", file.Name, err)
+		content, readErr := io.ReadAll(rc)
+		closeErr := rc.Close()
+		if readErr != nil {
+			return nil, nil, fmt.Errorf("read archive file %s: %w", file.Name, readErr)
+		}
+		if closeErr != nil {
+			return nil, nil, fmt.Errorf("close archive file %s: %w", file.Name, closeErr)
 		}
 		mode := file.FileInfo().Mode().Perm()
 		if mode == 0 {
