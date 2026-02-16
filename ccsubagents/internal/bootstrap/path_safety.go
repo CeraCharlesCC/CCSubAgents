@@ -1,12 +1,10 @@
 package bootstrap
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 )
 
 func uniqueSorted(values []string) []string {
@@ -64,11 +62,4 @@ func isAllowedManagedDirectory(path, agentsDir string, allowedConfigParentDirs [
 		}
 	}
 	return false
-}
-
-func isDirNotEmptyError(err error) bool {
-	if err == nil {
-		return false
-	}
-	return errors.Is(err, syscall.ENOTEMPTY)
 }

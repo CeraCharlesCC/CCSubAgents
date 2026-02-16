@@ -99,9 +99,6 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 
 	downloaded := map[string]string{}
 	for _, name := range installAssetNames {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
 		asset := assets[name]
 		dest := filepath.Join(tmpDir, name)
 		if err := m.downloadFile(ctx, asset.BrowserDownloadURL, dest); err != nil {
