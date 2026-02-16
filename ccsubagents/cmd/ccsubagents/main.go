@@ -15,6 +15,7 @@ func main() {
 	}
 
 	manager := bootstrap.NewManager()
+	manager.SetStatusWriter(os.Stdout)
 	command, err := bootstrap.ParseCommand(os.Args[1])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

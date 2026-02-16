@@ -123,6 +123,7 @@ func (m *Manager) verifyDownloadedAssets(ctx context.Context, downloaded map[str
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		m.reportAction("Verifying attestation for %s", name)
 		path := downloaded[name]
 		_, err := m.runCommand(
 			ctx,

@@ -57,10 +57,28 @@ func (m *Manager) Run(ctx context.Context, command Command) error {
 	}
 }
 
+func (m *Manager) reportPhase(commandName, phase string) {
+	m.statusf("==> %s: %s\n", commandName, phase)
+}
+
+func (m *Manager) reportAction(format string, args ...any) {
+	m.statusf("  - "+format+"\n", args...)
+}
+
+func commandNameForInstallOrUpdate(isUpdate bool) string {
+	if isUpdate {
+		return "Update"
+	}
+	return "Install"
+}
+
 func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+
+	commandName := commandNameForInstallOrUpdate(isUpdate)
+	m.reportPhase(commandName, "resolving environment")
 
 	home, err := m.homeDir()
 	if err != nil {
@@ -73,14 +91,21 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 		return fmt.Errorf("create state directory %s: %w", stateDir, err)
 	}
 
+	m.reportAction("Loading tracked installation state")
 	previousState, err := m.loadTrackedStateForInstall(stateDir)
 	if err != nil {
 		return err
+	}
+	if previousState == nil {
+		m.reportAction("No existing tracked installation found")
+	} else {
+		m.reportAction("Found existing tracked installation")
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 
+	m.reportPhase(commandName, "fetching latest release metadata")
 	release, err := m.fetchLatestRelease(ctx)
 	if err != nil {
 		return err
@@ -90,6 +115,7 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 	if err != nil {
 		return err
 	}
+	m.reportAction("Using release %s", release.TagName)
 
 	tmpDir, err := os.MkdirTemp(stateDir, "download-*")
 	if err != nil {
@@ -97,16 +123,19 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 	}
 	defer os.RemoveAll(tmpDir)
 
+	m.reportPhase(commandName, "downloading required assets")
 	downloaded := map[string]string{}
 	for _, name := range installAssetNames {
 		asset := assets[name]
 		dest := filepath.Join(tmpDir, name)
+		m.reportAction("Downloading %s", name)
 		if err := m.downloadFile(ctx, asset.BrowserDownloadURL, dest); err != nil {
 			return fmt.Errorf("download release asset %q: %w", name, err)
 		}
 		downloaded[name] = dest
 	}
 
+	m.reportPhase(commandName, "verifying attestations")
 	if err := m.verifyDownloadedAssets(ctx, downloaded); err != nil {
 		return err
 	}
@@ -114,6 +143,7 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 		return err
 	}
 
+	m.reportPhase(commandName, "extracting bundles")
 	bundleDir := filepath.Join(tmpDir, "local-artifact")
 	if err := os.MkdirAll(bundleDir, stateDirPerm); err != nil {
 		return fmt.Errorf("create local-artifact bundle extraction dir: %w", err)
@@ -123,6 +153,7 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 	if err != nil {
 		return fmt.Errorf("extract %s: %w", assetLocalArtifactZip, err)
 	}
+	m.reportAction("Extracted %s", assetLocalArtifactZip)
 
 	rollback := newInstallRollback()
 	defer func() {
@@ -165,6 +196,7 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 	if installer == nil {
 		installer = installBinary
 	}
+	m.reportPhase(commandName, "installing binaries and updating configuration")
 
 	for _, binaryName := range []string{assetArtifactMCP, assetArtifactWeb} {
 		if err := ctx.Err(); err != nil {
@@ -172,6 +204,7 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 		}
 		src := bundleBinaries[binaryName]
 		dst := filepath.Join(paths.binaryDir, binaryName)
+		m.reportAction("Installing %s", binaryName)
 		if err := rollback.captureFile(dst); err != nil {
 			return err
 		}
@@ -191,6 +224,7 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 	if err != nil {
 		return fmt.Errorf("extract %s into %s: %w", assetAgentsZip, agentsDir, err)
 	}
+	m.reportAction("Extracted %s", assetAgentsZip)
 
 	settingsPath := paths.settingsPath
 	if created, err := ensureParentDir(settingsPath); err != nil {
@@ -223,6 +257,7 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	m.reportAction("Updating settings and MCP configuration")
 
 	settingsEdit, err := applySettingsEdit(settingsPath, settingsAgentPath, previousState)
 	if err != nil {
@@ -250,17 +285,30 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 		},
 	}
 
-	if isUpdate && previousState != nil {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if err := removeStaleAgentFilesWithHook(previousState.Managed.Files, extractedFiles, agentsDir, rollback.captureFile); err != nil {
-			return err
+	if isUpdate {
+		m.reportPhase(commandName, "cleaning up stale managed agent files")
+		if previousState == nil {
+			m.reportAction("No previously tracked files; skipping cleanup")
+		} else {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			m.reportAction("Removing stale managed agent files")
+			if err := removeStaleAgentFilesWithHook(previousState.Managed.Files, extractedFiles, agentsDir, rollback.captureFile); err != nil {
+				return err
+			}
 		}
 	}
 
+	m.reportPhase(commandName, "finalizing installation state")
+	m.reportAction("Saving tracked state")
 	if err := m.saveTrackedState(stateDir, state); err != nil {
 		return err
+	}
+	if isUpdate {
+		m.reportAction("Update complete: %s", release.TagName)
+	} else {
+		m.reportAction("Install complete: %s", release.TagName)
 	}
 
 	return nil
@@ -270,6 +318,7 @@ func (m *Manager) uninstall(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	m.reportPhase("Uninstall", "resolving environment")
 
 	home, err := m.homeDir()
 	if err != nil {
@@ -278,13 +327,16 @@ func (m *Manager) uninstall(ctx context.Context) error {
 	paths := resolveInstallPaths(home)
 
 	stateDir := filepath.Join(home, ".local", "share", "ccsubagents")
+	m.reportAction("Loading tracked installation state")
 	state, err := m.loadTrackedState(stateDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
+			m.reportAction("No tracked install found (nothing to uninstall)")
 			return nil
 		}
 		return err
 	}
+	m.reportAction("Found tracked installation")
 
 	agentsDir := filepath.Join(home, agentsRelativePath)
 	settingsParentDir := filepath.Dir(paths.settingsPath)
@@ -295,6 +347,8 @@ func (m *Manager) uninstall(ctx context.Context) error {
 		filepath.Join(paths.binaryDir, assetArtifactWeb),
 	}
 
+	m.reportPhase("Uninstall", "removing managed files")
+	m.reportAction("Removing %d tracked files", len(state.Managed.Files))
 	for _, path := range state.Managed.Files {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -314,6 +368,8 @@ func (m *Manager) uninstall(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	m.reportPhase("Uninstall", "reverting configuration edits")
+	m.reportAction("Reverting settings and MCP configuration")
 	if err := revertSettingsEdit(state.JSONEdits.Settings); err != nil {
 		return err
 	}
@@ -325,6 +381,8 @@ func (m *Manager) uninstall(ctx context.Context) error {
 	sort.SliceStable(dirs, func(i, j int) bool {
 		return len(dirs[i]) > len(dirs[j])
 	})
+	m.reportPhase("Uninstall", "cleaning managed directories")
+	m.reportAction("Removing %d tracked directories", len(dirs))
 	for _, dir := range dirs {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -344,9 +402,12 @@ func (m *Manager) uninstall(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	m.reportPhase("Uninstall", "finalizing")
+	m.reportAction("Removing tracked state file")
 	if err := os.Remove(filepath.Join(stateDir, trackedFileName)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove tracked state: %w", err)
 	}
+	m.reportAction("Uninstall complete")
 
 	return nil
 }
