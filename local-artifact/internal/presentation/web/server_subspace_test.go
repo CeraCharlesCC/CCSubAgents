@@ -14,7 +14,7 @@ import (
 	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/domain"
 )
 
-func TestServiceForSubspaceCreatesServiceOnDemand(t *testing.T) {
+func TestServiceForSubspaceReusesServicePerSelector(t *testing.T) {
 	root := t.TempDir()
 	s := New(root)
 
@@ -23,8 +23,8 @@ func TestServiceForSubspaceCreatesServiceOnDemand(t *testing.T) {
 	if first == nil || second == nil {
 		t.Fatalf("expected non-nil services")
 	}
-	if first == second {
-		t.Fatalf("expected distinct service instances for on-demand creation")
+	if first != second {
+		t.Fatalf("expected same service instance for selector reuse")
 	}
 }
 

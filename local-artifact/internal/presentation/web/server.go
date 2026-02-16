@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/domain"
@@ -25,10 +26,15 @@ const globalSubspaceSelector = "global"
 
 type Server struct {
 	baseStoreRoot string
+	mu             sync.Mutex
+	serviceByKey   map[string]*domain.Service
 }
 
 func New(baseStoreRoot string) *Server {
-	return &Server{baseStoreRoot: baseStoreRoot}
+	return &Server{
+		baseStoreRoot: baseStoreRoot,
+		serviceByKey:  make(map[string]*domain.Service),
+	}
 }
 
 func (s *Server) Serve(ctx context.Context, addr string) error {
@@ -340,12 +346,21 @@ func (s *Server) serviceForSubspace(selector string) *domain.Service {
 		selector = globalSubspaceSelector
 	}
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if existing := s.serviceByKey[selector]; existing != nil {
+		return existing
+	}
+
 	storeRoot := s.baseStoreRoot
 	if selector != globalSubspaceSelector {
 		storeRoot = filepath.Join(s.baseStoreRoot, selector)
 	}
 	repo := filestore.New(storeRoot)
-	return domain.NewService(repo)
+	svc := domain.NewService(repo)
+	s.serviceByKey[selector] = svc
+	return svc
 }
 
 func (s *Server) discoverSubspaces() ([]string, error) {
