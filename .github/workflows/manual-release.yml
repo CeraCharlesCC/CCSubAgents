@@ -36,9 +36,10 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
+          (cd ccsubagents && go build -o "$GITHUB_WORKSPACE/dist/ccsubagents" ./cmd/ccsubagents)
           (cd local-artifact && go build -o "$GITHUB_WORKSPACE/dist/local-artifact-mcp" ./cmd/local-artifact-mcp)
           (cd local-artifact && go build -o "$GITHUB_WORKSPACE/dist/local-artifact-web" ./cmd/local-artifact-web)
-          (cd local-artifact && go build -o "$GITHUB_WORKSPACE/dist/local-artifact" ./cmd/local-artifact)
+          (cd dist && zip -j local-artifact.zip local-artifact-mcp local-artifact-web)
           (cd definition/.github/agents && zip -r "$GITHUB_WORKSPACE/dist/agents.zip" .)
 
       - name: Attest agents.zip
@@ -46,20 +47,15 @@ jobs:
         with:
           subject-path: dist/agents.zip
 
-      - name: Attest local-artifact-mcp
+      - name: Attest local-artifact.zip
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: dist/local-artifact-mcp
+          subject-path: dist/local-artifact.zip
 
-      - name: Attest local-artifact-web
+      - name: Attest ccsubagents
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: dist/local-artifact-web
-
-      - name: Attest local-artifact
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-path: dist/local-artifact
+          subject-path: dist/ccsubagents
 
       - name: Publish release
         env:
@@ -68,9 +64,8 @@ jobs:
         run: |
           gh release create "$RELEASE_TAG" \
             dist/agents.zip \
-            dist/local-artifact-mcp \
-            dist/local-artifact-web \
-            dist/local-artifact \
+            dist/local-artifact.zip \
+            dist/ccsubagents \
             --target main \
             --title "$RELEASE_TAG" \
             --notes "Manual release from main"
