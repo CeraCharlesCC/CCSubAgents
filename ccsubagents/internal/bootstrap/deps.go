@@ -39,7 +39,7 @@ func (m *Manager) SetStatusWriter(writer io.Writer) {
 }
 
 func (m *Manager) statusf(format string, args ...any) {
-	if m == nil || m.statusOut == nil {
+	if m.statusOut == nil {
 		return
 	}
 	_, _ = fmt.Fprintf(m.statusOut, format, args...)

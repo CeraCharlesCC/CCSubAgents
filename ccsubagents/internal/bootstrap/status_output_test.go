@@ -13,6 +13,19 @@ import (
 	"time"
 )
 
+func assertStatusContainsInOrder(t *testing.T, status string, wants []string) {
+	t.Helper()
+
+	cursor := 0
+	for _, want := range wants {
+		idx := strings.Index(status[cursor:], want)
+		if idx < 0 {
+			t.Fatalf("expected status output to contain %q after position %d, got:\n%s", want, cursor, status)
+		}
+		cursor += idx + len(want)
+	}
+}
+
 func successReleaseHTTPClient(t *testing.T, releaseTag string, agentsArchive, bundleArchive []byte) *http.Client {
 	t.Helper()
 	return &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -62,18 +75,29 @@ func TestInstallOrUpdate_ReportsInstallProgress(t *testing.T) {
 	}
 
 	status := out.String()
-	for _, want := range []string{
+	assertStatusContainsInOrder(t, status, []string{
 		"==> Install: resolving environment",
+		"  - Loading tracked installation state",
+		"  - No existing tracked installation found",
 		"==> Install: fetching latest release metadata",
+		"  - Using release v1.2.3",
+		"==> Install: downloading required assets",
 		"  - Downloading agents.zip",
+		"  - Downloading local-artifact.zip",
+		"==> Install: verifying attestations",
 		"  - Verifying attestation for agents.zip",
+		"  - Verifying attestation for local-artifact.zip",
+		"==> Install: extracting bundles",
+		"  - Extracted local-artifact.zip",
+		"==> Install: installing binaries and updating configuration",
+		"  - Installing local-artifact-mcp",
+		"  - Installing local-artifact-web",
+		"  - Extracted agents.zip",
+		"  - Updating settings and MCP configuration",
 		"==> Install: finalizing installation state",
+		"  - Saving tracked state",
 		"  - Install complete: v1.2.3",
-	} {
-		if !strings.Contains(status, want) {
-			t.Fatalf("expected status output to contain %q, got:\n%s", want, status)
-		}
-	}
+	})
 }
 
 func TestInstallOrUpdate_ReportsUpdateCleanupProgress(t *testing.T) {
@@ -119,16 +143,31 @@ func TestInstallOrUpdate_ReportsUpdateCleanupProgress(t *testing.T) {
 	}
 
 	status := out.String()
-	for _, want := range []string{
+	assertStatusContainsInOrder(t, status, []string{
 		"==> Update: resolving environment",
+		"  - Loading tracked installation state",
+		"  - Found existing tracked installation",
+		"==> Update: fetching latest release metadata",
+		"  - Using release v2.0.0",
+		"==> Update: downloading required assets",
+		"  - Downloading agents.zip",
+		"  - Downloading local-artifact.zip",
+		"==> Update: verifying attestations",
+		"  - Verifying attestation for agents.zip",
+		"  - Verifying attestation for local-artifact.zip",
+		"==> Update: extracting bundles",
+		"  - Extracted local-artifact.zip",
+		"==> Update: installing binaries and updating configuration",
+		"  - Installing local-artifact-mcp",
+		"  - Installing local-artifact-web",
+		"  - Extracted agents.zip",
+		"  - Updating settings and MCP configuration",
 		"==> Update: cleaning up stale managed agent files",
 		"  - Removing stale managed agent files",
+		"==> Update: finalizing installation state",
+		"  - Saving tracked state",
 		"  - Update complete: v2.0.0",
-	} {
-		if !strings.Contains(status, want) {
-			t.Fatalf("expected status output to contain %q, got:\n%s", want, status)
-		}
-	}
+	})
 }
 
 func TestUninstall_ReportsNoopWhenNoTrackedState(t *testing.T) {
@@ -141,15 +180,11 @@ func TestUninstall_ReportsNoopWhenNoTrackedState(t *testing.T) {
 	}
 
 	status := out.String()
-	for _, want := range []string{
+	assertStatusContainsInOrder(t, status, []string{
 		"==> Uninstall: resolving environment",
 		"  - Loading tracked installation state",
 		"  - No tracked install found (nothing to uninstall)",
-	} {
-		if !strings.Contains(status, want) {
-			t.Fatalf("expected status output to contain %q, got:\n%s", want, status)
-		}
-	}
+	})
 }
 
 func TestUninstall_ReportsProgressOnTrackedState(t *testing.T) {
@@ -190,14 +225,18 @@ func TestUninstall_ReportsProgressOnTrackedState(t *testing.T) {
 	}
 
 	status := out.String()
-	for _, want := range []string{
+	assertStatusContainsInOrder(t, status, []string{
+		"==> Uninstall: resolving environment",
+		"  - Loading tracked installation state",
+		"  - Found tracked installation",
 		"==> Uninstall: removing managed files",
+		"  - Removing 1 tracked files",
 		"==> Uninstall: reverting configuration edits",
+		"  - Reverting settings and MCP configuration",
+		"==> Uninstall: cleaning managed directories",
+		"  - Removing 1 tracked directories",
 		"==> Uninstall: finalizing",
+		"  - Removing tracked state file",
 		"  - Uninstall complete",
-	} {
-		if !strings.Contains(status, want) {
-			t.Fatalf("expected status output to contain %q, got:\n%s", want, status)
-		}
-	}
+	})
 }
