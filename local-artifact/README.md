@@ -7,12 +7,12 @@ A **completely local** MCP server that lets agents **save and retrieve named art
 By default artifacts are stored under:
 
 - Linux/macOS: `~/.local/share/ccsubagents/artifacts`
-- Override with `ARTIFACT_STORE_DIR=/path/to/dir`
+- Override with `LOCAL_ARTIFACT_STORE_DIR=/path/to/dir`
 
 Directory layout:
 
 ```
-$ARTIFACT_STORE_DIR/
+$LOCAL_ARTIFACT_STORE_DIR/
   <subspace-hash>/         # roots-derived subspace (64 lowercase hex)
     names.json             # name -> latest ref
     objects/<ref>          # raw bytes
@@ -25,7 +25,7 @@ $ARTIFACT_STORE_DIR/
 Each `save_*` creates a new immutable `ref` and updates the `name` pointer in `names.json`.
 Aliases are now unique: saving with an existing `name` returns a conflict error instead of overwriting.
 
-When MCP client roots are available, the server requests `roots/list`, normalizes/sorts root URIs, hashes them with SHA-256, and stores artifacts under `$ARTIFACT_STORE_DIR/<hash>/`. If `roots/list` is unavailable, returns any RPC error (including JSON-RPC errors such as `-32601` or `-32603`), cannot be parsed successfully, or if the client does not advertise the roots capability, the server falls back to the global store (`$ARTIFACT_STORE_DIR/`) for that process session only.
+When MCP client roots are available, the server requests `roots/list`, normalizes/sorts root URIs, hashes them with SHA-256, and stores artifacts under `$LOCAL_ARTIFACT_STORE_DIR/<hash>/`. If `roots/list` is unavailable, returns any RPC error (including JSON-RPC errors such as `-32601` or `-32603`), cannot be parsed successfully, or if the client does not advertise the roots capability, the server falls back to the global store (`$LOCAL_ARTIFACT_STORE_DIR/`) for that process session only.
 
 ## Exposed MCP tools
 
@@ -39,16 +39,50 @@ When MCP client roots are available, the server requests `roots/list`, normalize
 ## Build
 
 ```
-go build ./cmd/artifact-mcp
-go build ./cmd/artifact-web
+go build ./cmd/local-artifact
+go build ./cmd/local-artifact-mcp
+go build ./cmd/local-artifact-web
 ```
+
+## Bootstrap installer CLI
+
+The `local-artifact` binary manages install lifecycle for local CCSubAgents assets.
+
+Commands:
+
+```
+local-artifact install
+local-artifact update
+local-artifact uninstall
+```
+
+Behavior summary:
+
+- Installs from the latest release in `https://github.com/CeraCharlesCC/CCSubAgents`.
+- Verifies downloaded release assets with GitHub attestations before making install/update changes.
+- Installs `local-artifact-mcp` and `local-artifact-web` into `/usr/local/bin` by default.
+- Extracts `agents.zip` into `~/.copilot/agents`.
+- Appends `~/.copilot/agents` to `chat.agentFilesLocations` in `~/.vscode-server-insiders/data/Machine/settings.json` by default, without overwriting existing entries.
+- Adds/updates only `servers.artifact-mcp` in `~/.vscode-server-insiders/data/User/mcp.json` by default, and preserves other keys (including `inputs`).
+- Tracks managed files and config insertions in `~/.local/share/ccsubagents/tracked.json` for safe uninstall.
+
+Operational notes:
+
+- `install` and `update` require `gh` CLI in `PATH` for attestation verification (`gh attestation verify`).
+- Override install/config paths if needed:
+  - `LOCAL_ARTIFACT_BIN_DIR` (default `/usr/local/bin`)
+  - `LOCAL_ARTIFACT_SETTINGS_PATH` (default `~/.vscode-server-insiders/data/Machine/settings.json`)
+  - `LOCAL_ARTIFACT_MCP_PATH` (default `~/.vscode-server-insiders/data/User/mcp.json`)
+- Writing `LOCAL_ARTIFACT_BIN_DIR` commonly requires elevated privileges.
+- `update` forcibly overwrites managed install artifacts to the latest release.
+- `uninstall` removes tracked artifacts and reverts only tracked JSON insertions.
 
 ## Web UI (optional)
 
 Run a simple local web UI to inspect and delete current artifacts:
 
 ```
-ARTIFACT_WEB_ADDR=127.0.0.1:19130 go run ./cmd/artifact-web
+LOCAL_ARTIFACT_WEB_UI_ADDR=127.0.0.1:19130 go run ./cmd/local-artifact-web
 ```
 
 Then open `http://127.0.0.1:19130`.
