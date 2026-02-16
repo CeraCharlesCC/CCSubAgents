@@ -10,7 +10,7 @@ import (
 )
 
 func main() {
-	root := os.Getenv("ARTIFACT_STORE_DIR")
+	root := os.Getenv("LOCAL_ARTIFACT_STORE_DIR")
 	if root == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -20,7 +20,7 @@ func main() {
 		root = filepath.Join(home, ".local", "share", "ccsubagents", "artifacts")
 	}
 
-	addr := os.Getenv("ARTIFACT_WEB_ADDR")
+	addr := os.Getenv("LOCAL_ARTIFACT_WEB_UI_ADDR")
 	if addr == "" {
 		addr = "127.0.0.1:19130"
 	}

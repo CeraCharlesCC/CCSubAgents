@@ -7,12 +7,12 @@ A **completely local** MCP server that lets agents **save and retrieve named art
 By default artifacts are stored under:
 
 - Linux/macOS: `~/.local/share/ccsubagents/artifacts`
-- Override with `ARTIFACT_STORE_DIR=/path/to/dir`
+- Override with `LOCAL_ARTIFACT_STORE_DIR=/path/to/dir`
 
 Directory layout:
 
 ```
-$ARTIFACT_STORE_DIR/
+$LOCAL_ARTIFACT_STORE_DIR/
   <subspace-hash>/         # roots-derived subspace (64 lowercase hex)
     names.json             # name -> latest ref
     objects/<ref>          # raw bytes
@@ -25,7 +25,7 @@ $ARTIFACT_STORE_DIR/
 Each `save_*` creates a new immutable `ref` and updates the `name` pointer in `names.json`.
 Aliases are now unique: saving with an existing `name` returns a conflict error instead of overwriting.
 
-When MCP client roots are available, the server requests `roots/list`, normalizes/sorts root URIs, hashes them with SHA-256, and stores artifacts under `$ARTIFACT_STORE_DIR/<hash>/`. If `roots/list` is unavailable, returns any RPC error (including JSON-RPC errors such as `-32601` or `-32603`), cannot be parsed successfully, or if the client does not advertise the roots capability, the server falls back to the global store (`$ARTIFACT_STORE_DIR/`) for that process session only.
+When MCP client roots are available, the server requests `roots/list`, normalizes/sorts root URIs, hashes them with SHA-256, and stores artifacts under `$LOCAL_ARTIFACT_STORE_DIR/<hash>/`. If `roots/list` is unavailable, returns any RPC error (including JSON-RPC errors such as `-32601` or `-32603`), cannot be parsed successfully, or if the client does not advertise the roots capability, the server falls back to the global store (`$LOCAL_ARTIFACT_STORE_DIR/`) for that process session only.
 
 ## Exposed MCP tools
 
@@ -48,7 +48,7 @@ go build ./cmd/artifact-web
 Run a simple local web UI to inspect and delete current artifacts:
 
 ```
-ARTIFACT_WEB_ADDR=127.0.0.1:19130 go run ./cmd/artifact-web
+LOCAL_ARTIFACT_WEB_UI_ADDR=127.0.0.1:19130 go run ./cmd/artifact-web
 ```
 
 Then open `http://127.0.0.1:19130`.

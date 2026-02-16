@@ -10,7 +10,7 @@ import (
 )
 
 func main() {
-	root := os.Getenv("ARTIFACT_STORE_DIR")
+	root := os.Getenv("LOCAL_ARTIFACT_STORE_DIR")
 	if root == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
