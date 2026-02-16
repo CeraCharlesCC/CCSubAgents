@@ -39,28 +39,33 @@ When MCP client roots are available, the server requests `roots/list`, normalize
 ## Build
 
 ```
-go build ./cmd/local-artifact
 go build ./cmd/local-artifact-mcp
 go build ./cmd/local-artifact-web
 ```
 
+Bootstrap CLI (from repo root):
+
+```
+(cd ccsubagents && go build ./cmd/ccsubagents)
+```
+
 ## Bootstrap installer CLI
 
-The `local-artifact` binary manages install lifecycle for local CCSubAgents assets.
+The `ccsubagents` binary manages install lifecycle for local CCSubAgents assets.
 
 Commands:
 
 ```
-local-artifact install
-local-artifact update
-local-artifact uninstall
+ccsubagents install
+ccsubagents update
+ccsubagents uninstall
 ```
 
 Behavior summary:
 
 - Installs from the latest release in `https://github.com/CeraCharlesCC/CCSubAgents`.
 - Verifies downloaded release assets with GitHub attestations before making install/update changes.
-- Installs `local-artifact-mcp` and `local-artifact-web` into `~/.local/bin` by default.
+- Installs from `local-artifact.zip` (which contains `local-artifact-mcp` and `local-artifact-web`) and places both binaries into `~/.local/bin` by default.
 - Extracts `agents.zip` into `~/.local/share/ccsubagents/agents`.
 - Adds `~/.local/share/ccsubagents/agents` to `chat.agentFilesLocations` in `~/.vscode-server-insiders/data/Machine/settings.json` using the object-map format (`"path": true`) without overwriting existing entries.
 - Adds/updates only `servers.artifact-mcp` in `~/.vscode-server-insiders/data/User/mcp.json` by default, and preserves other keys (including `inputs`).

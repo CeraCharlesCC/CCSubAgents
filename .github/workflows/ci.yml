@@ -27,5 +27,22 @@ jobs:
       - name: Build local-artifact-web
         run: go build -o /tmp/local-artifact-web ./cmd/local-artifact-web
 
-      - name: Build local-artifact
-        run: go build -o /tmp/local-artifact ./cmd/local-artifact
+  ccsubagents:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ccsubagents
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: ccsubagents/go.mod
+
+      - name: Test module
+        run: go test ./...
+
+      - name: Build ccsubagents
+        run: go build -o /tmp/ccsubagents ./cmd/ccsubagents

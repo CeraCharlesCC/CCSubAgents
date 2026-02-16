@@ -26,6 +26,7 @@ const (
 	releaseWorkflowPath        = ".github/workflows/manual-release.yml"
 	releaseLatestURL           = "https://api.github.com/repos/" + releaseRepo + "/releases/latest"
 	assetAgentsZip             = "agents.zip"
+	assetLocalArtifactZip      = "local-artifact.zip"
 	assetArtifactMCP           = "local-artifact-mcp"
 	assetArtifactWeb           = "local-artifact-web"
 	binaryInstallDirDefaultRel = ".local/bin"
@@ -43,13 +44,13 @@ const (
 	updateCommand              = "update"
 	uninstallCommand           = "uninstall"
 	httpsHeaderAccept          = "application/vnd.github+json"
-	httpsHeaderUserAgent       = "local-artifact-bootstrap"
+	httpsHeaderUserAgent       = "ccsubagents-bootstrap"
 	httpsHeaderAuthorization   = "Authorization"
 	httpsHeaderGithubTokenPref = "Bearer "
 	attestationOIDCIssuer      = "https://token.actions.githubusercontent.com"
 )
 
-var installAssetNames = []string{assetAgentsZip, assetArtifactMCP, assetArtifactWeb}
+var installAssetNames = []string{assetAgentsZip, assetLocalArtifactZip}
 
 var installBinaryFunc = installBinary
 
@@ -345,6 +346,16 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 		return err
 	}
 
+	bundleDir := filepath.Join(tmpDir, "local-artifact")
+	if err := os.MkdirAll(bundleDir, stateDirPerm); err != nil {
+		return fmt.Errorf("create local-artifact bundle extraction dir: %w", err)
+	}
+
+	bundleBinaries, err := extractBundleBinaries(downloaded[assetLocalArtifactZip], bundleDir, []string{assetArtifactMCP, assetArtifactWeb})
+	if err != nil {
+		return fmt.Errorf("extract %s: %w", assetLocalArtifactZip, err)
+	}
+
 	rollback := newInstallRollback()
 	defer func() {
 		if retErr == nil {
@@ -383,7 +394,7 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 	}
 
 	for _, binaryName := range []string{assetArtifactMCP, assetArtifactWeb} {
-		src := downloaded[binaryName]
+		src := bundleBinaries[binaryName]
 		dst := filepath.Join(paths.binaryDir, binaryName)
 		if err := rollback.captureFile(dst); err != nil {
 			return err
@@ -701,6 +712,72 @@ func installBinary(srcPath, dstPath string) error {
 		return err
 	}
 	return nil
+}
+
+func extractBundleBinaries(zipPath, destDir string, names []string) (map[string]string, error) {
+	r, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return nil, fmt.Errorf("open archive: %w", err)
+	}
+	defer r.Close()
+
+	expected := map[string]struct{}{}
+	for _, name := range names {
+		expected[name] = struct{}{}
+	}
+
+	extracted := map[string]string{}
+	for _, file := range r.File {
+		if file.FileInfo().IsDir() {
+			continue
+		}
+
+		name := strings.TrimSpace(file.Name)
+		if name == "" {
+			continue
+		}
+		clean := filepath.Clean(name)
+		if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || filepath.IsAbs(clean) {
+			return nil, fmt.Errorf("unsafe archive path: %s", file.Name)
+		}
+
+		baseName := filepath.Base(clean)
+		if _, ok := expected[baseName]; !ok {
+			continue
+		}
+		if _, exists := extracted[baseName]; exists {
+			return nil, fmt.Errorf("archive contains duplicate %q", baseName)
+		}
+
+		rc, err := file.Open()
+		if err != nil {
+			return nil, fmt.Errorf("open archive file %s: %w", file.Name, err)
+		}
+		content, err := io.ReadAll(rc)
+		_ = rc.Close()
+		if err != nil {
+			return nil, fmt.Errorf("read archive file %s: %w", file.Name, err)
+		}
+
+		destPath := filepath.Join(destDir, baseName)
+		if err := os.WriteFile(destPath, content, binaryFilePerm); err != nil {
+			return nil, fmt.Errorf("write extracted bundle file %s: %w", destPath, err)
+		}
+		extracted[baseName] = destPath
+	}
+
+	missing := []string{}
+	for _, name := range names {
+		if _, ok := extracted[name]; !ok {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return nil, fmt.Errorf("archive missing required file(s): %s", strings.Join(missing, ", "))
+	}
+
+	return extracted, nil
 }
 
 func extractAgentsArchiveWithHook(zipPath, destDir string, beforeWrite func(string) error) (filesOut []string, dirsOut []string, retErr error) {
