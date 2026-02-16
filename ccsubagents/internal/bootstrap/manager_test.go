@@ -400,24 +400,26 @@ func TestToHomeTildePath(t *testing.T) {
 func TestInstallOrUpdate_AttestationFailureBeforeMutation(t *testing.T) {
 	home := t.TempDir()
 	agentsArchive := zipBytes(t, map[string]string{"agents/example.agent.md": "content"})
+	artifactBundleArchive := zipBytes(t, map[string]string{
+		"local-artifact-mcp":          "mcp-binary",
+		"nested/local-artifact-web":   "web-binary",
+		"nested/not-needed-something": "ignored",
+	})
 
 	httpClient := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		body := ""
 		status := http.StatusOK
 		switch req.URL.String() {
 		case releaseLatestURL:
-			body = fmt.Sprintf(`{"id":101,"tag_name":"v1.2.3","assets":[{"name":"%s","browser_download_url":"https://example.invalid/assets/%s"},{"name":"%s","browser_download_url":"https://example.invalid/assets/%s"},{"name":"%s","browser_download_url":"https://example.invalid/assets/%s"}]}`,
+			body = fmt.Sprintf(`{"id":101,"tag_name":"v1.2.3","assets":[{"name":"%s","browser_download_url":"https://example.invalid/assets/%s"},{"name":"%s","browser_download_url":"https://example.invalid/assets/%s"}]}`,
 				assetAgentsZip, assetAgentsZip,
-				assetArtifactMCP, assetArtifactMCP,
-				assetArtifactWeb, assetArtifactWeb,
+				assetLocalArtifactZip, assetLocalArtifactZip,
 			)
 			return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 		case "https://example.invalid/assets/" + assetAgentsZip:
 			return &http.Response{StatusCode: status, Body: io.NopCloser(bytes.NewReader(agentsArchive)), Header: make(http.Header)}, nil
-		case "https://example.invalid/assets/" + assetArtifactMCP:
-			return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader("mcp-binary")), Header: make(http.Header)}, nil
-		case "https://example.invalid/assets/" + assetArtifactWeb:
-			return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader("web-binary")), Header: make(http.Header)}, nil
+		case "https://example.invalid/assets/" + assetLocalArtifactZip:
+			return &http.Response{StatusCode: status, Body: io.NopCloser(bytes.NewReader(artifactBundleArchive)), Header: make(http.Header)}, nil
 		default:
 			return nil, fmt.Errorf("unexpected request URL: %s", req.URL.String())
 		}
@@ -514,19 +516,20 @@ func TestInstallOrUpdate_UpdateStaleCleanupFailureRollsBackAndKeepsTrackedState(
 			status := http.StatusOK
 			switch req.URL.String() {
 			case releaseLatestURL:
-				body := fmt.Sprintf(`{"id":202,"tag_name":"v-new","assets":[{"name":"%s","browser_download_url":"https://example.invalid/assets/%s"},{"name":"%s","browser_download_url":"https://example.invalid/assets/%s"},{"name":"%s","browser_download_url":"https://example.invalid/assets/%s"}]}`,
+				body := fmt.Sprintf(`{"id":202,"tag_name":"v-new","assets":[{"name":"%s","browser_download_url":"https://example.invalid/assets/%s"},{"name":"%s","browser_download_url":"https://example.invalid/assets/%s"}]}`,
 					assetAgentsZip, assetAgentsZip,
-					assetArtifactMCP, assetArtifactMCP,
-					assetArtifactWeb, assetArtifactWeb,
+					assetLocalArtifactZip, assetLocalArtifactZip,
 				)
 				return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 			case "https://example.invalid/assets/" + assetAgentsZip:
 				archive := zipBytes(t, map[string]string{"agents/current.agent.md": "new"})
 				return &http.Response{StatusCode: status, Body: io.NopCloser(bytes.NewReader(archive)), Header: make(http.Header)}, nil
-			case "https://example.invalid/assets/" + assetArtifactMCP:
-				return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader("mcp")), Header: make(http.Header)}, nil
-			case "https://example.invalid/assets/" + assetArtifactWeb:
-				return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader("web")), Header: make(http.Header)}, nil
+			case "https://example.invalid/assets/" + assetLocalArtifactZip:
+				archive := zipBytes(t, map[string]string{
+					"release/local-artifact-mcp": "mcp",
+					"local-artifact-web":         "web",
+				})
+				return &http.Response{StatusCode: status, Body: io.NopCloser(bytes.NewReader(archive)), Header: make(http.Header)}, nil
 			default:
 				return nil, fmt.Errorf("unexpected request URL: %s", req.URL.String())
 			}

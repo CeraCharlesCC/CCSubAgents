@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"os"
 
-	"local-artifact-mcp/internal/bootstrap"
+	"ccsubagents/internal/bootstrap"
 )
 
 func main() {
 	if len(os.Args) != 2 {
-		fmt.Fprintln(os.Stderr, "usage: local-artifact <install|update|uninstall>")
+		fmt.Fprintln(os.Stderr, "usage: ccsubagents <install|update|uninstall>")
 		os.Exit(2)
 	}
 
