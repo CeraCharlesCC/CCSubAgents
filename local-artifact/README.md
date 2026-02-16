@@ -60,7 +60,7 @@ Behavior summary:
 
 - Installs from the latest release in `https://github.com/CeraCharlesCC/CCSubAgents`.
 - Verifies downloaded release assets with GitHub attestations before making install/update changes.
-- Installs `local-artifact-mcp` and `local-artifact-web` into `/usr/local/bin` by default.
+- Installs `local-artifact-mcp` and `local-artifact-web` into `~/.local/bin` by default.
 - Extracts `agents.zip` into `~/.copilot/agents`.
 - Appends `~/.copilot/agents` to `chat.agentFilesLocations` in `~/.vscode-server-insiders/data/Machine/settings.json` by default, without overwriting existing entries.
 - Adds/updates only `servers.artifact-mcp` in `~/.vscode-server-insiders/data/User/mcp.json` by default, and preserves other keys (including `inputs`).
@@ -70,10 +70,10 @@ Operational notes:
 
 - `install` and `update` require `gh` CLI in `PATH` for attestation verification (`gh attestation verify`).
 - Override install/config paths if needed:
-  - `LOCAL_ARTIFACT_BIN_DIR` (default `/usr/local/bin`)
+  - `LOCAL_ARTIFACT_BIN_DIR` (default `~/.local/bin`)
   - `LOCAL_ARTIFACT_SETTINGS_PATH` (default `~/.vscode-server-insiders/data/Machine/settings.json`)
   - `LOCAL_ARTIFACT_MCP_PATH` (default `~/.vscode-server-insiders/data/User/mcp.json`)
-- Writing `LOCAL_ARTIFACT_BIN_DIR` commonly requires elevated privileges.
+- If you point `LOCAL_ARTIFACT_BIN_DIR` to a system path (for example `/usr/local/bin`), elevated privileges may be required.
 - `update` forcibly overwrites managed install artifacts to the latest release.
 - `uninstall` removes tracked artifacts and reverts only tracked JSON insertions.
 

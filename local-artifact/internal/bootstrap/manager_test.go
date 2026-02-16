@@ -276,15 +276,16 @@ func TestRevertMCPEdit_RestoresPreviousOrRemovesTrackedServer(t *testing.T) {
 
 func TestIsAllowedManagedPath(t *testing.T) {
 	agentsDir := filepath.Join(string(os.PathSeparator), "home", "user", ".copilot", "agents")
+	binaryDir := filepath.Join(string(os.PathSeparator), "home", "user", binaryInstallDirDefaultRel)
 	allowedBinaries := []string{
-		filepath.Join(binaryInstallDir, assetArtifactMCP),
-		filepath.Join(binaryInstallDir, assetArtifactWeb),
+		filepath.Join(binaryDir, assetArtifactMCP),
+		filepath.Join(binaryDir, assetArtifactWeb),
 	}
 
 	if !isAllowedManagedPath(filepath.Join(agentsDir, "one.agent.md"), agentsDir, allowedBinaries) {
 		t.Fatalf("expected managed agents path to be allowed")
 	}
-	if !isAllowedManagedPath(filepath.Join(binaryInstallDir, assetArtifactMCP), agentsDir, allowedBinaries) {
+	if !isAllowedManagedPath(filepath.Join(binaryDir, assetArtifactMCP), agentsDir, allowedBinaries) {
 		t.Fatalf("expected managed mcp binary path to be allowed")
 	}
 	if isAllowedManagedPath(filepath.Join(string(os.PathSeparator), "tmp", "oops"), agentsDir, allowedBinaries) {
@@ -299,8 +300,8 @@ func TestResolveInstallPaths_Defaults(t *testing.T) {
 	t.Setenv(mcpConfigPathEnv, "")
 
 	paths := resolveInstallPaths(home)
-	if paths.binaryDir != binaryInstallDir {
-		t.Fatalf("expected default binary dir %q, got %q", binaryInstallDir, paths.binaryDir)
+	if paths.binaryDir != filepath.Join(home, binaryInstallDirDefaultRel) {
+		t.Fatalf("expected default binary dir under home, got %q", paths.binaryDir)
 	}
 	if paths.settingsPath != filepath.Join(home, settingsRelativePath) {
 		t.Fatalf("expected default settings path under home, got %q", paths.settingsPath)

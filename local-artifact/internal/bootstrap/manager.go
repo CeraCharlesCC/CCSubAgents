@@ -28,7 +28,7 @@ const (
 	assetAgentsZip             = "agents.zip"
 	assetArtifactMCP           = "local-artifact-mcp"
 	assetArtifactWeb           = "local-artifact-web"
-	binaryInstallDir           = "/usr/local/bin"
+	binaryInstallDirDefaultRel = ".local/bin"
 	binaryInstallDirEnv        = "LOCAL_ARTIFACT_BIN_DIR"
 	trackedFileName            = "tracked.json"
 	settingsRelativePath       = ".vscode-server-insiders/data/Machine/settings.json"
@@ -80,7 +80,7 @@ type installPaths struct {
 
 func resolveInstallPaths(home string) installPaths {
 	paths := installPaths{
-		binaryDir:    binaryInstallDir,
+		binaryDir:    filepath.Join(home, binaryInstallDirDefaultRel),
 		settingsPath: filepath.Join(home, settingsRelativePath),
 		mcpPath:      filepath.Join(home, mcpConfigRelativePath),
 	}
