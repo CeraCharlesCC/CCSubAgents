@@ -11,8 +11,22 @@ import (
 	"strings"
 	"testing"
 
-	"local-artifact-mcp/internal/domain"
+	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/domain"
 )
+
+func TestServiceForSubspaceReusesServicePerSelector(t *testing.T) {
+	root := t.TempDir()
+	s := New(root)
+
+	first := s.serviceForSubspace(globalSubspaceSelector)
+	second := s.serviceForSubspace(globalSubspaceSelector)
+	if first == nil || second == nil {
+		t.Fatalf("expected non-nil services")
+	}
+	if first != second {
+		t.Fatalf("expected same service instance for selector reuse")
+	}
+}
 
 func TestIsValidSubspaceHash(t *testing.T) {
 	valid := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"

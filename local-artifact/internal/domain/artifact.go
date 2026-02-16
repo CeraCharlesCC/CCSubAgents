@@ -13,7 +13,7 @@ const (
 type Artifact struct {
 	Ref       string       `json:"ref"`
 	Name      string       `json:"name,omitempty"`
-	Kind      ArtifactKind  `json:"kind"`
+	Kind      ArtifactKind `json:"kind"`
 	MimeType  string       `json:"mimeType"`
 	Filename  string       `json:"filename,omitempty"`
 	SizeBytes int64        `json:"sizeBytes"`

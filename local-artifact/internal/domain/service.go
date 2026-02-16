@@ -7,16 +7,18 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 )
 
 type Service struct {
-	repo Repository
+	repo         Repository
+	refGenerator func() (string, error)
 }
 
 func NewService(repo Repository) *Service {
-	return &Service{repo: repo}
+	return &Service{repo: repo, refGenerator: newRef}
 }
 
 type SaveTextInput struct {
@@ -68,13 +70,17 @@ func (s *Service) save(ctx context.Context, name string, kind ArtifactKind, mime
 		data = []byte{}
 	}
 
-	if _, err := s.repo.Resolve(ctx, name); err == nil {
-		return Artifact{}, fmt.Errorf("%w: %s", ErrAliasExists, name)
-	} else if !errors.Is(err, ErrNotFound) {
+	prevRef := ""
+	if resolvedRef, err := s.repo.Resolve(ctx, name); err == nil {
+		prevRef = resolvedRef
+	} else if err != nil && !errors.Is(err, ErrNotFound) {
 		return Artifact{}, err
 	}
 
-	ref := newRef()
+	ref, err := s.refGenerator()
+	if err != nil {
+		return Artifact{}, fmt.Errorf("%w: generate ref: %v", ErrInternal, err)
+	}
 	sum := sha256.Sum256(data)
 	shaHex := hex.EncodeToString(sum[:])
 
@@ -87,6 +93,7 @@ func (s *Service) save(ctx context.Context, name string, kind ArtifactKind, mime
 		SizeBytes: int64(len(data)),
 		SHA256:    shaHex,
 		CreatedAt: nowUTCSecond(),
+		PrevRef:   prevRef,
 	}
 
 	return s.repo.Save(ctx, a, data)
@@ -130,13 +137,15 @@ func (s *Service) List(ctx context.Context, prefix string, limit int) ([]Artifac
 	return s.repo.List(ctx, normPrefix, limit)
 }
 
-func newRef() string {
+func newRef() (string, error) {
 	// Timestamp + 8 bytes of randomness; safe as a filename.
 	// Example: 20260214T083112Z-1a2b3c4d5e6f7788
 	ts := nowUTCSecond().Format("20060102T150405Z")
 	rnd := make([]byte, 8)
-	_, _ = rand.Read(rnd)
-	return ts + "-" + hex.EncodeToString(rnd)
+	if _, err := io.ReadFull(rand.Reader, rnd); err != nil {
+		return "", err
+	}
+	return ts + "-" + hex.EncodeToString(rnd), nil
 }
 
 func nowUTCSecond() time.Time {

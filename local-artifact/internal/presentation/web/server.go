@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html/template"
 	"net/http"
 	"net/url"
 	"os"
@@ -17,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"local-artifact-mcp/internal/domain"
-	"local-artifact-mcp/internal/infrastructure/filestore"
+	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/domain"
+	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/infrastructure/filestore"
 )
 
 var subspaceHashPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
@@ -27,17 +26,14 @@ const globalSubspaceSelector = "global"
 
 type Server struct {
 	baseStoreRoot string
-
-	mu sync.Mutex
-	// Intentionally unbounded for this developer/operator tool.
-	// Operators are responsible for controlling subspace churn over process lifetime.
-	serviceBySelector map[string]*domain.Service
+	mu             sync.Mutex
+	serviceByKey   map[string]*domain.Service
 }
 
 func New(baseStoreRoot string) *Server {
 	return &Server{
-		baseStoreRoot:     baseStoreRoot,
-		serviceBySelector: map[string]*domain.Service{},
+		baseStoreRoot: baseStoreRoot,
+		serviceByKey:  make(map[string]*domain.Service),
 	}
 }
 
@@ -95,211 +91,6 @@ type pageData struct {
 	Items       []pageItem
 	GeneratedAt string
 }
-
-var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Local Artifact Store</title>
-  <style>
-    :root {
-      --bg: #f5f3ef;
-      --card: #fffaf3;
-      --ink: #1d1b17;
-      --muted: #6a6153;
-      --accent: #0b6e4f;
-      --danger: #a12727;
-      --line: #ded6c9;
-      --mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
-      --sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      background:
-        radial-gradient(circle at 10% 10%, #ece5d7 0, transparent 45%),
-        radial-gradient(circle at 90% 0%, #ddd2bc 0, transparent 40%),
-        var(--bg);
-      color: var(--ink);
-      font-family: var(--sans);
-    }
-    main {
-      max-width: 1100px;
-      margin: 2rem auto;
-      padding: 0 1rem 2rem;
-    }
-    h1 {
-      margin: 0 0 0.35rem;
-      font-size: clamp(1.4rem, 2.5vw, 2rem);
-      letter-spacing: 0.02em;
-    }
-    .sub {
-      margin-bottom: 1.25rem;
-      color: var(--muted);
-    }
-    .card {
-      background: var(--card);
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      padding: 0.9rem;
-      box-shadow: 0 6px 24px rgba(43, 40, 34, 0.07);
-    }
-    form.filters {
-      display: flex;
-      gap: 0.65rem;
-      align-items: end;
-      flex-wrap: wrap;
-      margin-bottom: 0.75rem;
-    }
-    label {
-      display: grid;
-      gap: 0.3rem;
-      font-size: 0.85rem;
-      color: var(--muted);
-    }
-    input, select {
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 0.52rem 0.6rem;
-      font-family: var(--mono);
-      min-width: 180px;
-      background: #fff;
-    }
-    button {
-      border: 0;
-      border-radius: 9px;
-      padding: 0.58rem 0.85rem;
-      font-family: var(--sans);
-      font-weight: 650;
-      cursor: pointer;
-      background: var(--accent);
-      color: #fff;
-    }
-    button.delete {
-      background: var(--danger);
-      font-size: 0.85rem;
-      padding: 0.4rem 0.65rem;
-    }
-    .msg {
-      margin: 0.4rem 0 0.75rem;
-      padding: 0.55rem 0.7rem;
-      border-radius: 8px;
-      font-size: 0.9rem;
-    }
-    .msg.ok {
-      background: #e9f8f2;
-      color: #115a42;
-      border: 1px solid #b8e4d4;
-    }
-    .msg.err {
-      background: #fbeceb;
-      color: #7e2020;
-      border: 1px solid #efc4c4;
-    }
-    .table-wrap {
-      overflow-x: auto;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 0.9rem;
-    }
-    th, td {
-      text-align: left;
-      border-bottom: 1px solid var(--line);
-      padding: 0.58rem 0.45rem;
-      vertical-align: top;
-    }
-    th { color: var(--muted); font-weight: 650; }
-    td code {
-      font-family: var(--mono);
-      font-size: 0.8rem;
-      overflow-wrap: anywhere;
-    }
-    .foot {
-      margin-top: 0.75rem;
-      font-size: 0.82rem;
-      color: var(--muted);
-    }
-    @media (max-width: 700px) {
-      th:nth-child(4), td:nth-child(4), th:nth-child(6), td:nth-child(6) {
-        display: none;
-      }
-    }
-  </style>
-</head>
-<body>
-  <main>
-    <h1>Local Artifact Store</h1>
-    <div class="sub">Track current aliases and delete artifacts quickly.</div>
-
-    <section class="card">
-      <form class="filters" method="get" action="/">
-        <label>Subspace
-          <select name="subspace">
-            <option value="">-- select --</option>
-            {{range .Subspaces}}
-              <option value="{{.}}" {{if eq $.Subspace .}}selected{{end}}>{{if eq . "global"}}global (fallback){{else}}{{.}}{{end}}</option>
-            {{end}}
-          </select>
-        </label>
-        <label>Prefix
-          <input type="text" name="prefix" value="{{.Prefix}}" placeholder="plan/ or image/">
-        </label>
-        <label>Limit
-          <input type="number" name="limit" min="1" max="1000" value="{{.Limit}}">
-        </label>
-        <button type="submit">Refresh</button>
-      </form>
-
-      {{if .Message}}<div class="msg ok">{{.Message}}</div>{{end}}
-      {{if .Error}}<div class="msg err">{{.Error}}</div>{{end}}
-
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Ref</th>
-              <th>Kind</th>
-              <th>MIME</th>
-              <th>Size</th>
-              <th>Created</th>
-              <th>Delete</th>
-            </tr>
-          </thead>
-          <tbody>
-          {{range .Items}}
-            <tr>
-              <td><code>{{.Name}}</code></td>
-              <td><code>{{.Ref}}</code></td>
-              <td>{{.Kind}}</td>
-              <td><code>{{.MimeType}}</code></td>
-              <td>{{.SizeBytes}}</td>
-              <td><code>{{.CreatedAt}}</code></td>
-              <td>
-                <form method="post" action="/delete" onsubmit="return confirm('Delete artifact {{.Name}}?');">
-                  <input type="hidden" name="subspace" value="{{$.Subspace}}">
-                  <input type="hidden" name="prefix" value="{{$.Prefix}}">
-                  <input type="hidden" name="limit" value="{{$.Limit}}">
-                  <input type="hidden" name="name" value="{{.Name}}">
-                  <button class="delete" type="submit">Delete</button>
-                </form>
-              </td>
-            </tr>
-          {{else}}
-            <tr><td colspan="7">No artifacts found for this filter.</td></tr>
-          {{end}}
-          </tbody>
-        </table>
-      </div>
-
-      <div class="foot">Generated at {{.GeneratedAt}} | JSON endpoints: <code>/api/subspaces</code>, <code>/api/artifacts?subspace=&lt;global|hash&gt;</code></div>
-    </section>
-  </main>
-</body>
-</html>`))
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -558,17 +349,17 @@ func (s *Server) serviceForSubspace(selector string) *domain.Service {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	existing := s.serviceBySelector[selector]
-	if existing != nil {
+	if existing := s.serviceByKey[selector]; existing != nil {
 		return existing
 	}
+
 	storeRoot := s.baseStoreRoot
 	if selector != globalSubspaceSelector {
 		storeRoot = filepath.Join(s.baseStoreRoot, selector)
 	}
 	repo := filestore.New(storeRoot)
 	svc := domain.NewService(repo)
-	s.serviceBySelector[selector] = svc
+	s.serviceByKey[selector] = svc
 	return svc
 }
 

@@ -23,7 +23,8 @@ $LOCAL_ARTIFACT_STORE_DIR/
 ```
 
 Each `save_*` creates a new immutable `ref` and updates the `name` pointer in `names.json`.
-Aliases are now unique: saving with an existing `name` returns a conflict error instead of overwriting.
+Re-saving an existing `name` creates a new latest `ref` and sets `prevRef` to the previous latest `ref`.
+Older refs remain retrievable by `ref`.
 
 When MCP client roots are available, the server requests `roots/list`, normalizes/sorts root URIs, hashes them with SHA-256, and stores artifacts under `$LOCAL_ARTIFACT_STORE_DIR/<hash>/`. If `roots/list` is unavailable, returns any RPC error (including JSON-RPC errors such as `-32601` or `-32603`), cannot be parsed successfully, or if the client does not advertise the roots capability, the server falls back to the global store (`$LOCAL_ARTIFACT_STORE_DIR/`) for that process session only.
 

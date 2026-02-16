@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"ccsubagents/internal/bootstrap"
+	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/bootstrap"
 )
 
 func main() {
@@ -15,7 +15,13 @@ func main() {
 	}
 
 	manager := bootstrap.NewManager()
-	if err := manager.Run(context.Background(), os.Args[1]); err != nil {
+	command, err := bootstrap.ParseCommand(os.Args[1])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	if err := manager.Run(context.Background(), command); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
