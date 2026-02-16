@@ -37,8 +37,7 @@ const (
 	mcpConfigPathEnv           = "LOCAL_ARTIFACT_MCP_PATH"
 	mcpServerKey               = "artifact-mcp"
 	settingsAgentPathKey       = "chat.agentFilesLocations"
-	settingsModeFlat           = "flat"
-	settingsModeNested         = "nested"
+	agentsRelativePath         = ".local/share/ccsubagents/agents"
 	trackedSchemaVersion       = 1
 	installCommand             = "install"
 	updateCommand              = "update"
@@ -335,7 +334,7 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 		}
 	}()
 
-	agentsDir := filepath.Join(home, ".copilot", "agents")
+	agentsDir := filepath.Join(home, agentsRelativePath)
 	createdDirs := []string{}
 	if created, err := ensureDirTracked(filepath.Dir(agentsDir)); err != nil {
 		return err
@@ -461,7 +460,7 @@ func (m *Manager) uninstall(ctx context.Context) error {
 		return err
 	}
 
-	agentsDir := filepath.Join(home, ".copilot", "agents")
+	agentsDir := filepath.Join(home, agentsRelativePath)
 	settingsParentDir := filepath.Dir(paths.settingsPath)
 	mcpParentDir := filepath.Dir(paths.mcpPath)
 	allowedConfigParentDirs := []string{settingsParentDir, mcpParentDir}
@@ -826,42 +825,23 @@ func applySettingsEdit(settingsPath, agentsDir string, previous *trackedState) (
 	}
 
 	added := false
-	mode := settingsModeFlat
 	if current, exists := root[settingsAgentPathKey]; exists {
-		arr, ok := current.([]any)
+		locations, ok := current.(map[string]any)
 		if !ok {
-			return settingsEdit{}, fmt.Errorf("settings %s must be an array when present", settingsAgentPathKey)
+			return settingsEdit{}, fmt.Errorf("settings %s must be an object when present", settingsAgentPathKey)
 		}
-		next, changed := appendAgentPath(arr, agentsDir)
-		if changed {
-			root[settingsAgentPathKey] = next
+		if _, exists := locations[agentsDir]; !exists {
+			locations[agentsDir] = true
 			added = true
 		}
 	} else {
-		chatRaw, chatExists := root["chat"]
-		if chatExists {
-			chat, ok := chatRaw.(map[string]any)
-			if !ok {
-				return settingsEdit{}, errors.New("settings key chat must be an object when present")
-			}
-			if current, hasNested := chat["agentFilesLocations"]; hasNested {
-				arr, ok := current.([]any)
-				if !ok {
-					return settingsEdit{}, errors.New("settings chat.agentFilesLocations must be an array when present")
-				}
-				next, changed := appendAgentPath(arr, agentsDir)
-				if changed {
-					chat["agentFilesLocations"] = next
-					added = true
-				}
-				mode = settingsModeNested
-			} else {
-				root[settingsAgentPathKey] = []any{agentsDir}
-				added = true
-			}
-		} else {
-			root[settingsAgentPathKey] = []any{agentsDir}
-			added = true
+		root[settingsAgentPathKey] = map[string]any{agentsDir: true}
+		added = true
+	}
+
+	if chatRaw, chatExists := root["chat"]; chatExists {
+		if _, ok := chatRaw.(map[string]any); !ok {
+			return settingsEdit{}, errors.New("settings key chat must be an object when present")
 		}
 	}
 
@@ -870,14 +850,10 @@ func applySettingsEdit(settingsPath, agentsDir string, previous *trackedState) (
 	}
 
 	wasAdded := added
-	modeToTrack := mode
 	if previous != nil && previous.JSONEdits.Settings.Added {
 		wasAdded = true
-		if strings.TrimSpace(previous.JSONEdits.Settings.Mode) != "" {
-			modeToTrack = previous.JSONEdits.Settings.Mode
-		}
 	}
-	return settingsEdit{File: settingsPath, AgentPath: agentsDir, Mode: modeToTrack, Added: wasAdded}, nil
+	return settingsEdit{File: settingsPath, AgentPath: agentsDir, Added: wasAdded}, nil
 }
 
 func revertSettingsEdit(edit settingsEdit) error {
@@ -892,74 +868,23 @@ func revertSettingsEdit(edit settingsEdit) error {
 		return fmt.Errorf("read settings.json for uninstall: %w", err)
 	}
 
-	changed := false
-	mode := strings.TrimSpace(edit.Mode)
-	if mode == "" || mode == settingsModeFlat {
-		if arrRaw, ok := root[settingsAgentPathKey]; ok {
-			arr, ok := arrRaw.([]any)
-			if !ok {
-				return fmt.Errorf("settings %s must be an array when present", settingsAgentPathKey)
-			}
-			filtered, didChange := removeAgentPath(arr, edit.AgentPath)
-			if didChange {
-				root[settingsAgentPathKey] = filtered
-				changed = true
-			}
-		}
-	}
-
-	if !changed && (mode == "" || mode == settingsModeNested) {
-		chatRaw, ok := root["chat"]
-		if ok {
-			chat, ok := chatRaw.(map[string]any)
-			if !ok {
-				return errors.New("settings key chat must be an object when present")
-			}
-			arrRaw, ok := chat["agentFilesLocations"]
-			if ok {
-				arr, ok := arrRaw.([]any)
-				if !ok {
-					return errors.New("settings chat.agentFilesLocations must be an array when present")
-				}
-				filtered, didChange := removeAgentPath(arr, edit.AgentPath)
-				if didChange {
-					chat["agentFilesLocations"] = filtered
-					changed = true
-				}
-			}
-		}
-	}
-
-	if !changed {
+	locationsRaw, ok := root[settingsAgentPathKey]
+	if !ok {
 		return nil
 	}
+	locations, ok := locationsRaw.(map[string]any)
+	if !ok {
+		return fmt.Errorf("settings %s must be an object when present", settingsAgentPathKey)
+	}
+	if _, exists := locations[edit.AgentPath]; !exists {
+		return nil
+	}
+	delete(locations, edit.AgentPath)
 
 	if err := writeJSONFile(edit.File, root); err != nil {
 		return fmt.Errorf("write settings.json during uninstall: %w", err)
 	}
 	return nil
-}
-
-func appendAgentPath(existing []any, agentPath string) ([]any, bool) {
-	for _, item := range existing {
-		if value, ok := item.(string); ok && value == agentPath {
-			return existing, false
-		}
-	}
-	return append(existing, agentPath), true
-}
-
-func removeAgentPath(existing []any, agentPath string) ([]any, bool) {
-	filtered := make([]any, 0, len(existing))
-	changed := false
-	for _, item := range existing {
-		if value, ok := item.(string); ok && value == agentPath {
-			changed = true
-			continue
-		}
-		filtered = append(filtered, item)
-	}
-	return filtered, changed
 }
 
 func applyMCPEdit(path, commandPath string, previous *trackedState) (mcpEdit, error) {

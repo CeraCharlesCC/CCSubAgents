@@ -53,8 +53,10 @@ func TestApplySettingsEdit_AppendsWithoutOverwriting(t *testing.T) {
 	dir := t.TempDir()
 	settingsPath := filepath.Join(dir, "settings.json")
 	seed := map[string]any{
-		"editor.fontSize":          14,
-		"chat.agentFilesLocations": []any{"/existing"},
+		"editor.fontSize": 14,
+		"chat.agentFilesLocations": map[string]any{
+			"/existing": true,
+		},
 	}
 	if err := writeJSONFile(settingsPath, seed); err != nil {
 		t.Fatalf("seed settings file: %v", err)
@@ -76,12 +78,12 @@ func TestApplySettingsEdit_AppendsWithoutOverwriting(t *testing.T) {
 		t.Fatalf("expected editor.fontSize preserved")
 	}
 
-	arr := root["chat.agentFilesLocations"].([]any)
-	if len(arr) != 2 {
-		t.Fatalf("expected 2 paths, got %d", len(arr))
+	locations := root["chat.agentFilesLocations"].(map[string]any)
+	if len(locations) != 2 {
+		t.Fatalf("expected 2 paths, got %d", len(locations))
 	}
-	if arr[0].(string) != "/existing" || arr[1].(string) != "/managed/agents" {
-		t.Fatalf("unexpected agentFilesLocations: %#v", arr)
+	if locations["/existing"] != true || locations["/managed/agents"] != true {
+		t.Fatalf("unexpected agentFilesLocations: %#v", locations)
 	}
 }
 
@@ -176,7 +178,11 @@ func TestRevertSettingsEdit_RemovesOnlyTrackedValue(t *testing.T) {
 	dir := t.TempDir()
 	settingsPath := filepath.Join(dir, "settings.json")
 	seed := map[string]any{
-		"chat.agentFilesLocations": []any{"/existing", "/managed/agents", "/other"},
+		"chat.agentFilesLocations": map[string]any{
+			"/existing":       true,
+			"/managed/agents": true,
+			"/other":          true,
+		},
 	}
 	if err := writeJSONFile(settingsPath, seed); err != nil {
 		t.Fatalf("seed settings file: %v", err)
@@ -191,13 +197,16 @@ func TestRevertSettingsEdit_RemovesOnlyTrackedValue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read settings file: %v", err)
 	}
-	arr := root["chat.agentFilesLocations"].([]any)
-	if len(arr) != 2 || arr[0].(string) != "/existing" || arr[1].(string) != "/other" {
-		t.Fatalf("unexpected array after revert: %#v", arr)
+	locations := root["chat.agentFilesLocations"].(map[string]any)
+	if len(locations) != 2 || locations["/existing"] != true || locations["/other"] != true {
+		t.Fatalf("unexpected map after revert: %#v", locations)
+	}
+	if _, ok := locations["/managed/agents"]; ok {
+		t.Fatalf("expected managed path removed: %#v", locations)
 	}
 }
 
-func TestApplySettingsEdit_NestedFallbackRemainsSupported(t *testing.T) {
+func TestApplySettingsEdit_UsesTopLevelObjectFormat(t *testing.T) {
 	dir := t.TempDir()
 	settingsPath := filepath.Join(dir, "settings.json")
 	seed := map[string]any{
@@ -209,21 +218,18 @@ func TestApplySettingsEdit_NestedFallbackRemainsSupported(t *testing.T) {
 		t.Fatalf("seed settings file: %v", err)
 	}
 
-	edit, err := applySettingsEdit(settingsPath, "/managed/agents", nil)
+	_, err := applySettingsEdit(settingsPath, "/managed/agents", nil)
 	if err != nil {
 		t.Fatalf("apply settings edit: %v", err)
-	}
-	if edit.Mode != settingsModeNested {
-		t.Fatalf("expected nested mode, got %q", edit.Mode)
 	}
 
 	root, err := readJSONFile(settingsPath)
 	if err != nil {
 		t.Fatalf("read settings file: %v", err)
 	}
-	arr := root["chat"].(map[string]any)["agentFilesLocations"].([]any)
-	if len(arr) != 2 || arr[1].(string) != "/managed/agents" {
-		t.Fatalf("unexpected nested array: %#v", arr)
+	locations := root["chat.agentFilesLocations"].(map[string]any)
+	if len(locations) != 1 || locations["/managed/agents"] != true {
+		t.Fatalf("unexpected top-level object: %#v", locations)
 	}
 }
 
@@ -275,7 +281,7 @@ func TestRevertMCPEdit_RestoresPreviousOrRemovesTrackedServer(t *testing.T) {
 }
 
 func TestIsAllowedManagedPath(t *testing.T) {
-	agentsDir := filepath.Join(string(os.PathSeparator), "home", "user", ".copilot", "agents")
+	agentsDir := filepath.Join(string(os.PathSeparator), "home", "user", ".local", "share", "ccsubagents", "agents")
 	binaryDir := filepath.Join(string(os.PathSeparator), "home", "user", binaryInstallDirDefaultRel)
 	allowedBinaries := []string{
 		filepath.Join(binaryDir, assetArtifactMCP),
@@ -373,7 +379,7 @@ func TestInstallOrUpdate_AttestationFailureBeforeMutation(t *testing.T) {
 		t.Fatalf("expected attestation error, got: %v", err)
 	}
 
-	if _, statErr := os.Stat(filepath.Join(home, ".copilot", "agents")); !errors.Is(statErr, os.ErrNotExist) {
+	if _, statErr := os.Stat(filepath.Join(home, ".local", "share", "ccsubagents", "agents")); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("expected agents dir to remain absent, stat err: %v", statErr)
 	}
 	if _, statErr := os.Stat(filepath.Join(home, ".local", "share", "ccsubagents", trackedFileName)); !errors.Is(statErr, os.ErrNotExist) {
@@ -411,7 +417,7 @@ func TestInstallOrUpdate_CorruptTrackedStateFails(t *testing.T) {
 
 func TestInstallOrUpdate_UpdateStaleCleanupFailureRollsBackAndKeepsTrackedState(t *testing.T) {
 	home := t.TempDir()
-	agentsDir := filepath.Join(home, ".copilot", "agents")
+	agentsDir := filepath.Join(home, ".local", "share", "ccsubagents", "agents")
 	staleDir := filepath.Join(agentsDir, "stale-dir")
 	if err := os.MkdirAll(staleDir, stateDirPerm); err != nil {
 		t.Fatalf("create agents dir: %v", err)

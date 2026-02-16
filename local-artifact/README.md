@@ -61,8 +61,8 @@ Behavior summary:
 - Installs from the latest release in `https://github.com/CeraCharlesCC/CCSubAgents`.
 - Verifies downloaded release assets with GitHub attestations before making install/update changes.
 - Installs `local-artifact-mcp` and `local-artifact-web` into `~/.local/bin` by default.
-- Extracts `agents.zip` into `~/.copilot/agents`.
-- Appends `~/.copilot/agents` to `chat.agentFilesLocations` in `~/.vscode-server-insiders/data/Machine/settings.json` by default, without overwriting existing entries.
+- Extracts `agents.zip` into `~/.local/share/ccsubagents/agents`.
+- Adds `~/.local/share/ccsubagents/agents` to `chat.agentFilesLocations` in `~/.vscode-server-insiders/data/Machine/settings.json` using the object-map format (`"path": true`) without overwriting existing entries.
 - Adds/updates only `servers.artifact-mcp` in `~/.vscode-server-insiders/data/User/mcp.json` by default, and preserves other keys (including `inputs`).
 - Tracks managed files and config insertions in `~/.local/share/ccsubagents/tracked.json` for safe uninstall.
 
