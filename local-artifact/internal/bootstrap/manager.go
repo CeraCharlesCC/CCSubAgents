@@ -23,7 +23,7 @@ const (
 	stateFilePerm              = 0o644
 	binaryFilePerm             = 0o755
 	releaseRepo                = "CeraCharlesCC/CCSubAgents"
-	releaseWorkflowPath        = ".github/workflow/manual-release.yml"
+	releaseWorkflowPath        = ".github/workflows/manual-release.yml"
 	releaseLatestURL           = "https://api.github.com/repos/" + releaseRepo + "/releases/latest"
 	assetAgentsZip             = "agents.zip"
 	assetArtifactMCP           = "local-artifact-mcp"
