@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"local-artifact-mcp/internal/domain"
+	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/domain"
 )
 
 type Store struct {
@@ -50,8 +50,8 @@ func (s *Store) Save(ctx context.Context, a domain.Artifact, data []byte) (domai
 	if err != nil {
 		return domain.Artifact{}, err
 	}
-	if existingRef := strings.TrimSpace(idx.Names[a.Name]); existingRef != "" && existingRef != a.Ref {
-		return domain.Artifact{}, fmt.Errorf("%w: %s", domain.ErrAliasExists, a.Name)
+	if existingRef := strings.TrimSpace(idx.Names[a.Name]); existingRef != "" && existingRef != a.Ref && strings.TrimSpace(a.PrevRef) == "" {
+		a.PrevRef = existingRef
 	}
 
 	objPath := filepath.Join(s.root, "objects", a.Ref)

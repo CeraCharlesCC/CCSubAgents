@@ -549,9 +549,7 @@ func TestInstallOrUpdate_UpdateStaleCleanupFailureRollsBackAndKeepsTrackedState(
 		t.Fatalf("read seeded tracked state: %v", err)
 	}
 
-	prevInstallBinary := installBinaryFunc
-	installBinaryFunc = func(string, string) error { return nil }
-	t.Cleanup(func() { installBinaryFunc = prevInstallBinary })
+	m.installBinary = func(string, string) error { return nil }
 
 	err = m.installOrUpdate(context.Background(), true)
 	if err == nil {
@@ -727,6 +725,60 @@ func TestUninstall_AllowsTrackedConfigParentDirs(t *testing.T) {
 	}
 	if _, err := os.Stat(mcpParent); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected mcp parent dir removed, stat err: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(stateDir, trackedFileName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected tracked state removed, stat err: %v", err)
+	}
+}
+
+func TestUninstall_IgnoresTypedNotEmptyDirectoryError(t *testing.T) {
+	home := t.TempDir()
+	m := &Manager{
+		httpClient: &http.Client{},
+		now:        func() time.Time { return time.Unix(0, 0).UTC() },
+		homeDir:    func() (string, error) { return home, nil },
+		lookPath:   func(string) (string, error) { return "/usr/bin/gh", nil },
+		runCommand: func(context.Context, string, ...string) ([]byte, error) { return nil, nil },
+	}
+
+	stateDir := filepath.Join(home, ".local", "share", "ccsubagents")
+	if err := os.MkdirAll(stateDir, stateDirPerm); err != nil {
+		t.Fatalf("create state dir: %v", err)
+	}
+
+	agentsDir := filepath.Join(home, agentsRelativePath)
+	if err := os.MkdirAll(agentsDir, stateDirPerm); err != nil {
+		t.Fatalf("create agents dir: %v", err)
+	}
+	keepFile := filepath.Join(agentsDir, "keep.agent.md")
+	if err := os.WriteFile(keepFile, []byte("keep"), stateFilePerm); err != nil {
+		t.Fatalf("seed non-empty agents dir: %v", err)
+	}
+
+	state := trackedState{
+		Version:     trackedSchemaVersion,
+		Repo:        releaseRepo,
+		ReleaseID:   1,
+		ReleaseTag:  "v1.0.0",
+		InstalledAt: "2026-01-01T00:00:00Z",
+		Managed: managedState{
+			Dirs: []string{agentsDir},
+		},
+		JSONEdits: trackedJSONOps{
+			Settings: settingsEdit{},
+			MCP:      mcpEdit{},
+		},
+	}
+	if err := m.saveTrackedState(stateDir, state); err != nil {
+		t.Fatalf("seed tracked state: %v", err)
+	}
+
+	if err := m.uninstall(context.Background()); err != nil {
+		t.Fatalf("uninstall should ignore typed ENOTEMPTY directory removal errors: %v", err)
+	}
+
+	if _, err := os.Stat(keepFile); err != nil {
+		t.Fatalf("expected non-empty agents directory contents to remain: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(stateDir, trackedFileName)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected tracked state removed, stat err: %v", err)

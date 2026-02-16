@@ -4,20 +4,16 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 
-	"local-artifact-mcp/internal/presentation/mcp"
+	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/config"
+	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/presentation/mcp"
 )
 
 func main() {
-	root := os.Getenv("LOCAL_ARTIFACT_STORE_DIR")
-	if root == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "cannot determine home dir:", err)
-			os.Exit(1)
-		}
-		root = filepath.Join(home, ".local", "share", "ccsubagents", "artifacts")
+	root, err := config.ResolveStoreRoot()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cannot determine artifact store root:", err)
+		os.Exit(1)
 	}
 
 	srv := mcp.New(root)

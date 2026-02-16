@@ -7,7 +7,7 @@ const (
 	serverTitle        = "Local Artifact Store"
 	serverVersion      = "0.1.0"
 	serverDescription  = "Completely local MCP server that lets agents save and retrieve named artifacts (text, files, images)."
-	serverInstructions = "Use save_artifact_text or save_artifact_blob to persist an artifact under a unique name. Use get_artifact with name or ref to retrieve, delete_artifact to remove an artifact, and get_artifact_list to inspect current aliases."
+	serverInstructions = "Use save_artifact_text or save_artifact_blob to persist an artifact under a name. Re-saving the same name creates a new ref linked by prevRef and moves the name to the latest ref. Use get_artifact with name or ref to retrieve, delete_artifact to remove an artifact, and get_artifact_list to inspect current aliases."
 )
 
 const (
