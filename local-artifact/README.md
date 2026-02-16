@@ -36,7 +36,7 @@ When MCP client roots are available, the server requests `roots/list`, normalize
 - `get_artifact_list`
 - `delete_artifact`
 
-## Build
+## Build (in /local-artifact/)
 
 ```
 go build ./cmd/local-artifact-mcp
