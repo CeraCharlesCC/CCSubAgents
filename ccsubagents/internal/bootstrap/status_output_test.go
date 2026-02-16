@@ -89,8 +89,8 @@ func TestInstallOrUpdate_ReportsUpdateCleanupProgress(t *testing.T) {
 
 	var out bytes.Buffer
 	m := statusTestManager(home, successReleaseHTTPClient(t, "v2.0.0", zipBytes(t, map[string]string{"agents/new.agent.md": "fresh"}), zipBytes(t, map[string]string{
-		"bundle/local-artifact-mcp": "mcp-binary",
-		"bundle/local-artifact-web": "web-binary",
+		"local-artifact-mcp": "mcp-binary",
+		"local-artifact-web": "web-binary",
 	})), &out)
 
 	stateDir := filepath.Join(home, ".local", "share", "ccsubagents")

@@ -62,7 +62,7 @@ func (m *Manager) reportPhase(commandName, phase string) {
 }
 
 func (m *Manager) reportAction(format string, args ...any) {
-	m.statusf("  - "+format+"\n", args...)
+	m.statusf("  - %s\n", fmt.Sprintf(format, args...))
 }
 
 func commandNameForInstallOrUpdate(isUpdate bool) string {
