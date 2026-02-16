@@ -14,6 +14,31 @@ This repository is a personal collection of `agent.md` files designed for use wi
 
 All of these agents are defined with the assumption that an MCP called `artifact-mcp` is available in their toolset. This local artifact system is designed to prevent the orchestrator from becoming a bottleneck by having to relay sub-agent outputs; for example, having subagent-plan return a plan directly to the orchestrator, which then passes it verbatim, word for word, to subagent-impl (which amounts to nothing more than a scaling bottleneck). The idea is inspired by Antigravity's artifact concept.
 
+## How to Install
+
+### Build from source
+
+Prerequisites:
+- Go toolchain
+
+Commands:
+
+```bash
+cd ccsubagents
+go build -o ccsubagents ./cmd/ccsubagents
+./ccsubagents install
+```
+
+### Use the prebuilt binary
+
+1. Download the latest `ccsubagents` binary from this repository's Releases page.
+2. Mark it executable and run install:
+
+```bash
+chmod +x ./ccsubagents
+./ccsubagents install
+```
+
 ## What's the benefit?
 
 LLMs are not perfect (nor, for that matter, is any intelligent being). They sometimes fail tool calls, or inspect files they didn't need to look at — and unlike a human who can simply forget, that information lingers in the context. (On that note, it would be interesting to have a tool that lets the LLM itself omit tool-call results it deems unnecessary, with a stated reason.)

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -19,6 +20,7 @@ type Manager struct {
 	lookPath      func(string) (string, error)
 	runCommand    func(context.Context, string, ...string) ([]byte, error)
 	installBinary func(string, string) error
+	statusOut     io.Writer
 }
 
 func NewManager() *Manager {
@@ -30,6 +32,17 @@ func NewManager() *Manager {
 		runCommand:    runCommand,
 		installBinary: installBinary,
 	}
+}
+
+func (m *Manager) SetStatusWriter(writer io.Writer) {
+	m.statusOut = writer
+}
+
+func (m *Manager) statusf(format string, args ...any) {
+	if m.statusOut == nil {
+		return
+	}
+	_, _ = fmt.Fprintf(m.statusOut, format, args...)
 }
 
 type installPaths struct {
