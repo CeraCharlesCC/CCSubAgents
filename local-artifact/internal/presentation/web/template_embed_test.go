@@ -40,4 +40,8 @@ func TestIndexTemplateHasPrepaintThemeBootstrapAndSafeStorageGuards(t *testing.T
 	if !strings.Contains(templateText, "catch (error)") {
 		t.Fatalf("expected try/catch guards for storage access")
 	}
+
+	if count := strings.Count(templateText, `name="csrf_token"`); count < 2 {
+		t.Fatalf("expected csrf token hidden fields in insert and delete forms, got %d", count)
+	}
 }

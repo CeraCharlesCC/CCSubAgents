@@ -2,7 +2,10 @@ package web
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,6 +29,9 @@ var subspaceHashPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
 const globalSubspaceSelector = "global"
 const maxInsertUploadBytes int64 = 10 << 20
+const csrfCookieName = "local-artifact-csrf"
+const csrfFieldName = "csrf_token"
+const csrfTokenBytes = 32
 
 type Server struct {
 	baseStoreRoot string
@@ -90,6 +96,7 @@ type pageData struct {
 	Subspace    string
 	Prefix      string
 	Limit       int
+	CSRFToken   string
 	Message     string
 	Error       string
 	Items       []pageItem
@@ -104,7 +111,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 	subspaces, err := s.discoverSubspaces()
 	if err != nil {
-		renderIndex(w, pageData{
+		renderIndex(w, r, pageData{
 			Limit:       200,
 			Error:       err.Error(),
 			GeneratedAt: time.Now().UTC().Format(time.RFC3339),
@@ -122,7 +129,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
 		parsed, parseErr := strconv.Atoi(raw)
 		if parseErr != nil {
-			renderIndex(w, pageData{
+			renderIndex(w, r, pageData{
 				Subspaces:   subspaces,
 				Subspace:    subspace,
 				Prefix:      prefix,
@@ -136,7 +143,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if subspace != "" && !isValidSubspaceSelector(subspace) {
-		renderIndex(w, pageData{
+		renderIndex(w, r, pageData{
 			Subspaces:   subspaces,
 			Subspace:    subspace,
 			Prefix:      prefix,
@@ -147,7 +154,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if subspace != "" && !containsString(subspaces, subspace) {
-		renderIndex(w, pageData{
+		renderIndex(w, r, pageData{
 			Subspaces:   subspaces,
 			Subspace:    subspace,
 			Prefix:      prefix,
@@ -163,7 +170,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		svc := s.serviceForSubspace(subspace)
 		arts, listErr := svc.List(r.Context(), prefix, limit)
 		if listErr != nil {
-			renderIndex(w, pageData{
+			renderIndex(w, r, pageData{
 				Subspaces:   subspaces,
 				Subspace:    subspace,
 				Prefix:      prefix,
@@ -194,7 +201,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		message = "No subspaces discovered yet."
 	}
 
-	renderIndex(w, pageData{
+	renderIndex(w, r, pageData{
 		Subspaces:   subspaces,
 		Subspace:    subspace,
 		Prefix:      prefix,
@@ -218,6 +225,10 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 
 	subspace, prefix, limitRaw := formRedirectContext(r.Form)
 	redirectBase := indexRedirectBase(subspace, prefix, limitRaw)
+	if err := validateCSRFToken(r); err != nil {
+		http.Redirect(w, r, redirectBase+"&err="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		return
+	}
 
 	svc, err := s.serviceFromSelectedSubspace(subspace)
 	if err != nil {
@@ -263,11 +274,7 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if deletedCount == 0 {
-		errMsg := "selected artifacts not found"
-		if notFoundCount == 0 {
-			errMsg = domain.ErrRefOrName.Error()
-		}
-		http.Redirect(w, r, redirectBase+"&err="+url.QueryEscape(errMsg), http.StatusSeeOther)
+		http.Redirect(w, r, redirectBase+"&err="+url.QueryEscape("selected artifacts not found"), http.StatusSeeOther)
 		return
 	}
 
@@ -303,6 +310,10 @@ func (s *Server) handleInsert(w http.ResponseWriter, r *http.Request) {
 
 	subspace, prefix, limitRaw := formRedirectContext(r.Form)
 	redirectBase := indexRedirectBase(subspace, prefix, limitRaw)
+	if err := validateCSRFToken(r); err != nil {
+		http.Redirect(w, r, redirectBase+"&err="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		return
+	}
 
 	svc, err := s.serviceFromSelectedSubspace(subspace)
 	if err != nil {
@@ -632,6 +643,71 @@ func trimUniqueNonEmpty(values []string) []string {
 	return trimmedValues
 }
 
+func issueCSRFToken() (string, error) {
+	buf := make([]byte, csrfTokenBytes)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
+}
+
+func isValidCSRFToken(token string) bool {
+	if len(token) != csrfTokenBytes*2 {
+		return false
+	}
+	for _, r := range token {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func csrfTokenFromRequest(r *http.Request) string {
+	cookie, err := r.Cookie(csrfCookieName)
+	if err != nil {
+		return ""
+	}
+	token := strings.TrimSpace(cookie.Value)
+	if !isValidCSRFToken(token) {
+		return ""
+	}
+	return token
+}
+
+func ensureCSRFToken(w http.ResponseWriter, r *http.Request) string {
+	if token := csrfTokenFromRequest(r); token != "" {
+		return token
+	}
+	token, err := issueCSRFToken()
+	if err != nil {
+		return ""
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     csrfCookieName,
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+	return token
+}
+
+func validateCSRFToken(r *http.Request) error {
+	cookieToken := csrfTokenFromRequest(r)
+	if cookieToken == "" {
+		return errors.New("invalid csrf token")
+	}
+	formToken := strings.TrimSpace(r.FormValue(csrfFieldName))
+	if !isValidCSRFToken(formToken) {
+		return errors.New("invalid csrf token")
+	}
+	if subtle.ConstantTimeCompare([]byte(cookieToken), []byte(formToken)) != 1 {
+		return errors.New("invalid csrf token")
+	}
+	return nil
+}
+
 func (s *Server) serviceFromSelectedSubspace(rawSubspace string) (*domain.Service, error) {
 	subspace := normalizeSubspaceSelector(rawSubspace)
 	if !isValidSubspaceSelector(subspace) {
@@ -751,7 +827,8 @@ func containsString(items []string, target string) bool {
 	return false
 }
 
-func renderIndex(w http.ResponseWriter, data pageData) {
+func renderIndex(w http.ResponseWriter, r *http.Request, data pageData) {
+	data.CSRFToken = ensureCSRFToken(w, r)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := indexTemplate.Execute(w, data); err != nil {
 		http.Error(w, "render error", http.StatusInternalServerError)

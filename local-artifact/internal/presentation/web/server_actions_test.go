@@ -17,6 +17,7 @@ import (
 
 func TestHandleInsertTextSuccess(t *testing.T) {
 	s := New(t.TempDir())
+	csrfToken := strings.Repeat("a", csrfTokenBytes*2)
 
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
@@ -28,6 +29,9 @@ func TestHandleInsertTextSuccess(t *testing.T) {
 	}
 	if err := writer.WriteField("limit", "200"); err != nil {
 		t.Fatalf("write limit: %v", err)
+	}
+	if err := writer.WriteField(csrfFieldName, csrfToken); err != nil {
+		t.Fatalf("write csrf token: %v", err)
 	}
 	if err := writer.WriteField("name", "plan/text"); err != nil {
 		t.Fatalf("write name: %v", err)
@@ -41,6 +45,7 @@ func TestHandleInsertTextSuccess(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/insert", body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: csrfToken})
 	rr := httptest.NewRecorder()
 	s.handleInsert(rr, req)
 
@@ -63,11 +68,15 @@ func TestHandleInsertTextSuccess(t *testing.T) {
 
 func TestHandleInsertFileSuccess(t *testing.T) {
 	s := New(t.TempDir())
+	csrfToken := strings.Repeat("a", csrfTokenBytes*2)
 
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 	if err := writer.WriteField("subspace", globalSubspaceSelector); err != nil {
 		t.Fatalf("write subspace: %v", err)
+	}
+	if err := writer.WriteField(csrfFieldName, csrfToken); err != nil {
+		t.Fatalf("write csrf token: %v", err)
 	}
 	if err := writer.WriteField("name", "files/blob"); err != nil {
 		t.Fatalf("write name: %v", err)
@@ -85,6 +94,7 @@ func TestHandleInsertFileSuccess(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/insert", body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: csrfToken})
 	rr := httptest.NewRecorder()
 	s.handleInsert(rr, req)
 
@@ -107,14 +117,51 @@ func TestHandleInsertFileSuccess(t *testing.T) {
 
 func TestHandleInsertRejectsMissingPayload(t *testing.T) {
 	s := New(t.TempDir())
+	csrfToken := strings.Repeat("a", csrfTokenBytes*2)
 
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 	if err := writer.WriteField("subspace", globalSubspaceSelector); err != nil {
 		t.Fatalf("write subspace: %v", err)
 	}
+	if err := writer.WriteField(csrfFieldName, csrfToken); err != nil {
+		t.Fatalf("write csrf token: %v", err)
+	}
 	if err := writer.WriteField("name", "plan/empty"); err != nil {
 		t.Fatalf("write name: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/insert", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: csrfToken})
+	rr := httptest.NewRecorder()
+	s.handleInsert(rr, req)
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	loc := rr.Header().Get("Location")
+	if !strings.Contains(loc, "choose+exactly+one+content+source") {
+		t.Fatalf("unexpected redirect location: %q", loc)
+	}
+}
+
+func TestHandleInsertRejectsMissingCSRFToken(t *testing.T) {
+	s := New(t.TempDir())
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	if err := writer.WriteField("subspace", globalSubspaceSelector); err != nil {
+		t.Fatalf("write subspace: %v", err)
+	}
+	if err := writer.WriteField("name", "plan/text"); err != nil {
+		t.Fatalf("write name: %v", err)
+	}
+	if err := writer.WriteField("text", "hello"); err != nil {
+		t.Fatalf("write text: %v", err)
 	}
 	if err := writer.Close(); err != nil {
 		t.Fatalf("close writer: %v", err)
@@ -128,15 +175,15 @@ func TestHandleInsertRejectsMissingPayload(t *testing.T) {
 	if rr.Code != http.StatusSeeOther {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
-	loc := rr.Header().Get("Location")
-	if !strings.Contains(loc, "choose+exactly+one+content+source") {
-		t.Fatalf("unexpected redirect location: %q", loc)
+	if !strings.Contains(rr.Header().Get("Location"), "invalid+csrf+token") {
+		t.Fatalf("expected invalid csrf token redirect, got location=%q", rr.Header().Get("Location"))
 	}
 }
 
 func TestHandleDeleteSupportsMultipleNames(t *testing.T) {
 	s := New(t.TempDir())
 	svc := s.serviceForSubspace(globalSubspaceSelector)
+	csrfToken := strings.Repeat("a", csrfTokenBytes*2)
 
 	if _, err := svc.SaveText(context.Background(), domain.SaveTextInput{Name: "bulk/a", Text: "1"}); err != nil {
 		t.Fatalf("seed a: %v", err)
@@ -149,11 +196,13 @@ func TestHandleDeleteSupportsMultipleNames(t *testing.T) {
 	form.Set("subspace", globalSubspaceSelector)
 	form.Set("prefix", "bulk/")
 	form.Set("limit", "200")
+	form.Set(csrfFieldName, csrfToken)
 	form.Add("name", "bulk/a")
 	form.Add("name", "bulk/b")
 
 	req := httptest.NewRequest(http.MethodPost, "/delete", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: csrfToken})
 	rr := httptest.NewRecorder()
 	s.handleDelete(rr, req)
 
@@ -170,6 +219,28 @@ func TestHandleDeleteSupportsMultipleNames(t *testing.T) {
 	}
 	if len(items) != 0 {
 		t.Fatalf("expected empty list after delete, got %d items", len(items))
+	}
+}
+
+func TestHandleDeleteRejectsMissingCSRFToken(t *testing.T) {
+	s := New(t.TempDir())
+
+	form := url.Values{}
+	form.Set("subspace", globalSubspaceSelector)
+	form.Set("prefix", "bulk/")
+	form.Set("limit", "200")
+	form.Add("name", "bulk/a")
+
+	req := httptest.NewRequest(http.MethodPost, "/delete", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	s.handleDelete(rr, req)
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Header().Get("Location"), "invalid+csrf+token") {
+		t.Fatalf("expected invalid csrf token redirect, got location=%q", rr.Header().Get("Location"))
 	}
 }
 
@@ -296,6 +367,7 @@ func TestAPIDeletePrevalidatesAllSelectorsBeforeMutation(t *testing.T) {
 func TestHandleDeletePrevalidatesAllSelectorsBeforeMutation(t *testing.T) {
 	s := New(t.TempDir())
 	svc := s.serviceForSubspace(globalSubspaceSelector)
+	csrfToken := strings.Repeat("a", csrfTokenBytes*2)
 
 	artifact, err := svc.SaveText(context.Background(), domain.SaveTextInput{Name: "form/prevalidate", Text: "safe"})
 	if err != nil {
@@ -306,11 +378,13 @@ func TestHandleDeletePrevalidatesAllSelectorsBeforeMutation(t *testing.T) {
 	form.Set("subspace", globalSubspaceSelector)
 	form.Set("prefix", "form/")
 	form.Set("limit", "200")
+	form.Set(csrfFieldName, csrfToken)
 	form.Add("ref", artifact.Ref)
 	form.Add("ref", "bad-ref")
 
 	req := httptest.NewRequest(http.MethodPost, "/delete", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: csrfToken})
 	rr := httptest.NewRecorder()
 	s.handleDelete(rr, req)
 
@@ -354,15 +428,18 @@ func TestAPIDeleteSingleNotFoundKeepsLegacyPayload(t *testing.T) {
 
 func TestHandleDeleteSingleNotFoundKeepsLegacyRedirectError(t *testing.T) {
 	s := New(t.TempDir())
+	csrfToken := strings.Repeat("a", csrfTokenBytes*2)
 
 	form := url.Values{}
 	form.Set("subspace", globalSubspaceSelector)
 	form.Set("prefix", "")
 	form.Set("limit", "200")
+	form.Set(csrfFieldName, csrfToken)
 	form.Add("name", "missing")
 
 	req := httptest.NewRequest(http.MethodPost, "/delete", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: csrfToken})
 	rr := httptest.NewRecorder()
 	s.handleDelete(rr, req)
 

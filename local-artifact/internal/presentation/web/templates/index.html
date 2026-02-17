@@ -278,6 +278,7 @@
         <input type="hidden" name="subspace" value="{{.Subspace}}">
         <input type="hidden" name="prefix" value="{{.Prefix}}">
         <input type="hidden" name="limit" value="{{.Limit}}">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
         <label>Name
           <input type="text" name="name" required placeholder="plan/task-123">
         </label>
@@ -303,6 +304,7 @@
         <input type="hidden" name="subspace" value="{{.Subspace}}">
         <input type="hidden" name="prefix" value="{{.Prefix}}">
         <input type="hidden" name="limit" value="{{.Limit}}">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
         <div id="selected-inputs"></div>
         <div class="bulk-controls">
           <button class="delete" id="delete-selected" type="submit" disabled>Delete selected</button>
@@ -324,7 +326,7 @@
           </thead>
           <tbody>
           {{range $idx, $item := .Items}}
-            <tr class="selectable" data-selectable-row data-index="{{$idx}}" data-name="{{$item.Name}}" data-ref="{{$item.Ref}}">
+            <tr class="selectable" data-selectable-row data-index="{{$idx}}" data-name="{{$item.Name}}">
               <td><code>{{$item.Name}}</code></td>
               <td><code>{{$item.Ref}}</code></td>
               <td>{{$item.Kind}}</td>
@@ -369,6 +371,7 @@
         try {
           window.localStorage.setItem(storageKey, theme);
         } catch (error) {
+          console.error('Failed to save theme preference:', error);
         }
       }
 
@@ -435,20 +438,12 @@
             return;
           }
           const name = row.dataset.name || '';
-          const ref = row.dataset.ref || '';
-
           if (name !== '') {
             const nameInput = document.createElement('input');
             nameInput.type = 'hidden';
             nameInput.name = 'name';
             nameInput.value = name;
             selectedInputs.appendChild(nameInput);
-          } else if (ref !== '') {
-            const refInput = document.createElement('input');
-            refInput.type = 'hidden';
-            refInput.name = 'ref';
-            refInput.value = ref;
-            selectedInputs.appendChild(refInput);
           }
         });
 
