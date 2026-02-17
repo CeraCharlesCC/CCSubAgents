@@ -110,8 +110,57 @@ func TestHandleInsertFileSuccess(t *testing.T) {
 	if art.Kind != domain.ArtifactKindFile {
 		t.Fatalf("expected file kind, got %s", art.Kind)
 	}
+	if art.Filename != "blob.bin" {
+		t.Fatalf("expected filename to be preserved, got %q", art.Filename)
+	}
 	if !bytes.Equal(payload, []byte{0x01, 0x02, 0x03}) {
 		t.Fatalf("unexpected payload: %v", payload)
+	}
+}
+
+func TestHandleInsertSanitizesUploadedFilename(t *testing.T) {
+	s := New(t.TempDir())
+	csrfToken := mustIssueCSRFToken(t)
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	if err := writer.WriteField("subspace", globalSubspaceSelector); err != nil {
+		t.Fatalf("write subspace: %v", err)
+	}
+	if err := writer.WriteField(csrfFieldName, csrfToken); err != nil {
+		t.Fatalf("write csrf token: %v", err)
+	}
+	if err := writer.WriteField("name", "files/unsafe-name"); err != nil {
+		t.Fatalf("write name: %v", err)
+	}
+	part, err := writer.CreateFormFile("file", "../../evil.txt")
+	if err != nil {
+		t.Fatalf("create file field: %v", err)
+	}
+	if _, err := part.Write([]byte("payload")); err != nil {
+		t.Fatalf("write file payload: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/insert", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: csrfToken})
+	rr := httptest.NewRecorder()
+	s.handleInsert(rr, req)
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	svc := s.serviceForSubspace(globalSubspaceSelector)
+	art, _, err := svc.Get(context.Background(), domain.Selector{Name: "files/unsafe-name"})
+	if err != nil {
+		t.Fatalf("get inserted blob artifact: %v", err)
+	}
+	if art.Filename != "evil.txt" {
+		t.Fatalf("expected sanitized filename, got %q", art.Filename)
 	}
 }
 
@@ -314,8 +363,50 @@ func TestAPISaveSupportsTextAndBlob(t *testing.T) {
 	if blobArtifact.Kind != domain.ArtifactKindFile {
 		t.Fatalf("expected file kind, got %s", blobArtifact.Kind)
 	}
+	if blobArtifact.Filename != "blob.bin" {
+		t.Fatalf("unexpected blob filename: %q", blobArtifact.Filename)
+	}
 	if !bytes.Equal(blobPayload, []byte{0x0a, 0x0b, 0x0c}) {
 		t.Fatalf("unexpected blob payload: %v", blobPayload)
+	}
+}
+
+func TestAPISaveJSONBodyLimitAllowsMaxBinaryUpload(t *testing.T) {
+	encodedPayloadBytes := int64(base64.StdEncoding.EncodedLen(int(maxInsertUploadBytes)))
+	requiredLimit := encodedPayloadBytes + maxInsertUploadOverheadBytes
+	if maxInsertJSONBodyBytes < requiredLimit {
+		t.Fatalf(
+			"json body limit too small: got %d, need at least %d to carry 10 MiB base64 payload",
+			maxInsertJSONBodyBytes,
+			requiredLimit,
+		)
+	}
+}
+
+func TestAPISaveSanitizesFilename(t *testing.T) {
+	s := New(t.TempDir())
+
+	blobData := base64.StdEncoding.EncodeToString([]byte("payload"))
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/artifacts?subspace=global",
+		strings.NewReader(`{"name":"api/safe-filename","dataBase64":"`+blobData+`","filename":"../../payload.bin"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	s.handleAPIArtifacts(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	svc := s.serviceForSubspace(globalSubspaceSelector)
+	art, _, err := svc.Get(context.Background(), domain.Selector{Name: "api/safe-filename"})
+	if err != nil {
+		t.Fatalf("get blob artifact: %v", err)
+	}
+	if art.Filename != "payload.bin" {
+		t.Fatalf("expected sanitized filename, got %q", art.Filename)
 	}
 }
 
@@ -471,14 +562,20 @@ func TestAPIContentReturnsPayloadAndMetadataHeaders(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
-	if got := rr.Header().Get("Content-Type"); got != "text/plain; charset=utf-8" {
+	if got := rr.Header().Get("Content-Type"); got != "application/octet-stream" {
 		t.Fatalf("unexpected content type: %q", got)
+	}
+	if got := rr.Header().Get("Content-Disposition"); !strings.Contains(got, "attachment") {
+		t.Fatalf("unexpected content disposition: %q", got)
 	}
 	if got := rr.Header().Get("X-Artifact-Name"); got != "viewer/sample" {
 		t.Fatalf("unexpected artifact name header: %q", got)
 	}
 	if got := rr.Header().Get("X-Artifact-Ref"); got != saved.Ref {
 		t.Fatalf("unexpected artifact ref header: %q", got)
+	}
+	if got := rr.Header().Get("X-Artifact-MimeType"); got != "text/plain; charset=utf-8" {
+		t.Fatalf("unexpected artifact mime type header: %q", got)
 	}
 	if rr.Body.String() != "preview text" {
 		t.Fatalf("unexpected payload: %q", rr.Body.String())

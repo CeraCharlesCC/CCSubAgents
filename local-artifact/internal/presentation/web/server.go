@@ -32,6 +32,7 @@ const globalSubspaceSelector = "global"
 const mebibyte int64 = 1 << 20
 const maxInsertUploadBytes int64 = 10 * mebibyte
 const maxInsertUploadOverheadBytes int64 = 1 * mebibyte
+const maxInsertJSONBodyBytes int64 = ((maxInsertUploadBytes + 2) / 3 * 4) + maxInsertUploadOverheadBytes
 const csrfCookieName = "local-artifact-csrf"
 const csrfFieldName = "csrf_token"
 const csrfTokenBytes = 32
@@ -377,21 +378,28 @@ func (s *Server) handleInsert(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		uploadMimeType := mimeType
-		if uploadMimeType == "" && fileHeader != nil {
-			uploadMimeType = strings.TrimSpace(fileHeader.Header.Get("Content-Type"))
+		if uploadMimeType == "" {
+			if fileHeader != nil {
+				uploadMimeType = strings.TrimSpace(fileHeader.Header.Get("Content-Type"))
+			}
+			if uploadMimeType == "" || strings.EqualFold(uploadMimeType, "application/octet-stream") {
+				if len(data) > 0 {
+					uploadMimeType = http.DetectContentType(data)
+				}
+			}
 		}
 		if uploadMimeType == "" {
 			uploadMimeType = "application/octet-stream"
 		}
-		filename := ""
+		uploadFilename := ""
 		if fileHeader != nil {
-			filename = fileHeader.Filename
+			uploadFilename = sanitizeFilename(fileHeader.Filename)
 		}
 		saved, err = svc.SaveBlob(r.Context(), domain.SaveBlobInput{
 			Name:     name,
 			Data:     data,
 			MimeType: uploadMimeType,
-			Filename: filename,
+			Filename: uploadFilename,
 		})
 	}
 	if err != nil {
@@ -456,8 +464,8 @@ func (s *Server) handleAPIContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	contentType := normalizeContentType(artifact.MimeType)
-	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", attachmentDisposition(artifactDownloadFilename(artifact)))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Artifact-Ref", artifact.Ref)
 	w.Header().Set("X-Artifact-Name", artifact.Name)
@@ -586,7 +594,7 @@ func (s *Server) handleAPISave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	decoder := json.NewDecoder(io.LimitReader(r.Body, maxInsertUploadBytes+maxInsertUploadOverheadBytes))
+	decoder := json.NewDecoder(io.LimitReader(r.Body, maxInsertJSONBodyBytes))
 	decoder.DisallowUnknownFields()
 	var req apiSaveRequest
 	if err := decoder.Decode(&req); err != nil {
@@ -619,15 +627,23 @@ func (s *Server) handleAPISave(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid dataBase64"})
 			return
 		}
+		if int64(len(data)) > maxInsertUploadBytes {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "upload too large (max 10 MiB)"})
+			return
+		}
 		mimeType := strings.TrimSpace(req.MimeType)
 		if mimeType == "" {
-			mimeType = "application/octet-stream"
+			if len(data) > 0 {
+				mimeType = http.DetectContentType(data)
+			} else {
+				mimeType = "application/octet-stream"
+			}
 		}
 		saved, err = svc.SaveBlob(r.Context(), domain.SaveBlobInput{
 			Name:     req.Name,
 			Data:     data,
 			MimeType: mimeType,
-			Filename: req.Filename,
+			Filename: sanitizeFilename(req.Filename),
 		})
 	}
 	if err != nil {
@@ -702,16 +718,42 @@ func parseSingleSelector(values url.Values) (domain.Selector, error) {
 	return domain.Selector{Ref: refs[0]}, nil
 }
 
-func normalizeContentType(raw string) string {
-	value := strings.TrimSpace(raw)
-	if value == "" {
-		return "application/octet-stream"
+func sanitizeFilename(raw string) string {
+	name := strings.TrimSpace(raw)
+	if name == "" {
+		return ""
 	}
-	mediaType, _, err := mime.ParseMediaType(value)
-	if err != nil || mediaType == "" {
-		return "application/octet-stream"
+	name = strings.ReplaceAll(name, "\\", "/")
+	name = filepath.Base(name)
+	if name == "." || name == "/" {
+		return ""
 	}
-	return value
+	name = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, name)
+	return strings.TrimSpace(name)
+}
+
+func artifactDownloadFilename(artifact domain.Artifact) string {
+	if name := sanitizeFilename(artifact.Filename); name != "" {
+		return name
+	}
+	fallback := strings.ReplaceAll(strings.TrimSpace(artifact.Name), "/", "_")
+	if name := sanitizeFilename(fallback); name != "" {
+		return name
+	}
+	return "artifact.bin"
+}
+
+func attachmentDisposition(filename string) string {
+	disposition := mime.FormatMediaType("attachment", map[string]string{"filename": filename})
+	if strings.TrimSpace(disposition) == "" {
+		return `attachment; filename="artifact.bin"`
+	}
+	return disposition
 }
 
 func prevalidateDeleteSelectors(ctx context.Context, svc *domain.Service, selectors []domain.Selector) error {
@@ -760,12 +802,8 @@ func isValidCSRFToken(token string) bool {
 	if len(token) != csrfTokenBytes*2 {
 		return false
 	}
-	for _, r := range token {
-		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
-			return false
-		}
-	}
-	return true
+	_, err := hex.DecodeString(token)
+	return err == nil
 }
 
 func csrfTokenFromRequest(r *http.Request) string {

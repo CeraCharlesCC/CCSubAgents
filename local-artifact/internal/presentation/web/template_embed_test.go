@@ -44,4 +44,12 @@ func TestIndexTemplateHasPrepaintThemeBootstrapAndSafeStorageGuards(t *testing.T
 	if count := strings.Count(templateText, `name="csrf_token"`); count < 2 {
 		t.Fatalf("expected csrf token hidden fields in insert and delete forms, got %d", count)
 	}
+
+	if !strings.Contains(templateText, `refInput.name = 'ref'`) {
+		t.Fatalf("expected bulk delete selection to submit refs")
+	}
+
+	if !strings.Contains(templateText, `response.headers.get('X-Artifact-MimeType')`) {
+		t.Fatalf("expected viewer to prefer artifact mime metadata header for previews")
+	}
 }

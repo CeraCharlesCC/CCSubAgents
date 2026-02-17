@@ -660,7 +660,7 @@
               });
             }
             return response.blob().then(function (blob) {
-              const rawMimeType = response.headers.get('Content-Type') || row.dataset.mime || 'application/octet-stream';
+              const rawMimeType = response.headers.get('X-Artifact-MimeType') || row.dataset.mime || response.headers.get('Content-Type') || 'application/octet-stream';
               return { blob: blob, rawMimeType: rawMimeType };
             });
           })
@@ -727,13 +727,13 @@
           if (!row) {
             return;
           }
-          const name = row.dataset.name || '';
-          if (name !== '') {
-            const nameInput = document.createElement('input');
-            nameInput.type = 'hidden';
-            nameInput.name = 'name';
-            nameInput.value = name;
-            selectedInputs.appendChild(nameInput);
+          const ref = row.dataset.ref || '';
+          if (ref !== '') {
+            const refInput = document.createElement('input');
+            refInput.type = 'hidden';
+            refInput.name = 'ref';
+            refInput.value = ref;
+            selectedInputs.appendChild(refInput);
           }
         });
 
