@@ -325,22 +325,25 @@ func TestToolTodo_WriteRejectsOmittedRequiredTodoItemFields(t *testing.T) {
 	ctx := context.Background()
 	s := New(t.TempDir())
 
-	const expected = "Invalid arguments: expected {operation, artifact, todoList?, expectedPrevRef?}"
 	testCases := []struct {
-		name string
-		item map[string]any
+		name           string
+		item           map[string]any
+		messageSnippet string
 	}{
 		{
-			name: "missing id",
-			item: map[string]any{"title": "Task", "status": "not-started"},
+			name:           "missing id",
+			item:           map[string]any{"title": "Task", "status": "not-started"},
+			messageSnippet: "todoList[0].id is required",
 		},
 		{
-			name: "missing title",
-			item: map[string]any{"id": 1, "status": "not-started"},
+			name:           "missing title",
+			item:           map[string]any{"id": 1, "status": "not-started"},
+			messageSnippet: "todoList[0].title is required",
 		},
 		{
-			name: "missing status",
-			item: map[string]any{"id": 1, "title": "Task"},
+			name:           "missing status",
+			item:           map[string]any{"id": 1, "title": "Task"},
+			messageSnippet: "todoList[0].status must be one of",
 		},
 	}
 
@@ -360,8 +363,11 @@ func TestToolTodo_WriteRejectsOmittedRequiredTodoItemFields(t *testing.T) {
 			if !resp.IsError {
 				t.Fatalf("expected omitted required todo field to return tool error, got %+v", resp)
 			}
-			if firstContentText(resp) != expected {
-				t.Fatalf("expected invalid-arguments contract %q, got %+v", expected, resp.Content)
+			if !contentContains(resp, "invalid input") {
+				t.Fatalf("expected invalid-input error for omitted required field, got %+v", resp.Content)
+			}
+			if !contentContains(resp, tc.messageSnippet) {
+				t.Fatalf("expected detailed field validation message %q, got %+v", tc.messageSnippet, resp.Content)
 			}
 		})
 	}
@@ -384,10 +390,11 @@ func TestToolTodo_WriteRejectsNullTodoItemPayload(t *testing.T) {
 	if !resp.IsError {
 		t.Fatalf("expected null todo item payload to return tool error, got %+v", resp)
 	}
-
-	const expected = "Invalid arguments: expected {operation, artifact, todoList?, expectedPrevRef?}"
-	if firstContentText(resp) != expected {
-		t.Fatalf("expected invalid-arguments contract %q, got %+v", expected, resp.Content)
+	if !contentContains(resp, "invalid input") {
+		t.Fatalf("expected invalid-input error for null todo item payload, got %+v", resp.Content)
+	}
+	if !contentContains(resp, "todoList[0].id is required") {
+		t.Fatalf("expected required-field message for null todo item payload, got %+v", resp.Content)
 	}
 }
 

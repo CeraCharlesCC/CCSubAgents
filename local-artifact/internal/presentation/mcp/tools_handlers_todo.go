@@ -24,10 +24,16 @@ type todoItem struct {
 	Status string `json:"status"`
 }
 
+type todoItemInput struct {
+	ID     *int   `json:"id"`
+	Title  string `json:"title"`
+	Status string `json:"status"`
+}
+
 type todoArgs struct {
 	Operation       string               `json:"operation"`
 	Artifact        todoArtifactSelector `json:"artifact"`
-	TodoList        *[]todoItem          `json:"todoList,omitempty"`
+	TodoList        *[]todoItemInput     `json:"todoList,omitempty"`
 	ExpectedPrevRef string               `json:"expectedPrevRef,omitempty"`
 }
 
@@ -51,9 +57,6 @@ func (s *Server) toolTodo(ctx context.Context, argsRaw json.RawMessage) (any, *j
 		return toolError(todoInvalidArgumentsMessage), nil
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return toolError(todoInvalidArgumentsMessage), nil
-	}
-	if err := ensureTodoWriteRequiredFieldsPresent(argsRaw, strings.TrimSpace(args.Operation), args.TodoList != nil); err != nil {
 		return toolError(todoInvalidArgumentsMessage), nil
 	}
 
@@ -80,7 +83,10 @@ func (s *Server) toolTodo(ctx context.Context, argsRaw json.RawMessage) (any, *j
 					Name:      todoName,
 					URIByName: domain.URIByName(nameEsc),
 				}
-				jsonStr, _ := json.Marshal(out)
+				jsonStr, err := json.Marshal(out)
+				if err != nil {
+					return toolError("internal error: failed to marshal output"), nil
+				}
 				return toolResult{Content: []any{textContent(string(jsonStr))}, StructuredContent: out}, nil
 			}
 			return toolErrorFromErr(err), nil
@@ -100,7 +106,10 @@ func (s *Server) toolTodo(ctx context.Context, argsRaw json.RawMessage) (any, *j
 			URIByName: domain.URIByName(nameEsc),
 			URIByRef:  a.URIByRef(),
 		}
-		jsonStr, _ := json.Marshal(out)
+		jsonStr, err := json.Marshal(out)
+		if err != nil {
+			return toolError("internal error: failed to marshal output"), nil
+		}
 		return toolResult{Content: []any{textContent(string(jsonStr))}, StructuredContent: out}, nil
 	}
 
@@ -108,7 +117,7 @@ func (s *Server) toolTodo(ctx context.Context, argsRaw json.RawMessage) (any, *j
 		return toolErrorFromErr(fmt.Errorf("%w: todoList is required for write", domain.ErrInvalidInput)), nil
 	}
 
-	items, err := normalizeAndValidateTodoItems(*args.TodoList)
+	items, err := normalizeAndValidateTodoInputItems(*args.TodoList)
 	if err != nil {
 		return toolErrorFromErr(err), nil
 	}
@@ -136,7 +145,10 @@ func (s *Server) toolTodo(ctx context.Context, argsRaw json.RawMessage) (any, *j
 		URIByName: domain.URIByName(nameEsc),
 		URIByRef:  a.URIByRef(),
 	}
-	jsonStr, _ := json.Marshal(out)
+	jsonStr, err := json.Marshal(out)
+	if err != nil {
+		return toolError("internal error: failed to marshal output"), nil
+	}
 	return toolResult{Content: []any{textContent(string(jsonStr))}, StructuredContent: out}, nil
 }
 
@@ -172,6 +184,21 @@ func normalizeAndValidateTodoItemsFromStored(data []byte) ([]todoItem, error) {
 	return normalizeAndValidateTodoItems(items)
 }
 
+func normalizeAndValidateTodoInputItems(items []todoItemInput) ([]todoItem, error) {
+	normalized := make([]todoItem, len(items))
+	for i, item := range items {
+		if item.ID == nil {
+			return nil, fmt.Errorf("%w: todoList[%d].id is required", domain.ErrInvalidInput, i)
+		}
+		normalized[i] = todoItem{
+			ID:     *item.ID,
+			Title:  item.Title,
+			Status: item.Status,
+		}
+	}
+	return normalizeAndValidateTodoItems(normalized)
+}
+
 func normalizeAndValidateTodoItems(items []todoItem) ([]todoItem, error) {
 	seenIDs := make(map[int]struct{}, len(items))
 	normalized := make([]todoItem, len(items))
@@ -196,31 +223,4 @@ func normalizeAndValidateTodoItems(items []todoItem) ([]todoItem, error) {
 		normalized[i] = todoItem{ID: item.ID, Title: title, Status: status}
 	}
 	return normalized, nil
-}
-
-func ensureTodoWriteRequiredFieldsPresent(argsRaw json.RawMessage, operation string, hasTodoList bool) error {
-	if operation != "write" || !hasTodoList {
-		return nil
-	}
-
-	var raw struct {
-		TodoList []map[string]json.RawMessage `json:"todoList"`
-	}
-	if err := json.Unmarshal(argsRaw, &raw); err != nil {
-		return err
-	}
-
-	for _, item := range raw.TodoList {
-		if _, ok := item["id"]; !ok {
-			return domain.ErrInvalidInput
-		}
-		if _, ok := item["title"]; !ok {
-			return domain.ErrInvalidInput
-		}
-		if _, ok := item["status"]; !ok {
-			return domain.ErrInvalidInput
-		}
-	}
-
-	return nil
 }
