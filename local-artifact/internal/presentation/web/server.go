@@ -28,7 +28,9 @@ import (
 var subspaceHashPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
 const globalSubspaceSelector = "global"
-const maxInsertUploadBytes int64 = 10 << 20
+const mebibyte int64 = 1 << 20
+const maxInsertUploadBytes int64 = 10 * mebibyte
+const maxInsertUploadOverheadBytes int64 = 1 * mebibyte
 const csrfCookieName = "local-artifact-csrf"
 const csrfFieldName = "csrf_token"
 const csrfTokenBytes = 32
@@ -261,16 +263,29 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 
 	deletedCount := 0
 	notFoundCount := 0
+	var opErr error
 	for _, sel := range parsedSelectors.selectors {
 		if _, err := svc.Delete(r.Context(), sel); err != nil {
 			if errors.Is(err, domain.ErrNotFound) {
 				notFoundCount++
 				continue
 			}
-			http.Redirect(w, r, redirectBase+"&err="+url.QueryEscape(err.Error()), http.StatusSeeOther)
-			return
+			opErr = err
+			break
 		}
 		deletedCount++
+	}
+	if opErr != nil {
+		baseMsg := fmt.Sprintf("error after deleting %d artifact", deletedCount)
+		if deletedCount != 1 {
+			baseMsg += "s"
+		}
+		if notFoundCount > 0 {
+			baseMsg = fmt.Sprintf("%s (%d not found)", baseMsg, notFoundCount)
+		}
+		errMsg := fmt.Sprintf("%s: %v", baseMsg, opErr)
+		http.Redirect(w, r, redirectBase+"&err="+url.QueryEscape(errMsg), http.StatusSeeOther)
+		return
 	}
 
 	if deletedCount == 0 {
@@ -294,7 +309,7 @@ func (s *Server) handleInsert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, maxInsertUploadBytes+(1<<20))
+	r.Body = http.MaxBytesReader(w, r.Body, maxInsertUploadBytes+maxInsertUploadOverheadBytes)
 	if err := r.ParseMultipartForm(maxInsertUploadBytes); err != nil {
 		errMsg := "invalid form data"
 		var maxErr *http.MaxBytesError
@@ -351,6 +366,11 @@ func (s *Server) handleInsert(w http.ResponseWriter, r *http.Request) {
 	} else {
 		data, readErr := io.ReadAll(file)
 		if readErr != nil {
+			var maxErr *http.MaxBytesError
+			if errors.As(readErr, &maxErr) {
+				http.Redirect(w, r, redirectBase+"&err="+url.QueryEscape("upload too large (max 10 MiB)"), http.StatusSeeOther)
+				return
+			}
 			http.Redirect(w, r, redirectBase+"&err="+url.QueryEscape("unable to read upload"), http.StatusSeeOther)
 			return
 		}
@@ -468,14 +488,22 @@ func (s *Server) handleAPIDelete(w http.ResponseWriter, r *http.Request) {
 
 	deleted := make([]domain.Artifact, 0, len(parsedSelectors.selectors))
 	notFoundCount := 0
-	for _, sel := range parsedSelectors.selectors {
+	for idx, sel := range parsedSelectors.selectors {
 		item, deleteErr := svc.Delete(r.Context(), sel)
 		if deleteErr != nil {
 			if errors.Is(deleteErr, domain.ErrNotFound) {
 				notFoundCount++
 				continue
 			}
-			writeJSON(w, http.StatusBadRequest, map[string]any{"error": deleteErr.Error()})
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error":          deleteErr.Error(),
+				"deleted":        false,
+				"deletedCount":   len(deleted),
+				"artifacts":      deleted,
+				"notFoundCount":  notFoundCount,
+				"failedIndex":    idx,
+				"failedSelector": sel,
+			})
 			return
 		}
 		deleted = append(deleted, item)
@@ -518,7 +546,7 @@ func (s *Server) handleAPISave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	decoder := json.NewDecoder(io.LimitReader(r.Body, maxInsertUploadBytes+(1<<20)))
+	decoder := json.NewDecoder(io.LimitReader(r.Body, maxInsertUploadBytes+maxInsertUploadOverheadBytes))
 	decoder.DisallowUnknownFields()
 	var req apiSaveRequest
 	if err := decoder.Decode(&req); err != nil {
@@ -617,7 +645,12 @@ func parseDeleteSelectors(values url.Values) (deleteSelectorRequest, error) {
 
 func prevalidateDeleteSelectors(ctx context.Context, svc *domain.Service, selectors []domain.Selector) error {
 	for _, selector := range selectors {
-		_, _, err := svc.Get(ctx, selector)
+		var err error
+		if selector.Name != "" {
+			_, err = svc.Resolve(ctx, selector.Name)
+		} else {
+			_, _, err = svc.Get(ctx, selector)
+		}
 		if err == nil || errors.Is(err, domain.ErrNotFound) {
 			continue
 		}
@@ -627,6 +660,7 @@ func prevalidateDeleteSelectors(ctx context.Context, svc *domain.Service, select
 }
 
 func trimUniqueNonEmpty(values []string) []string {
+	// Preserve first occurrence order while dropping duplicates and empty values.
 	trimmedValues := make([]string, 0, len(values))
 	seen := make(map[string]struct{}, len(values))
 	for _, value := range values {
@@ -689,6 +723,7 @@ func ensureCSRFToken(w http.ResponseWriter, r *http.Request) string {
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
+		Secure:   r.TLS != nil,
 	})
 	return token
 }

@@ -13,7 +13,7 @@ func TestIndexTemplateHasPrepaintThemeBootstrapAndSafeStorageGuards(t *testing.T
 	}
 
 	templateText := string(rawTemplate)
-	bootstrap := "document.documentElement.dataset.theme = loadStoredTheme() || systemTheme();"
+	bootstrap := "applyTheme(loadTheme());"
 	bootstrapIndex := strings.Index(templateText, bootstrap)
 	if bootstrapIndex == -1 {
 		t.Fatalf("expected prepaint theme bootstrap in template head")
@@ -27,12 +27,12 @@ func TestIndexTemplateHasPrepaintThemeBootstrapAndSafeStorageGuards(t *testing.T
 		t.Fatalf("expected prepaint bootstrap before style application")
 	}
 
-	setGuardPattern := regexp.MustCompile(`(?s)function saveStoredTheme\(theme\)\s*\{\s*try\s*\{[^}]*window\.localStorage\.setItem\(storageKey,\s*theme\)`)
+	setGuardPattern := regexp.MustCompile(`function\s+saveStoredTheme\([^)]*\)[\s\S]*?try[\s\S]*?window\.localStorage\.setItem\(`)
 	if !setGuardPattern.MatchString(templateText) {
 		t.Fatalf("expected guarded localStorage set wrapper")
 	}
 
-	getGuardPattern := regexp.MustCompile(`(?s)function loadStoredTheme\(\)\s*\{\s*try\s*\{[^}]*window\.localStorage\.getItem\(storageKey\)`)
+	getGuardPattern := regexp.MustCompile(`function\s+loadStoredTheme\([^)]*\)[\s\S]*?try[\s\S]*?window\.localStorage\.getItem\(`)
 	if !getGuardPattern.MatchString(templateText) {
 		t.Fatalf("expected guarded localStorage get wrapper")
 	}

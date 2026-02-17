@@ -24,7 +24,28 @@
         return null;
       }
 
-      document.documentElement.dataset.theme = loadStoredTheme() || systemTheme();
+      function saveStoredTheme(theme) {
+        try {
+          window.localStorage.setItem(storageKey, theme);
+        } catch (error) {
+          console.error('Failed to save theme preference:', error);
+        }
+      }
+
+      function loadTheme() {
+        return loadStoredTheme() || systemTheme();
+      }
+
+      function applyTheme(theme) {
+        document.documentElement.dataset.theme = theme;
+      }
+
+      window.__localArtifactTheme = {
+        saveStoredTheme: saveStoredTheme,
+        loadTheme: loadTheme,
+        applyTheme: applyTheme,
+      };
+      applyTheme(loadTheme());
     }());
   </script>
   <style>
@@ -226,9 +247,15 @@
       overflow-wrap: anywhere;
     }
     tr.selectable { cursor: pointer; }
-    tr.selectable.selected {
+    tr.selectable.selected td {
       background: var(--selected-bg);
+    }
+    tr.selectable.selected td:first-child {
       box-shadow: inset 3px 0 0 var(--selected-line);
+    }
+    tr.selectable:focus-visible td {
+      outline: 2px solid var(--selected-line);
+      outline-offset: -2px;
     }
     .foot {
       margin-top: 0.75rem;
@@ -274,7 +301,7 @@
         <button type="submit">Refresh</button>
       </form>
 
-      <form class="insert" method="post" action="/insert" enctype="multipart/form-data">
+      <form class="insert" id="insert-form" method="post" action="/insert" enctype="multipart/form-data">
         <input type="hidden" name="subspace" value="{{.Subspace}}">
         <input type="hidden" name="prefix" value="{{.Prefix}}">
         <input type="hidden" name="limit" value="{{.Limit}}">
@@ -300,7 +327,7 @@
       {{if .Message}}<div class="msg ok">{{.Message}}</div>{{end}}
       {{if .Error}}<div class="msg err">{{.Error}}</div>{{end}}
 
-      <form id="bulk-delete-form" method="post" action="/delete" onsubmit="return confirm('Delete selected artifacts?');">
+      <form id="bulk-delete-form" method="post" action="/delete">
         <input type="hidden" name="subspace" value="{{.Subspace}}">
         <input type="hidden" name="prefix" value="{{.Prefix}}">
         <input type="hidden" name="limit" value="{{.Limit}}">
@@ -326,7 +353,7 @@
           </thead>
           <tbody>
           {{range $idx, $item := .Items}}
-            <tr class="selectable" data-selectable-row data-index="{{$idx}}" data-name="{{$item.Name}}">
+            <tr class="selectable" data-selectable-row data-index="{{$idx}}" data-name="{{$item.Name}}" tabindex="0" aria-selected="false">
               <td><code>{{$item.Name}}</code></td>
               <td><code>{{$item.Ref}}</code></td>
               <td>{{$item.Kind}}</td>
@@ -347,72 +374,61 @@
 
   <script>
     (function () {
-      const storageKey = 'local-artifact-theme';
       const root = document.documentElement;
       const themeToggle = document.getElementById('theme-toggle');
-
-      function systemTheme() {
-        return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-      }
-
-      function loadStoredTheme() {
-        try {
-          const stored = window.localStorage.getItem(storageKey);
-          if (stored === 'dark' || stored === 'light') {
-            return stored;
-          }
-        } catch (error) {
-          return null;
-        }
-        return null;
-      }
-
-      function saveStoredTheme(theme) {
-        try {
-          window.localStorage.setItem(storageKey, theme);
-        } catch (error) {
-          console.error('Failed to save theme preference:', error);
-        }
-      }
-
-      function loadTheme() {
-        return loadStoredTheme() || systemTheme();
+      const themeHelpers = window.__localArtifactTheme;
+      if (!themeToggle || !themeHelpers) {
+        return;
       }
 
       function applyTheme(theme) {
-        root.dataset.theme = theme;
-        if (themeToggle) {
-          themeToggle.textContent = theme === 'dark' ? 'Light mode' : 'Dark mode';
-        }
+        themeHelpers.applyTheme(theme);
+        themeToggle.textContent = theme === 'dark' ? 'Light mode' : 'Dark mode';
       }
 
-      let activeTheme = loadTheme();
+      let activeTheme = root.dataset.theme || themeHelpers.loadTheme();
       applyTheme(activeTheme);
 
-      if (themeToggle) {
-        themeToggle.addEventListener('click', function () {
-          activeTheme = activeTheme === 'dark' ? 'light' : 'dark';
-          saveStoredTheme(activeTheme);
-          applyTheme(activeTheme);
-        });
+      themeToggle.addEventListener('click', function () {
+        activeTheme = activeTheme === 'dark' ? 'light' : 'dark';
+        themeHelpers.saveStoredTheme(activeTheme);
+        applyTheme(activeTheme);
+      });
+    }());
+
+    (function () {
+      const insertForm = document.getElementById('insert-form');
+      if (!insertForm) {
+        return;
       }
+
+      insertForm.addEventListener('submit', function (event) {
+        const textInput = insertForm.querySelector('textarea[name="text"]');
+        const fileInput = insertForm.querySelector('input[name="file"]');
+        const hasText = !!(textInput && textInput.value.trim() !== '');
+        const hasFile = !!(fileInput && fileInput.files && fileInput.files.length > 0);
+        if (hasText && hasFile) {
+          event.preventDefault();
+          window.alert('Choose exactly one content source: text or file.');
+        }
+      });
     }());
 
     (function () {
       const rows = Array.from(document.querySelectorAll('tr[data-selectable-row]'));
+      const bulkDeleteForm = document.getElementById('bulk-delete-form');
       const selectedInputs = document.getElementById('selected-inputs');
       const countNode = document.getElementById('selection-count');
       const deleteButton = document.getElementById('delete-selected');
 
-      if (!selectedInputs || !countNode || !deleteButton || rows.length === 0) {
+      if (!selectedInputs || !countNode || !deleteButton) {
         return;
       }
 
       const selected = new Set();
       let anchorIndex = null;
 
-      function setRange(fromIndex, toIndex) {
-        selected.clear();
+      function addRange(fromIndex, toIndex) {
         const start = Math.min(fromIndex, toIndex);
         const end = Math.max(fromIndex, toIndex);
         for (let idx = start; idx <= end; idx += 1) {
@@ -428,6 +444,7 @@
         rows.forEach(function (row) {
           const idx = Number(row.dataset.index);
           row.classList.toggle('selected', selected.has(idx));
+          row.setAttribute('aria-selected', selected.has(idx) ? 'true' : 'false');
         });
 
         selectedInputs.innerHTML = '';
@@ -452,40 +469,66 @@
         countNode.textContent = selectedCount + ' selected';
       }
 
+      function applySelectionEvent(idx, event) {
+        if (event.shiftKey) {
+          if (anchorIndex === null) {
+            selected.add(idx);
+            anchorIndex = idx;
+          } else {
+            addRange(anchorIndex, idx);
+          }
+          updateSelectionUI();
+          return;
+        }
+
+        if (event.ctrlKey || event.metaKey) {
+          if (selected.has(idx)) {
+            selected.delete(idx);
+          } else {
+            selected.add(idx);
+          }
+          anchorIndex = idx;
+          updateSelectionUI();
+          return;
+        }
+
+        selected.clear();
+        selected.add(idx);
+        anchorIndex = idx;
+        updateSelectionUI();
+      }
+
+      if (bulkDeleteForm) {
+        bulkDeleteForm.addEventListener('submit', function (event) {
+          if (selected.size === 0) {
+            event.preventDefault();
+            return;
+          }
+          if (!window.confirm('Delete selected artifacts?')) {
+            event.preventDefault();
+          }
+        });
+      }
+
       rows.forEach(function (row) {
         row.addEventListener('click', function (event) {
           const idx = Number(row.dataset.index);
           if (Number.isNaN(idx)) {
             return;
           }
+          applySelectionEvent(idx, event);
+        });
 
-          if (event.shiftKey) {
-            if (anchorIndex === null) {
-              selected.clear();
-              selected.add(idx);
-              anchorIndex = idx;
-            } else {
-              setRange(anchorIndex, idx);
-            }
-            updateSelectionUI();
+        row.addEventListener('keydown', function (event) {
+          if (event.key !== 'Enter' && event.key !== ' ') {
             return;
           }
-
-          if (event.ctrlKey || event.metaKey) {
-            if (selected.has(idx)) {
-              selected.delete(idx);
-            } else {
-              selected.add(idx);
-              anchorIndex = idx;
-            }
-            updateSelectionUI();
+          const idx = Number(row.dataset.index);
+          if (Number.isNaN(idx)) {
             return;
           }
-
-          selected.clear();
-          selected.add(idx);
-          anchorIndex = idx;
-          updateSelectionUI();
+          event.preventDefault();
+          applySelectionEvent(idx, event);
         });
       });
 

@@ -17,7 +17,7 @@ import (
 
 func TestHandleInsertTextSuccess(t *testing.T) {
 	s := New(t.TempDir())
-	csrfToken := strings.Repeat("a", csrfTokenBytes*2)
+	csrfToken := mustIssueCSRFToken(t)
 
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
@@ -68,7 +68,7 @@ func TestHandleInsertTextSuccess(t *testing.T) {
 
 func TestHandleInsertFileSuccess(t *testing.T) {
 	s := New(t.TempDir())
-	csrfToken := strings.Repeat("a", csrfTokenBytes*2)
+	csrfToken := mustIssueCSRFToken(t)
 
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
@@ -117,7 +117,7 @@ func TestHandleInsertFileSuccess(t *testing.T) {
 
 func TestHandleInsertRejectsMissingPayload(t *testing.T) {
 	s := New(t.TempDir())
-	csrfToken := strings.Repeat("a", csrfTokenBytes*2)
+	csrfToken := mustIssueCSRFToken(t)
 
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
@@ -183,7 +183,7 @@ func TestHandleInsertRejectsMissingCSRFToken(t *testing.T) {
 func TestHandleDeleteSupportsMultipleNames(t *testing.T) {
 	s := New(t.TempDir())
 	svc := s.serviceForSubspace(globalSubspaceSelector)
-	csrfToken := strings.Repeat("a", csrfTokenBytes*2)
+	csrfToken := mustIssueCSRFToken(t)
 
 	if _, err := svc.SaveText(context.Background(), domain.SaveTextInput{Name: "bulk/a", Text: "1"}); err != nil {
 		t.Fatalf("seed a: %v", err)
@@ -367,7 +367,7 @@ func TestAPIDeletePrevalidatesAllSelectorsBeforeMutation(t *testing.T) {
 func TestHandleDeletePrevalidatesAllSelectorsBeforeMutation(t *testing.T) {
 	s := New(t.TempDir())
 	svc := s.serviceForSubspace(globalSubspaceSelector)
-	csrfToken := strings.Repeat("a", csrfTokenBytes*2)
+	csrfToken := mustIssueCSRFToken(t)
 
 	artifact, err := svc.SaveText(context.Background(), domain.SaveTextInput{Name: "form/prevalidate", Text: "safe"})
 	if err != nil {
@@ -428,7 +428,7 @@ func TestAPIDeleteSingleNotFoundKeepsLegacyPayload(t *testing.T) {
 
 func TestHandleDeleteSingleNotFoundKeepsLegacyRedirectError(t *testing.T) {
 	s := New(t.TempDir())
-	csrfToken := strings.Repeat("a", csrfTokenBytes*2)
+	csrfToken := mustIssueCSRFToken(t)
 
 	form := url.Values{}
 	form.Set("subspace", globalSubspaceSelector)
@@ -449,4 +449,13 @@ func TestHandleDeleteSingleNotFoundKeepsLegacyRedirectError(t *testing.T) {
 	if !strings.Contains(rr.Header().Get("Location"), "err=not+found") {
 		t.Fatalf("expected legacy not found redirect error, got location=%q", rr.Header().Get("Location"))
 	}
+}
+
+func mustIssueCSRFToken(t *testing.T) string {
+	t.Helper()
+	token, err := issueCSRFToken()
+	if err != nil {
+		t.Fatalf("issue csrf token: %v", err)
+	}
+	return token
 }
