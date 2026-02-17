@@ -7,11 +7,15 @@ type Selector struct {
 	Name string `json:"name,omitempty"`
 }
 
+type SaveOptions struct {
+	ExpectedPrevRef string
+}
+
 // Repository persists artifacts.
 //
 // Layering note: Domain depends on this interface; Infrastructure implements it.
 type Repository interface {
-	Save(ctx context.Context, a Artifact, data []byte) (Artifact, error)
+	Save(ctx context.Context, a Artifact, data []byte, opts SaveOptions) (Artifact, error)
 	Resolve(ctx context.Context, name string) (ref string, err error)
 	Get(ctx context.Context, sel Selector) (Artifact, []byte, error)
 	List(ctx context.Context, prefix string, limit int) ([]Artifact, error)
