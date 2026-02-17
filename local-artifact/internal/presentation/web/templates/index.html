@@ -4,6 +4,29 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Local Artifact Store</title>
+  <script>
+    (function () {
+      const storageKey = 'local-artifact-theme';
+
+      function systemTheme() {
+        return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      }
+
+      function loadStoredTheme() {
+        try {
+          const stored = window.localStorage.getItem(storageKey);
+          if (stored === 'dark' || stored === 'light') {
+            return stored;
+          }
+        } catch (error) {
+          return null;
+        }
+        return null;
+      }
+
+      document.documentElement.dataset.theme = loadStoredTheme() || systemTheme();
+    }());
+  </script>
   <style>
     :root {
       --bg: #f5f3ef;
@@ -15,13 +38,46 @@
       --line: #ded6c9;
       --mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
       --sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+      --bg-grad-a: #ece5d7;
+      --bg-grad-b: #ddd2bc;
+      --shadow: rgba(43, 40, 34, 0.07);
+      --input-bg: #fff;
+      --ok-bg: #e9f8f2;
+      --ok-ink: #115a42;
+      --ok-border: #b8e4d4;
+      --err-bg: #fbeceb;
+      --err-ink: #7e2020;
+      --err-border: #efc4c4;
+      --selected-bg: #ebf5f1;
+      --selected-line: #5f9c84;
+    }
+    :root[data-theme="dark"] {
+      --bg: #171513;
+      --card: #221f1b;
+      --ink: #f3eee6;
+      --muted: #b8ad9a;
+      --accent: #57bf99;
+      --danger: #d96969;
+      --line: #3b352e;
+      --bg-grad-a: #2a241f;
+      --bg-grad-b: #1f1a16;
+      --shadow: rgba(0, 0, 0, 0.35);
+      --input-bg: #1b1814;
+      --ok-bg: #1c2b24;
+      --ok-ink: #b8ecd7;
+      --ok-border: #2f5b47;
+      --err-bg: #331f1f;
+      --err-ink: #f0c8c8;
+      --err-border: #644040;
+      --selected-bg: #27342e;
+      --selected-line: #6bb391;
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
       background:
-        radial-gradient(circle at 10% 10%, #ece5d7 0, transparent 45%),
-        radial-gradient(circle at 90% 0%, #ddd2bc 0, transparent 40%),
+        radial-gradient(circle at 10% 10%, var(--bg-grad-a) 0, transparent 45%),
+        radial-gradient(circle at 90% 0%, var(--bg-grad-b) 0, transparent 40%),
         var(--bg);
       color: var(--ink);
       font-family: var(--sans);
@@ -31,13 +87,20 @@
       margin: 2rem auto;
       padding: 0 1rem 2rem;
     }
+    .title-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      align-items: start;
+      margin-bottom: 1rem;
+    }
     h1 {
       margin: 0 0 0.35rem;
       font-size: clamp(1.4rem, 2.5vw, 2rem);
       letter-spacing: 0.02em;
     }
     .sub {
-      margin-bottom: 1.25rem;
+      margin-bottom: 0;
       color: var(--muted);
     }
     .card {
@@ -45,7 +108,7 @@
       border: 1px solid var(--line);
       border-radius: 14px;
       padding: 0.9rem;
-      box-shadow: 0 6px 24px rgba(43, 40, 34, 0.07);
+      box-shadow: 0 6px 24px var(--shadow);
     }
     form.filters {
       display: flex;
@@ -54,19 +117,43 @@
       flex-wrap: wrap;
       margin-bottom: 0.75rem;
     }
+    form.insert {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 0.65rem;
+      margin-bottom: 0.75rem;
+    }
+    .insert .wide {
+      grid-column: 1 / -1;
+    }
+    .insert-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      flex-wrap: wrap;
+    }
+    .hint {
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
     label {
       display: grid;
       gap: 0.3rem;
       font-size: 0.85rem;
       color: var(--muted);
     }
-    input, select {
+    input, select, textarea {
       border: 1px solid var(--line);
       border-radius: 8px;
       padding: 0.52rem 0.6rem;
       font-family: var(--mono);
       min-width: 180px;
-      background: #fff;
+      background: var(--input-bg);
+      color: var(--ink);
+    }
+    textarea {
+      min-height: 88px;
+      resize: vertical;
     }
     button {
       border: 0;
@@ -80,8 +167,16 @@
     }
     button.delete {
       background: var(--danger);
-      font-size: 0.85rem;
-      padding: 0.4rem 0.65rem;
+    }
+    button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+    .theme-toggle {
+      border: 1px solid var(--line);
+      background: transparent;
+      color: var(--ink);
+      white-space: nowrap;
     }
     .msg {
       margin: 0.4rem 0 0.75rem;
@@ -90,14 +185,25 @@
       font-size: 0.9rem;
     }
     .msg.ok {
-      background: #e9f8f2;
-      color: #115a42;
-      border: 1px solid #b8e4d4;
+      background: var(--ok-bg);
+      color: var(--ok-ink);
+      border: 1px solid var(--ok-border);
     }
     .msg.err {
-      background: #fbeceb;
-      color: #7e2020;
-      border: 1px solid #efc4c4;
+      background: var(--err-bg);
+      color: var(--err-ink);
+      border: 1px solid var(--err-border);
+    }
+    .bulk-controls {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      margin: 0.3rem 0 0.8rem;
+    }
+    .selection-count {
+      color: var(--muted);
+      font-size: 0.86rem;
+      font-family: var(--mono);
     }
     .table-wrap {
       overflow-x: auto;
@@ -119,6 +225,11 @@
       font-size: 0.8rem;
       overflow-wrap: anywhere;
     }
+    tr.selectable { cursor: pointer; }
+    tr.selectable.selected {
+      background: var(--selected-bg);
+      box-shadow: inset 3px 0 0 var(--selected-line);
+    }
     .foot {
       margin-top: 0.75rem;
       font-size: 0.82rem;
@@ -128,13 +239,21 @@
       th:nth-child(4), td:nth-child(4), th:nth-child(6), td:nth-child(6) {
         display: none;
       }
+      .title-row {
+        flex-direction: column;
+      }
     }
   </style>
 </head>
 <body>
   <main>
-    <h1>Local Artifact Store</h1>
-    <div class="sub">Track current aliases and delete artifacts quickly.</div>
+    <header class="title-row">
+      <div>
+        <h1>Local Artifact Store</h1>
+        <div class="sub">Track current aliases and delete artifacts quickly.</div>
+      </div>
+      <button type="button" class="theme-toggle" id="theme-toggle">Dark mode</button>
+    </header>
 
     <section class="card">
       <form class="filters" method="get" action="/">
@@ -155,8 +274,41 @@
         <button type="submit">Refresh</button>
       </form>
 
+      <form class="insert" method="post" action="/insert" enctype="multipart/form-data">
+        <input type="hidden" name="subspace" value="{{.Subspace}}">
+        <input type="hidden" name="prefix" value="{{.Prefix}}">
+        <input type="hidden" name="limit" value="{{.Limit}}">
+        <label>Name
+          <input type="text" name="name" required placeholder="plan/task-123">
+        </label>
+        <label>MIME Type (optional)
+          <input type="text" name="mimeType" placeholder="text/plain; charset=utf-8">
+        </label>
+        <label class="wide">Text
+          <textarea name="text" placeholder="Enter text content"></textarea>
+        </label>
+        <label class="wide">File upload
+          <input type="file" name="file">
+        </label>
+        <div class="insert-actions wide">
+          <button type="submit">Insert</button>
+          <span class="hint">Provide text or a file upload, not both.</span>
+        </div>
+      </form>
+
       {{if .Message}}<div class="msg ok">{{.Message}}</div>{{end}}
       {{if .Error}}<div class="msg err">{{.Error}}</div>{{end}}
+
+      <form id="bulk-delete-form" method="post" action="/delete" onsubmit="return confirm('Delete selected artifacts?');">
+        <input type="hidden" name="subspace" value="{{.Subspace}}">
+        <input type="hidden" name="prefix" value="{{.Prefix}}">
+        <input type="hidden" name="limit" value="{{.Limit}}">
+        <div id="selected-inputs"></div>
+        <div class="bulk-controls">
+          <button class="delete" id="delete-selected" type="submit" disabled>Delete selected</button>
+          <span class="selection-count" id="selection-count">0 selected</span>
+        </div>
+      </form>
 
       <div class="table-wrap">
         <table>
@@ -168,37 +320,182 @@
               <th>MIME</th>
               <th>Size</th>
               <th>Created</th>
-              <th>Delete</th>
             </tr>
           </thead>
           <tbody>
-          {{range .Items}}
-            <tr>
-              <td><code>{{.Name}}</code></td>
-              <td><code>{{.Ref}}</code></td>
-              <td>{{.Kind}}</td>
-              <td><code>{{.MimeType}}</code></td>
-              <td>{{.SizeBytes}}</td>
-              <td><code>{{.CreatedAt}}</code></td>
-              <td>
-                <form method="post" action="/delete" onsubmit="return confirm('Delete artifact {{.Name}}?');">
-                  <input type="hidden" name="subspace" value="{{$.Subspace}}">
-                  <input type="hidden" name="prefix" value="{{$.Prefix}}">
-                  <input type="hidden" name="limit" value="{{$.Limit}}">
-                  <input type="hidden" name="name" value="{{.Name}}">
-                  <button class="delete" type="submit">Delete</button>
-                </form>
-              </td>
+          {{range $idx, $item := .Items}}
+            <tr class="selectable" data-selectable-row data-index="{{$idx}}" data-name="{{$item.Name}}" data-ref="{{$item.Ref}}">
+              <td><code>{{$item.Name}}</code></td>
+              <td><code>{{$item.Ref}}</code></td>
+              <td>{{$item.Kind}}</td>
+              <td><code>{{$item.MimeType}}</code></td>
+              <td>{{$item.SizeBytes}}</td>
+              <td><code>{{$item.CreatedAt}}</code></td>
             </tr>
           {{else}}
-            <tr><td colspan="7">No artifacts found for this filter.</td></tr>
+            <tr><td colspan="6">No artifacts found for this filter.</td></tr>
           {{end}}
           </tbody>
         </table>
       </div>
 
-      <div class="foot">Generated at {{.GeneratedAt}} | JSON endpoints: <code>/api/subspaces</code>, <code>/api/artifacts?subspace=&lt;global|hash&gt;</code></div>
+      <div class="foot">Generated at {{.GeneratedAt}} | JSON endpoints: <code>/api/subspaces</code>, <code>/api/artifacts?subspace=&lt;global|hash&gt;</code> (GET, POST, DELETE)</div>
     </section>
   </main>
+
+  <script>
+    (function () {
+      const storageKey = 'local-artifact-theme';
+      const root = document.documentElement;
+      const themeToggle = document.getElementById('theme-toggle');
+
+      function systemTheme() {
+        return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      }
+
+      function loadStoredTheme() {
+        try {
+          const stored = window.localStorage.getItem(storageKey);
+          if (stored === 'dark' || stored === 'light') {
+            return stored;
+          }
+        } catch (error) {
+          return null;
+        }
+        return null;
+      }
+
+      function saveStoredTheme(theme) {
+        try {
+          window.localStorage.setItem(storageKey, theme);
+        } catch (error) {
+        }
+      }
+
+      function loadTheme() {
+        return loadStoredTheme() || systemTheme();
+      }
+
+      function applyTheme(theme) {
+        root.dataset.theme = theme;
+        if (themeToggle) {
+          themeToggle.textContent = theme === 'dark' ? 'Light mode' : 'Dark mode';
+        }
+      }
+
+      let activeTheme = loadTheme();
+      applyTheme(activeTheme);
+
+      if (themeToggle) {
+        themeToggle.addEventListener('click', function () {
+          activeTheme = activeTheme === 'dark' ? 'light' : 'dark';
+          saveStoredTheme(activeTheme);
+          applyTheme(activeTheme);
+        });
+      }
+    }());
+
+    (function () {
+      const rows = Array.from(document.querySelectorAll('tr[data-selectable-row]'));
+      const selectedInputs = document.getElementById('selected-inputs');
+      const countNode = document.getElementById('selection-count');
+      const deleteButton = document.getElementById('delete-selected');
+
+      if (!selectedInputs || !countNode || !deleteButton || rows.length === 0) {
+        return;
+      }
+
+      const selected = new Set();
+      let anchorIndex = null;
+
+      function setRange(fromIndex, toIndex) {
+        selected.clear();
+        const start = Math.min(fromIndex, toIndex);
+        const end = Math.max(fromIndex, toIndex);
+        for (let idx = start; idx <= end; idx += 1) {
+          selected.add(idx);
+        }
+      }
+
+      function sortedSelection() {
+        return Array.from(selected).sort(function (a, b) { return a - b; });
+      }
+
+      function updateSelectionUI() {
+        rows.forEach(function (row) {
+          const idx = Number(row.dataset.index);
+          row.classList.toggle('selected', selected.has(idx));
+        });
+
+        selectedInputs.innerHTML = '';
+        const activeRows = sortedSelection();
+        activeRows.forEach(function (idx) {
+          const row = rows[idx];
+          if (!row) {
+            return;
+          }
+          const name = row.dataset.name || '';
+          const ref = row.dataset.ref || '';
+
+          if (name !== '') {
+            const nameInput = document.createElement('input');
+            nameInput.type = 'hidden';
+            nameInput.name = 'name';
+            nameInput.value = name;
+            selectedInputs.appendChild(nameInput);
+          } else if (ref !== '') {
+            const refInput = document.createElement('input');
+            refInput.type = 'hidden';
+            refInput.name = 'ref';
+            refInput.value = ref;
+            selectedInputs.appendChild(refInput);
+          }
+        });
+
+        const selectedCount = activeRows.length;
+        deleteButton.disabled = selectedCount === 0;
+        countNode.textContent = selectedCount + ' selected';
+      }
+
+      rows.forEach(function (row) {
+        row.addEventListener('click', function (event) {
+          const idx = Number(row.dataset.index);
+          if (Number.isNaN(idx)) {
+            return;
+          }
+
+          if (event.shiftKey) {
+            if (anchorIndex === null) {
+              selected.clear();
+              selected.add(idx);
+              anchorIndex = idx;
+            } else {
+              setRange(anchorIndex, idx);
+            }
+            updateSelectionUI();
+            return;
+          }
+
+          if (event.ctrlKey || event.metaKey) {
+            if (selected.has(idx)) {
+              selected.delete(idx);
+            } else {
+              selected.add(idx);
+              anchorIndex = idx;
+            }
+            updateSelectionUI();
+            return;
+          }
+
+          selected.clear();
+          selected.add(idx);
+          anchorIndex = idx;
+          updateSelectionUI();
+        });
+      });
+
+      updateSelectionUI();
+    }());
+  </script>
 </body>
 </html>

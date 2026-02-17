@@ -120,7 +120,7 @@ Operational notes:
 
 ## Web UI (optional)
 
-Run a simple local web UI to inspect and delete current artifacts:
+Run a simple local web UI to inspect, insert, and delete current artifacts:
 
 ```
 LOCAL_ARTIFACT_WEB_UI_ADDR=127.0.0.1:19130 go run ./cmd/local-artifact-web
@@ -128,11 +128,23 @@ LOCAL_ARTIFACT_WEB_UI_ADDR=127.0.0.1:19130 go run ./cmd/local-artifact-web
 
 Then open `http://127.0.0.1:19130`.
 
-The web UI includes a subspace selector (detected from hash directories) and the API supports:
+The web UI includes:
+
+- subspace selection (detected from hash directories)
+- manual insertion via text or file upload
+- row multi-selection with click/Ctrl(⌘)-click/Shift-click semantics
+- bulk delete for selected rows
+- a persisted light/dark theme toggle (`localStorage` key: `local-artifact-theme`, defaulting to system preference)
+
+The API supports:
 
 - `GET /api/subspaces`
 - `GET /api/artifacts?subspace=<64-hex|global>[&prefix=...&limit=...]`
+- `POST /api/artifacts?subspace=<64-hex|global>` with either:
+  - text payload: `{ "name": "...", "text": "...", "mimeType": "..." }`
+  - blob payload: `{ "name": "...", "dataBase64": "...", "mimeType": "...", "filename": "..." }`
 - `DELETE /api/artifacts?subspace=<64-hex|global>&name=...` (or `ref=...`)
+  - supports repeated selectors for batch delete, e.g. `&name=a&name=b` or `&ref=...&ref=...`
 
 ## Example usage pattern for CCSubAgents
 
