@@ -37,7 +37,7 @@ func (s *Store) ensureDirs() error {
 	return nil
 }
 
-func (s *Store) Save(ctx context.Context, a domain.Artifact, data []byte) (domain.Artifact, error) {
+func (s *Store) Save(ctx context.Context, a domain.Artifact, data []byte, opts domain.SaveOptions) (domain.Artifact, error) {
 	_ = ctx
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -50,7 +50,11 @@ func (s *Store) Save(ctx context.Context, a domain.Artifact, data []byte) (domai
 	if err != nil {
 		return domain.Artifact{}, err
 	}
-	if existingRef := strings.TrimSpace(idx.Names[a.Name]); existingRef != "" && existingRef != a.Ref && strings.TrimSpace(a.PrevRef) == "" {
+	existingRef := strings.TrimSpace(idx.Names[a.Name])
+	if expected := strings.TrimSpace(opts.ExpectedPrevRef); expected != "" && expected != existingRef {
+		return domain.Artifact{}, fmt.Errorf("%w: expectedPrevRef=%q current=%q", domain.ErrConflict, expected, existingRef)
+	}
+	if existingRef != "" && existingRef != a.Ref {
 		a.PrevRef = existingRef
 	}
 

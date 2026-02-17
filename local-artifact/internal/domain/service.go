@@ -22,9 +22,10 @@ func NewService(repo Repository) *Service {
 }
 
 type SaveTextInput struct {
-	Name     string
-	Text     string
-	MimeType string // optional
+	Name            string
+	Text            string
+	MimeType        string // optional
+	ExpectedPrevRef string // optional
 }
 
 func (s *Service) SaveText(ctx context.Context, in SaveTextInput) (Artifact, error) {
@@ -37,14 +38,15 @@ func (s *Service) SaveText(ctx context.Context, in SaveTextInput) (Artifact, err
 		mime = "text/plain; charset=utf-8"
 	}
 	data := []byte(in.Text)
-	return s.save(ctx, name, ArtifactKindText, mime, "", data)
+	return s.saveWithOptions(ctx, name, ArtifactKindText, mime, "", data, SaveOptions{ExpectedPrevRef: in.ExpectedPrevRef})
 }
 
 type SaveBlobInput struct {
-	Name     string
-	Data     []byte
-	MimeType string
-	Filename string
+	Name            string
+	Data            []byte
+	MimeType        string
+	Filename        string
+	ExpectedPrevRef string // optional
 }
 
 func (s *Service) SaveBlob(ctx context.Context, in SaveBlobInput) (Artifact, error) {
@@ -62,12 +64,23 @@ func (s *Service) SaveBlob(ctx context.Context, in SaveBlobInput) (Artifact, err
 	} else if strings.HasPrefix(strings.ToLower(mime), "text/") {
 		kind = ArtifactKindText
 	}
-	return s.save(ctx, name, kind, mime, strings.TrimSpace(in.Filename), in.Data)
+	return s.saveWithOptions(ctx, name, kind, mime, strings.TrimSpace(in.Filename), in.Data, SaveOptions{ExpectedPrevRef: in.ExpectedPrevRef})
 }
 
 func (s *Service) save(ctx context.Context, name string, kind ArtifactKind, mime string, filename string, data []byte) (Artifact, error) {
+	return s.saveWithOptions(ctx, name, kind, mime, filename, data, SaveOptions{})
+}
+
+func (s *Service) saveWithOptions(ctx context.Context, name string, kind ArtifactKind, mime string, filename string, data []byte, opts SaveOptions) (Artifact, error) {
 	if data == nil {
 		data = []byte{}
+	}
+	if strings.TrimSpace(opts.ExpectedPrevRef) != "" {
+		normExpected, err := normalizeAndValidateRef(opts.ExpectedPrevRef)
+		if err != nil {
+			return Artifact{}, err
+		}
+		opts.ExpectedPrevRef = normExpected
 	}
 
 	prevRef := ""
@@ -96,7 +109,7 @@ func (s *Service) save(ctx context.Context, name string, kind ArtifactKind, mime
 		PrevRef:   prevRef,
 	}
 
-	return s.repo.Save(ctx, a, data)
+	return s.repo.Save(ctx, a, data, opts)
 }
 
 func (s *Service) Resolve(ctx context.Context, name string) (string, error) {

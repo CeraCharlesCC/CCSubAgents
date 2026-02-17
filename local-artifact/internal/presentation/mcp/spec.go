@@ -7,7 +7,7 @@ const (
 	serverTitle        = "Local Artifact Store"
 	serverVersion      = "0.1.0"
 	serverDescription  = "Completely local MCP server that lets agents save and retrieve named artifacts (text, files, images)."
-	serverInstructions = "Use save_artifact_text or save_artifact_blob to persist an artifact under a name. Re-saving the same name creates a new ref linked by prevRef and moves the name to the latest ref. Use get_artifact with name or ref to retrieve, delete_artifact to remove an artifact, and get_artifact_list to inspect current aliases."
+	serverInstructions = "Use save_artifact_text or save_artifact_blob to persist an artifact under a name. Re-saving the same name creates a new ref linked by prevRef and moves the name to the latest ref. Use get_artifact with name or ref to retrieve, delete_artifact to remove an artifact, and get_artifact_list to inspect current aliases. Use todo to read or write a deterministic <artifact>/todo list with optional expectedPrevRef conflict protection."
 )
 
 const (
@@ -17,6 +17,7 @@ const (
 	toolArtifactGet      = "get_artifact"
 	toolArtifactList     = "get_artifact_list"
 	toolArtifactDelete   = "delete_artifact"
+	toolArtifactTodo     = "todo"
 )
 
 const (
@@ -156,6 +157,14 @@ func toolDefinitions() []toolDef {
 			OutputSchema: deleteOutputSchema(),
 			Annotations:  readOnlyHint(false),
 		},
+		{
+			Name:         toolArtifactTodo,
+			Title:        "Read/write TODO list",
+			Description:  "Read or write TODO items persisted under deterministic <artifact>/todo storage.",
+			InputSchema:  todoInputSchema(),
+			OutputSchema: todoOutputSchema(),
+			Annotations:  readOnlyHint(false),
+		},
 	}
 }
 
@@ -222,6 +231,72 @@ func deleteOutputSchema() map[string]any {
 			"uriByRef":  map[string]any{"type": "string"},
 		},
 		"ref", "deleted", "uriByRef",
+	)
+}
+
+func todoInputSchema() map[string]any {
+	schema := objectSchema(
+		map[string]any{
+			"operation": map[string]any{
+				"type": "string",
+				"enum": []string{"read", "write"},
+			},
+			"artifact": artifactSelectorSchema(),
+			"todoList": map[string]any{
+				"type":  "array",
+				"items": todoItemSchema(),
+			},
+			"expectedPrevRef": stringProp("Optional stale-write guard. Must match current TODO ref for write."),
+		},
+		"operation", "artifact",
+	)
+	schema["allOf"] = []map[string]any{
+		{
+			"if":   map[string]any{"properties": map[string]any{"operation": map[string]any{"const": "write"}}},
+			"then": map[string]any{"required": []string{"todoList"}},
+		},
+	}
+	return schema
+}
+
+func todoOutputSchema() map[string]any {
+	return objectSchema(
+		map[string]any{
+			"todoList": map[string]any{
+				"type":  "array",
+				"items": todoItemSchema(),
+			},
+			"exists":    map[string]any{"type": "boolean"},
+			"name":      map[string]any{"type": "string"},
+			"ref":       map[string]any{"type": "string"},
+			"prevRef":   map[string]any{"type": "string"},
+			"uriByName": map[string]any{"type": "string"},
+			"uriByRef":  map[string]any{"type": "string"},
+		},
+		"todoList", "exists",
+	)
+}
+
+func artifactSelectorSchema() map[string]any {
+	return objectSchema(
+		map[string]any{
+			"name": stringProp("Artifact name/alias."),
+			"ref":  stringProp("Artifact ref."),
+		},
+	)
+}
+
+func todoItemSchema() map[string]any {
+	return objectSchema(
+		map[string]any{
+			"id":    map[string]any{"type": "integer"},
+			"title": stringProp("Non-empty TODO title."),
+			"status": map[string]any{
+				"type": "string",
+				"enum": []string{"not-started", "in-progress", "completed"},
+			},
+		},
+		"id", "title", "status",
 	)
 }
 

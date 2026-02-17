@@ -23,7 +23,14 @@ func newMemoryRepo() *memoryRepo {
 	}
 }
 
-func (r *memoryRepo) Save(_ context.Context, a Artifact, data []byte) (Artifact, error) {
+func (r *memoryRepo) Save(_ context.Context, a Artifact, data []byte, opts SaveOptions) (Artifact, error) {
+	existingRef := strings.TrimSpace(r.byName[a.Name])
+	if expected := strings.TrimSpace(opts.ExpectedPrevRef); expected != "" && expected != existingRef {
+		return Artifact{}, ErrConflict
+	}
+	if existingRef != "" && existingRef != a.Ref {
+		a.PrevRef = existingRef
+	}
 	r.byRef[a.Ref] = a
 	r.data[a.Ref] = append([]byte(nil), data...)
 	r.byName[a.Name] = a.Ref
@@ -191,6 +198,66 @@ func TestServiceSaveText_RefGenerationErrorIsSurfaced(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "rng failed") {
 		t.Fatalf("expected surfaced rng error text, got: %v", err)
+	}
+}
+
+func TestServiceSaveText_ExpectedPrevRefMatchSucceeds(t *testing.T) {
+	repo := newMemoryRepo()
+	svc := NewService(repo)
+	refs := []string{"20260216T101010Z-aaaaaaaaaaaaaaaa", "20260216T101011Z-bbbbbbbbbbbbbbbb"}
+	idx := 0
+	svc.refGenerator = func() (string, error) {
+		ref := refs[idx]
+		idx++
+		return ref, nil
+	}
+
+	ctx := context.Background()
+	first, err := svc.SaveText(ctx, SaveTextInput{Name: "plan/task-guard", Text: "first"})
+	if err != nil {
+		t.Fatalf("first save failed: %v", err)
+	}
+
+	second, err := svc.SaveText(ctx, SaveTextInput{Name: "plan/task-guard", Text: "second", ExpectedPrevRef: first.Ref})
+	if err != nil {
+		t.Fatalf("second save with matching expectedPrevRef failed: %v", err)
+	}
+	if second.PrevRef != first.Ref {
+		t.Fatalf("expected prevRef=%q, got %q", first.Ref, second.PrevRef)
+	}
+}
+
+func TestServiceSaveText_ExpectedPrevRefStaleReturnsConflict(t *testing.T) {
+	repo := newMemoryRepo()
+	svc := NewService(repo)
+	refs := []string{"20260216T101020Z-aaaaaaaaaaaaaaaa", "20260216T101021Z-bbbbbbbbbbbbbbbb"}
+	idx := 0
+	svc.refGenerator = func() (string, error) {
+		ref := refs[idx]
+		idx++
+		return ref, nil
+	}
+
+	ctx := context.Background()
+	first, err := svc.SaveText(ctx, SaveTextInput{Name: "plan/task-guard-stale", Text: "first"})
+	if err != nil {
+		t.Fatalf("first save failed: %v", err)
+	}
+
+	_, err = svc.SaveText(ctx, SaveTextInput{Name: "plan/task-guard-stale", Text: "second", ExpectedPrevRef: "20260216T101019Z-cccccccccccccccc"})
+	if err == nil {
+		t.Fatal("expected conflict error for stale expectedPrevRef")
+	}
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("expected ErrConflict, got %v", err)
+	}
+
+	resolved, err := svc.Resolve(ctx, "plan/task-guard-stale")
+	if err != nil {
+		t.Fatalf("resolve failed: %v", err)
+	}
+	if resolved != first.Ref {
+		t.Fatalf("expected latest ref to remain %q, got %q", first.Ref, resolved)
 	}
 }
 

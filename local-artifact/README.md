@@ -36,6 +36,41 @@ When MCP client roots are available, the server requests `roots/list`, normalize
 - `get_artifact`
 - `get_artifact_list`
 - `delete_artifact`
+- `todo`
+
+### `todo` tool usage
+
+`todo` stores task state as JSON text under deterministic `<artifact>/todo` names.
+The `artifact` selector should reference the base artifact name/ref (for example `plan/task-123`), and the tool derives storage as `<base>/todo`.
+
+Read TODOs:
+
+```json
+{
+  "name": "todo",
+  "arguments": {
+    "operation": "read",
+    "artifact": {"name": "plan/task-123"}
+  }
+}
+```
+
+Write TODOs with stale-write protection:
+
+```json
+{
+  "name": "todo",
+  "arguments": {
+    "operation": "write",
+    "artifact": {"name": "plan/task-123"},
+    "todoList": [
+      {"id": 1, "title": "Draft", "status": "in-progress"},
+      {"id": 2, "title": "Review", "status": "not-started"}
+    ],
+    "expectedPrevRef": "20260217T010000Z-aaaaaaaaaaaaaaaa"
+  }
+}
+```
 
 ## Build (in /local-artifact/)
 

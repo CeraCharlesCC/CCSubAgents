@@ -73,6 +73,12 @@ func initializeToolRegistry() {
 				return s.toolDelete(ctx, args)
 			},
 		},
+		{
+			Metadata: toolRegistryMetadata{CanonicalName: toolArtifactTodo, Aliases: []string{"artifact.todo"}},
+			Handler: func(s *Server, ctx context.Context, args json.RawMessage) (any, *jsonRPCError) {
+				return s.toolTodo(ctx, args)
+			},
+		},
 	}
 
 	toolRegistryByID = make(map[string]toolRegistryEntry, len(entries)*2)
