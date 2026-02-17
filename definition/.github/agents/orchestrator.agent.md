@@ -1,6 +1,6 @@
 ---
 name: orchestrator
-description: Parent agent that clarifies requirements, then loops Plan → Implement → Review until done. Uses artifact-mcp to pass structured data between subagents.
+description: Parent agent that clarifies requirements, then loops Plan → Implement → Review until done. Uses artifact-mcp to pass structured data and track progress via TODO lists.
 argument-hint: "Describe the goal, constraints, and any pointers (files/branch/PR). I will ask clarifying questions and iterate."
 target: vscode
 user-invocable: true
@@ -15,9 +15,14 @@ tools:
     'execute/awaitTerminal', 
     'execute/killTerminal', 
     'search/changes', 
-    'web', 
+    'web',
     'todo',
-    'artifact-mcp/*'
+    'artifact-mcp/delete_artifact',
+    'artifact-mcp/get_artifact',
+    'artifact-mcp/get_artifact_list',
+    'artifact-mcp/resolve_artifact',
+    'artifact-mcp/todo',
+    'artifact-mcp/save_artifact_text',
   ]
 ---
 
@@ -47,6 +52,7 @@ This project uses **artifact-mcp** as the primary mechanism for passing structur
 | `artifact-mcp/get_artifact` | Read a plan or other artifact by its name or ref. |
 | `artifact-mcp/resolve_artifact` | Look up a name to get its latest ref and URIs without loading the body. |
 | `artifact-mcp/save_artifact_text` | Save your own notes, synthesised reviews, or updated plans. |
+| `artifact-mcp/todo` | **Check implementation progress** by reading the TODO list bound to a plan artifact. |
 
 ### Naming conventions (enforced across all subagents)
 
@@ -139,7 +145,36 @@ Delegate to the implementation subagent:
   - Any supplementary notes, clarifications, or constraints that are not captured in the plan artifact.
 - Do **not** paste the full plan into the subagent invocation. The implementation agent will read it from the artifact.
 
-All code editing happens through this subagent. Do not edit code yourself.
+#### How the implementation agent tracks progress
+
+The implementation agent uses `artifact-mcp/todo` to maintain a **TODO list bound to the plan artifact**. Each plan step is tracked as a TODO item with status `not-started`, `in-progress`, or `completed`. This list persists across agent sessions because it is stored in artifact-mcp, not in the agent's chat session.
+
+#### Checking progress after an implementation agent returns
+
+After the implementation agent returns — whether it finished, crashed, or timed out — **always check the TODO status**:
+
+```
+#tool:artifact-mcp/todo
+operation: read
+artifact:
+  name: <plan-artifact-name>     # e.g. plan/add-user-auth
+```
+
+Evaluate the result:
+
+| Scenario | TODO state | Action |
+|---|---|---|
+| **All done** | All items `completed` | Proceed to Phase D (Review). |
+| **Partial progress** | Some `completed`, rest `not-started` or `in-progress` | Re-invoke the implementation agent. It will read the TODOs and **resume from where the previous agent left off** — no repeated work. |
+| **No TODOs created** | Empty / nonexistent | The agent crashed before even starting. Re-invoke the implementation agent from scratch. |
+
+#### Re-invocation is cheap and safe
+
+Because the TODO list persists independently of any agent session:
+
+- A new implementation agent will read the existing TODOs, see which items are already `completed`, and skip straight to the first incomplete item.
+- There is no need to modify the plan or pass special "resume" instructions. Just invoke the implementation agent with the same plan artifact name and it will figure out the rest.
+- You may add a brief note like _"Previous implementation agent was interrupted — please check the TODO list and resume."_ but it is not strictly required; the implementation agent's procedure already handles this.
 
 ### Phase D — Review
 

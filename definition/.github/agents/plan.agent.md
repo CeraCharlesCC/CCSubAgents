@@ -10,9 +10,15 @@ tools:
     'execute/killTerminal', 
     'execute/runInTerminal',
     'read/readFile', 
-    'search',
+    'search/changes',
+    'search/codebase',
+    'search/usages',
     'web',
-    'artifact-mcp/*'
+    'artifact-mcp/delete_artifact',
+    'artifact-mcp/get_artifact',
+    'artifact-mcp/get_artifact_list',
+    'artifact-mcp/resolve_artifact',
+    'artifact-mcp/save_artifact_text',
   ]
 model: [GPT-5.3-Codex (copilot)]
 user-invocable: false

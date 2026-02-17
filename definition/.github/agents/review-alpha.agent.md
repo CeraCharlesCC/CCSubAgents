@@ -4,17 +4,19 @@ description: Review the implementation against the plan artifact and report find
 argument-hint: "Provide the plan artifact name (e.g. plan/add-user-auth) and a description of what was implemented and where to look (PR/branch/files)."
 tools:
   [
-    'execute/getTerminalOutput',
-    'execute/awaitTerminal',
-    'execute/killTerminal',
+    'execute/getTerminalOutput', 
+    'execute/awaitTerminal', 
+    'execute/killTerminal', 
     'execute/runInTerminal',
-    'read/readFile',
+    'read/readFile', 
     'read/problems',
-    'search',
+    'search/changes',
+    'search/codebase',
+    'search/usages',
     'web',
     'artifact-mcp/get_artifact',
-    'artifact-mcp/resolve_artifact',
     'artifact-mcp/get_artifact_list',
+    'artifact-mcp/resolve_artifact',
   ]
 model: [GPT-5.3-Codex (copilot)]
 user-invocable: false
