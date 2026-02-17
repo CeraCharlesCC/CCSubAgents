@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -79,6 +80,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/insert", s.handleInsert)
 	mux.HandleFunc("/delete", s.handleDelete)
 	mux.HandleFunc("/api/artifacts", s.handleAPIArtifacts)
+	mux.HandleFunc("/api/artifact-content", s.handleAPIContent)
 	mux.HandleFunc("/api/subspaces", s.handleAPISubspaces)
 	return mux
 }
@@ -426,6 +428,44 @@ func (s *Server) handleAPISubspaces(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": subspaces})
 }
 
+func (s *Server) handleAPIContent(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w, http.MethodGet)
+		return
+	}
+
+	svc, err := s.serviceFromQuerySubspace(r.URL.Query().Get("subspace"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+
+	selector, err := parseSingleSelector(r.URL.Query())
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+
+	artifact, payload, err := svc.Get(r.Context(), selector)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": domain.ErrNotFound.Error()})
+			return
+		}
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+
+	contentType := normalizeContentType(artifact.MimeType)
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Artifact-Ref", artifact.Ref)
+	w.Header().Set("X-Artifact-Name", artifact.Name)
+	w.Header().Set("X-Artifact-MimeType", artifact.MimeType)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(payload)
+}
+
 func (s *Server) handleAPIList(w http.ResponseWriter, r *http.Request) {
 	svc, err := s.serviceFromQuerySubspace(r.URL.Query().Get("subspace"))
 	if err != nil {
@@ -641,6 +681,37 @@ func parseDeleteSelectors(values url.Values) (deleteSelectorRequest, error) {
 	}
 
 	return deleteSelectorRequest{selectors: selectors, single: len(selectors) == 1}, nil
+}
+
+func parseSingleSelector(values url.Values) (domain.Selector, error) {
+	names := trimUniqueNonEmpty(values["name"])
+	refs := trimUniqueNonEmpty(values["ref"])
+
+	if len(names) > 0 && len(refs) > 0 {
+		return domain.Selector{}, domain.ErrRefAndNameMutuallyExclusive
+	}
+	if len(names)+len(refs) == 0 {
+		return domain.Selector{}, domain.ErrRefOrName
+	}
+	if len(names)+len(refs) > 1 {
+		return domain.Selector{}, errors.New("provide exactly one ref or name")
+	}
+	if len(names) == 1 {
+		return domain.Selector{Name: names[0]}, nil
+	}
+	return domain.Selector{Ref: refs[0]}, nil
+}
+
+func normalizeContentType(raw string) string {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "application/octet-stream"
+	}
+	mediaType, _, err := mime.ParseMediaType(value)
+	if err != nil || mediaType == "" {
+		return "application/octet-stream"
+	}
+	return value
 }
 
 func prevalidateDeleteSelectors(ctx context.Context, svc *domain.Service, selectors []domain.Selector) error {

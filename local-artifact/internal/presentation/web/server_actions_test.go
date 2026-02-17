@@ -451,6 +451,60 @@ func TestHandleDeleteSingleNotFoundKeepsLegacyRedirectError(t *testing.T) {
 	}
 }
 
+func TestAPIContentReturnsPayloadAndMetadataHeaders(t *testing.T) {
+	s := New(t.TempDir())
+	svc := s.serviceForSubspace(globalSubspaceSelector)
+
+	saved, err := svc.SaveText(context.Background(), domain.SaveTextInput{
+		Name:     "viewer/sample",
+		Text:     "preview text",
+		MimeType: "text/plain; charset=utf-8",
+	})
+	if err != nil {
+		t.Fatalf("seed artifact: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/artifact-content?subspace=global&ref="+url.QueryEscape(saved.Ref), nil)
+	rr := httptest.NewRecorder()
+	s.handleAPIContent(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if got := rr.Header().Get("Content-Type"); got != "text/plain; charset=utf-8" {
+		t.Fatalf("unexpected content type: %q", got)
+	}
+	if got := rr.Header().Get("X-Artifact-Name"); got != "viewer/sample" {
+		t.Fatalf("unexpected artifact name header: %q", got)
+	}
+	if got := rr.Header().Get("X-Artifact-Ref"); got != saved.Ref {
+		t.Fatalf("unexpected artifact ref header: %q", got)
+	}
+	if rr.Body.String() != "preview text" {
+		t.Fatalf("unexpected payload: %q", rr.Body.String())
+	}
+}
+
+func TestAPIContentRejectsMultipleSelectors(t *testing.T) {
+	s := New(t.TempDir())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/artifact-content?subspace=global&name=viewer/a&name=viewer/b", nil)
+	rr := httptest.NewRecorder()
+	s.handleAPIContent(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var res map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &res); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got, _ := res["error"].(string); got != "provide exactly one ref or name" {
+		t.Fatalf("unexpected error: %q", got)
+	}
+}
+
 func mustIssueCSRFToken(t *testing.T) string {
 	t.Helper()
 	token, err := issueCSRFToken()

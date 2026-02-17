@@ -142,7 +142,30 @@
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
       gap: 0.65rem;
+      margin: 0;
+    }
+    .insert-panel {
       margin-bottom: 0.75rem;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--input-bg);
+    }
+    .insert-panel > summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 0.58rem 0.72rem;
+      font-size: 0.9rem;
+      font-weight: 650;
+      color: var(--ink);
+    }
+    .insert-panel > summary::-webkit-details-marker {
+      display: none;
+    }
+    .insert-panel[open] > summary {
+      border-bottom: 1px solid var(--line);
+    }
+    .insert-panel .insert {
+      padding: 0.7rem;
     }
     .insert .wide {
       grid-column: 1 / -1;
@@ -175,6 +198,20 @@
     textarea {
       min-height: 88px;
       resize: vertical;
+    }
+    input[type="file"] {
+      padding: 0.34rem 0.45rem;
+    }
+    input[type="file"]::file-selector-button {
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 0.34rem 0.62rem;
+      margin-right: 0.55rem;
+      font-family: var(--sans);
+      font-weight: 600;
+      background: var(--card);
+      color: var(--ink);
+      cursor: pointer;
     }
     button {
       border: 0;
@@ -257,6 +294,51 @@
       outline: 2px solid var(--selected-line);
       outline-offset: -2px;
     }
+    .viewer {
+      margin-top: 0.8rem;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--input-bg);
+      padding: 0.72rem;
+    }
+    .viewer-head {
+      display: flex;
+      align-items: baseline;
+      gap: 0.6rem;
+      flex-wrap: wrap;
+      margin-bottom: 0.55rem;
+    }
+    .viewer-content {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      min-height: 120px;
+      padding: 0.62rem;
+      background: var(--card);
+      overflow: auto;
+    }
+    .viewer-content pre {
+      margin: 0;
+      font-family: var(--mono);
+      font-size: 0.82rem;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      line-height: 1.5;
+    }
+    .viewer-content img {
+      display: block;
+      max-width: 100%;
+      max-height: 380px;
+      height: auto;
+      border-radius: 6px;
+    }
+    .viewer-content .placeholder {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.86rem;
+    }
+    .viewer-content .error {
+      color: var(--danger);
+    }
     .foot {
       margin-top: 0.75rem;
       font-size: 0.82rem;
@@ -301,28 +383,31 @@
         <button type="submit">Refresh</button>
       </form>
 
-      <form class="insert" id="insert-form" method="post" action="/insert" enctype="multipart/form-data">
-        <input type="hidden" name="subspace" value="{{.Subspace}}">
-        <input type="hidden" name="prefix" value="{{.Prefix}}">
-        <input type="hidden" name="limit" value="{{.Limit}}">
-        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-        <label>Name
-          <input type="text" name="name" required placeholder="plan/task-123">
-        </label>
-        <label>MIME Type (optional)
-          <input type="text" name="mimeType" placeholder="text/plain; charset=utf-8">
-        </label>
-        <label class="wide">Text
-          <textarea name="text" placeholder="Enter text content"></textarea>
-        </label>
-        <label class="wide">File upload
-          <input type="file" name="file">
-        </label>
-        <div class="insert-actions wide">
-          <button type="submit">Insert</button>
-          <span class="hint">Provide text or a file upload, not both.</span>
-        </div>
-      </form>
+      <details class="insert-panel" id="insert-panel">
+        <summary>Insert artifact</summary>
+        <form class="insert" id="insert-form" method="post" action="/insert" enctype="multipart/form-data">
+          <input type="hidden" name="subspace" value="{{.Subspace}}">
+          <input type="hidden" name="prefix" value="{{.Prefix}}">
+          <input type="hidden" name="limit" value="{{.Limit}}">
+          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+          <label>Name
+            <input type="text" name="name" required placeholder="plan/task-123">
+          </label>
+          <label>MIME Type (optional)
+            <input type="text" name="mimeType" placeholder="text/plain; charset=utf-8">
+          </label>
+          <label class="wide">Text
+            <textarea name="text" placeholder="Enter text content"></textarea>
+          </label>
+          <label class="wide">File upload
+            <input type="file" name="file">
+          </label>
+          <div class="insert-actions wide">
+            <button type="submit">Insert</button>
+            <span class="hint">Provide text or a file upload, not both.</span>
+          </div>
+        </form>
+      </details>
 
       {{if .Message}}<div class="msg ok">{{.Message}}</div>{{end}}
       {{if .Error}}<div class="msg err">{{.Error}}</div>{{end}}
@@ -353,7 +438,7 @@
           </thead>
           <tbody>
           {{range $idx, $item := .Items}}
-            <tr class="selectable" data-selectable-row data-index="{{$idx}}" data-name="{{$item.Name}}" tabindex="0" aria-selected="false">
+            <tr class="selectable" data-selectable-row data-index="{{$idx}}" data-name="{{$item.Name}}" data-ref="{{$item.Ref}}" data-mime="{{$item.MimeType}}" tabindex="0" aria-selected="false">
               <td><code>{{$item.Name}}</code></td>
               <td><code>{{$item.Ref}}</code></td>
               <td>{{$item.Kind}}</td>
@@ -368,7 +453,17 @@
         </table>
       </div>
 
-      <div class="foot">Generated at {{.GeneratedAt}} | JSON endpoints: <code>/api/subspaces</code>, <code>/api/artifacts?subspace=&lt;global|hash&gt;</code> (GET, POST, DELETE)</div>
+      <section class="viewer" id="artifact-viewer" aria-live="polite">
+        <div class="viewer-head">
+          <strong>Data viewer</strong>
+          <span class="hint" id="viewer-meta">Select one artifact to preview.</span>
+        </div>
+        <div class="viewer-content" id="viewer-content">
+          <p class="placeholder">Supported: text/plain, text/markdown, image/*, application/json, application/ld+json.</p>
+        </div>
+      </section>
+
+      <div class="foot">Generated at {{.GeneratedAt}} | JSON endpoints: <code>/api/subspaces</code>, <code>/api/artifacts?subspace=&lt;global|hash&gt;</code> (GET, POST, DELETE), <code>/api/artifact-content?subspace=&lt;global|hash&gt;&amp;ref=&lt;ref&gt;</code> (GET)</div>
     </section>
   </main>
 
@@ -420,6 +515,10 @@
       const selectedInputs = document.getElementById('selected-inputs');
       const countNode = document.getElementById('selection-count');
       const deleteButton = document.getElementById('delete-selected');
+      const viewerMeta = document.getElementById('viewer-meta');
+      const viewerContent = document.getElementById('viewer-content');
+      let activeImageObjectURL = '';
+      let previewRequestID = 0;
 
       if (!selectedInputs || !countNode || !deleteButton) {
         return;
@@ -438,6 +537,180 @@
 
       function sortedSelection() {
         return Array.from(selected).sort(function (a, b) { return a - b; });
+      }
+
+      function normalizeMimeType(rawMimeType) {
+        const firstPart = (rawMimeType || '').split(';')[0];
+        return firstPart.trim().toLowerCase();
+      }
+
+      function clearViewer() {
+        if (!viewerContent) {
+          return;
+        }
+        if (activeImageObjectURL !== '') {
+          URL.revokeObjectURL(activeImageObjectURL);
+          activeImageObjectURL = '';
+        }
+        viewerContent.innerHTML = '';
+      }
+
+      function showViewerPlaceholder(message, isError) {
+        if (!viewerContent) {
+          return;
+        }
+        clearViewer();
+        const node = document.createElement('p');
+        node.className = isError ? 'placeholder error' : 'placeholder';
+        node.textContent = message;
+        viewerContent.appendChild(node);
+      }
+
+      function showViewerText(text) {
+        if (!viewerContent) {
+          return;
+        }
+        clearViewer();
+        const pre = document.createElement('pre');
+        pre.textContent = text;
+        viewerContent.appendChild(pre);
+      }
+
+      function showViewerImage(blob, alt) {
+        if (!viewerContent) {
+          return;
+        }
+        clearViewer();
+        activeImageObjectURL = URL.createObjectURL(blob);
+        const img = document.createElement('img');
+        img.src = activeImageObjectURL;
+        img.alt = alt || 'artifact image';
+        viewerContent.appendChild(img);
+      }
+
+      function activeSubspaceValue() {
+        if (!bulkDeleteForm) {
+          return '';
+        }
+        const input = bulkDeleteForm.querySelector('input[name="subspace"]');
+        if (!input) {
+          return '';
+        }
+        return input.value || '';
+      }
+
+      function updateViewerBySelection() {
+        if (!viewerMeta || !viewerContent) {
+          return;
+        }
+
+        const activeRows = sortedSelection();
+        if (activeRows.length === 0) {
+          viewerMeta.textContent = 'Select one artifact to preview.';
+          showViewerPlaceholder('Supported: text/plain, text/markdown, image/*, application/json, application/ld+json.', false);
+          return;
+        }
+        if (activeRows.length > 1) {
+          viewerMeta.textContent = 'Select a single artifact to preview.';
+          showViewerPlaceholder('Multiple artifacts selected.', false);
+          return;
+        }
+
+        const row = rows[activeRows[0]];
+        if (!row) {
+          viewerMeta.textContent = 'Select one artifact to preview.';
+          showViewerPlaceholder('No artifact selected.', false);
+          return;
+        }
+
+        const ref = row.dataset.ref || '';
+        const name = row.dataset.name || '';
+        if (ref === '') {
+          viewerMeta.textContent = 'Preview unavailable';
+          showViewerPlaceholder('Missing ref for selected artifact.', true);
+          return;
+        }
+
+        const query = new URLSearchParams();
+        query.set('subspace', activeSubspaceValue());
+        query.set('ref', ref);
+        const requestID = previewRequestID + 1;
+        previewRequestID = requestID;
+        viewerMeta.textContent = (name || ref) + ' | loading...';
+        showViewerPlaceholder('Loading preview...', false);
+
+        fetch('/api/artifact-content?' + query.toString())
+          .then(function (response) {
+            if (requestID !== previewRequestID) {
+              return null;
+            }
+            if (!response.ok) {
+              return response.text().then(function (raw) {
+                let err = 'failed to load preview';
+                if (raw !== '') {
+                  try {
+                    const payload = JSON.parse(raw);
+                    if (payload && payload.error) {
+                      err = String(payload.error);
+                    }
+                  } catch (error) {
+                  }
+                }
+                throw new Error(err);
+              });
+            }
+            return response.blob().then(function (blob) {
+              const rawMimeType = response.headers.get('Content-Type') || row.dataset.mime || 'application/octet-stream';
+              return { blob: blob, rawMimeType: rawMimeType };
+            });
+          })
+          .then(function (result) {
+            if (!result || requestID !== previewRequestID) {
+              return;
+            }
+            const mimeType = normalizeMimeType(result.rawMimeType);
+            viewerMeta.textContent = (name || ref) + ' | ' + result.rawMimeType;
+            if (mimeType.indexOf('image/') === 0) {
+              showViewerImage(result.blob, name || ref);
+              return;
+            }
+            const supportsTextPreview =
+              mimeType === 'application/json' ||
+              mimeType === 'application/ld+json' ||
+              mimeType.indexOf('text/plain') === 0 ||
+              mimeType.indexOf('text/markdown') === 0;
+            if (!supportsTextPreview) {
+              showViewerPlaceholder('Preview not supported for MIME type: ' + result.rawMimeType, false);
+              return;
+            }
+            result.blob.text().then(function (text) {
+              if (requestID !== previewRequestID) {
+                return;
+              }
+              if (mimeType === 'application/json' || mimeType === 'application/ld+json') {
+                try {
+                  const pretty = JSON.stringify(JSON.parse(text), null, 2);
+                  showViewerText(pretty);
+                  return;
+                } catch (error) {
+                }
+              }
+              if (
+                mimeType.indexOf('text/plain') === 0 ||
+                mimeType.indexOf('text/markdown') === 0
+              ) {
+                showViewerText(text);
+                return;
+              }
+            });
+          })
+          .catch(function (error) {
+            if (requestID !== previewRequestID) {
+              return;
+            }
+            viewerMeta.textContent = 'Preview error';
+            showViewerPlaceholder(error && error.message ? error.message : 'failed to load preview', true);
+          });
       }
 
       function updateSelectionUI() {
@@ -467,6 +740,7 @@
         const selectedCount = activeRows.length;
         deleteButton.disabled = selectedCount === 0;
         countNode.textContent = selectedCount + ' selected';
+        updateViewerBySelection();
       }
 
       function applySelectionEvent(idx, event) {
