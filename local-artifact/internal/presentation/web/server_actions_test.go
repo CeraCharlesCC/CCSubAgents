@@ -433,6 +433,28 @@ func TestAPISaveSanitizesFilename(t *testing.T) {
 	}
 }
 
+func TestSanitizeFilenameRejectsPathTraversalMarkers(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "empty", in: "", want: ""},
+		{name: "dot", in: ".", want: ""},
+		{name: "dotdot", in: "..", want: ""},
+		{name: "windows-dotdot", in: `..\`, want: ""},
+		{name: "normalized basename", in: "../../safe.bin", want: "safe.bin"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sanitizeFilename(tc.in); got != tc.want {
+				t.Fatalf("sanitizeFilename(%q)=%q want=%q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestAPIDeleteRejectsMixedNameAndRef(t *testing.T) {
 	s := New(t.TempDir())
 
