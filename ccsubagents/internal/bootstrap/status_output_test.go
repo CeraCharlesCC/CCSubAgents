@@ -170,6 +170,32 @@ func TestInstallOrUpdate_ReportsUpdateCleanupProgress(t *testing.T) {
 	})
 }
 
+func TestInstallOrUpdate_ReportsSkipAttestationWhenFlagSet(t *testing.T) {
+	home := t.TempDir()
+	agentsArchive := zipBytes(t, map[string]string{"agents/example.agent.md": "content"})
+	bundleArchive := zipBytes(t, map[string]string{
+		"local-artifact-mcp": "mcp-binary",
+		"local-artifact-web": "web-binary",
+	})
+
+	var out bytes.Buffer
+	m := statusTestManager(home, successReleaseHTTPClient(t, "v1.2.3", agentsArchive, bundleArchive), &out)
+	m.skipAttestationsCheck = true
+
+	if err := m.installOrUpdate(context.Background(), false); err != nil {
+		t.Fatalf("install should succeed: %v", err)
+	}
+
+	status := out.String()
+	assertStatusContainsInOrder(t, status, []string{
+		"==> Install: verifying attestations",
+		"  - Skipping attestation verification (--skip-attestations-check)",
+	})
+	if strings.Contains(status, "Verifying attestation for") {
+		t.Fatalf("expected no attestation verification output when skip flag is enabled, got:\n%s", status)
+	}
+}
+
 func TestUninstall_ReportsNoopWhenNoTrackedState(t *testing.T) {
 	home := t.TempDir()
 	var out bytes.Buffer

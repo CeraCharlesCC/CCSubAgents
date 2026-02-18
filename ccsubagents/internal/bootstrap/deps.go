@@ -14,13 +14,17 @@ import (
 )
 
 type Manager struct {
-	httpClient    *http.Client
-	now           func() time.Time
-	homeDir       func() (string, error)
-	lookPath      func(string) (string, error)
-	runCommand    func(context.Context, string, ...string) ([]byte, error)
-	installBinary func(string, string) error
-	statusOut     io.Writer
+	httpClient            *http.Client
+	now                   func() time.Time
+	homeDir               func() (string, error)
+	lookPath              func(string) (string, error)
+	runCommand            func(context.Context, string, ...string) ([]byte, error)
+	installBinary         func(string, string) error
+	statusOut             io.Writer
+	promptIn              io.Reader
+	promptOut             io.Writer
+	skipAttestationsCheck bool
+	installDestination    installDestination
 }
 
 func NewManager() *Manager {
@@ -31,11 +35,22 @@ func NewManager() *Manager {
 		lookPath:      exec.LookPath,
 		runCommand:    runCommand,
 		installBinary: installBinary,
+		promptIn:      os.Stdin,
+		promptOut:     os.Stdout,
 	}
 }
 
 func (m *Manager) SetStatusWriter(writer io.Writer) {
 	m.statusOut = writer
+}
+
+func (m *Manager) SetSkipAttestationsCheck(skip bool) {
+	m.skipAttestationsCheck = skip
+}
+
+func (m *Manager) SetInstallPromptIO(input io.Reader, output io.Writer) {
+	m.promptIn = input
+	m.promptOut = output
 }
 
 func (m *Manager) statusf(format string, args ...any) {
@@ -46,26 +61,44 @@ func (m *Manager) statusf(format string, args ...any) {
 }
 
 type installPaths struct {
-	binaryDir    string
+	binaryDir string
+	stable    configPaths
+	insiders  configPaths
+}
+
+type configPaths struct {
+	settingsPath string
+	mcpPath      string
+}
+
+type installConfigTarget struct {
 	settingsPath string
 	mcpPath      string
 }
 
 func resolveInstallPaths(home string) installPaths {
 	paths := installPaths{
-		binaryDir:    filepath.Join(home, binaryInstallDirDefaultRel),
-		settingsPath: filepath.Join(home, settingsRelativePath),
-		mcpPath:      filepath.Join(home, mcpConfigRelativePath),
+		binaryDir: filepath.Join(home, binaryInstallDirDefaultRel),
+		stable: configPaths{
+			settingsPath: filepath.Join(home, settingsStableRelativePath),
+			mcpPath:      filepath.Join(home, mcpConfigStableRelativePath),
+		},
+		insiders: configPaths{
+			settingsPath: filepath.Join(home, settingsInsidersRelativePath),
+			mcpPath:      filepath.Join(home, mcpConfigInsidersRelativePath),
+		},
 	}
 
 	if override := resolveConfiguredPath(home, os.Getenv(binaryInstallDirEnv)); override != "" {
 		paths.binaryDir = override
 	}
 	if override := resolveConfiguredPath(home, os.Getenv(settingsPathEnv)); override != "" {
-		paths.settingsPath = override
+		paths.stable.settingsPath = override
+		paths.insiders.settingsPath = override
 	}
 	if override := resolveConfiguredPath(home, os.Getenv(mcpConfigPathEnv)); override != "" {
-		paths.mcpPath = override
+		paths.stable.mcpPath = override
+		paths.insiders.mcpPath = override
 	}
 
 	return paths

@@ -1,56 +1,132 @@
 package bootstrap
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 )
 
 const (
-	stateDirPerm               = 0o755
-	stateFilePerm              = 0o644
-	binaryFilePerm             = 0o755
-	releaseRepo                = "CeraCharlesCC/CCSubAgents"
-	releaseWorkflowPath        = ".github/workflows/manual-release.yml"
-	releaseLatestURL           = "https://api.github.com/repos/" + releaseRepo + "/releases/latest"
-	assetAgentsZip             = "agents.zip"
-	assetLocalArtifactZip      = "local-artifact.zip"
-	assetArtifactMCP           = "local-artifact-mcp"
-	assetArtifactWeb           = "local-artifact-web"
-	binaryInstallDirDefaultRel = ".local/bin"
-	binaryInstallDirEnv        = "LOCAL_ARTIFACT_BIN_DIR"
-	trackedFileName            = "tracked.json"
-	settingsRelativePath       = ".vscode-server-insiders/data/Machine/settings.json"
-	settingsPathEnv            = "LOCAL_ARTIFACT_SETTINGS_PATH"
-	mcpConfigRelativePath      = ".vscode-server-insiders/data/User/mcp.json"
-	mcpConfigPathEnv           = "LOCAL_ARTIFACT_MCP_PATH"
-	mcpServerKey               = "artifact-mcp"
-	settingsAgentPathKey       = "chat.agentFilesLocations"
-	agentsRelativePath         = ".local/share/ccsubagents/agents"
-	trackedSchemaVersion       = 1
-	installCommand             = "install"
-	updateCommand              = "update"
-	uninstallCommand           = "uninstall"
-	httpsHeaderAccept          = "application/vnd.github+json"
-	httpsHeaderUserAgent       = "ccsubagents-bootstrap"
-	httpsHeaderAuthorization   = "Authorization"
-	httpsHeaderGithubTokenPref = "Bearer "
-	attestationOIDCIssuer      = "https://token.actions.githubusercontent.com"
+	stateDirPerm                  = 0o755
+	stateFilePerm                 = 0o644
+	binaryFilePerm                = 0o755
+	releaseRepo                   = "CeraCharlesCC/CCSubAgents"
+	releaseWorkflowPath           = ".github/workflows/manual-release.yml"
+	releaseLatestURL              = "https://api.github.com/repos/" + releaseRepo + "/releases/latest"
+	assetAgentsZip                = "agents.zip"
+	assetLocalArtifactZip         = "local-artifact.zip"
+	assetArtifactMCP              = "local-artifact-mcp"
+	assetArtifactWeb              = "local-artifact-web"
+	binaryInstallDirDefaultRel    = ".local/bin"
+	binaryInstallDirEnv           = "LOCAL_ARTIFACT_BIN_DIR"
+	trackedFileName               = "tracked.json"
+	settingsStableRelativePath    = ".vscode-server/data/Machine/settings.json"
+	settingsInsidersRelativePath  = ".vscode-server-insiders/data/Machine/settings.json"
+	settingsRelativePath          = settingsInsidersRelativePath
+	settingsPathEnv               = "LOCAL_ARTIFACT_SETTINGS_PATH"
+	mcpConfigStableRelativePath   = ".vscode-server/data/User/mcp.json"
+	mcpConfigInsidersRelativePath = ".vscode-server-insiders/data/User/mcp.json"
+	mcpConfigRelativePath         = mcpConfigInsidersRelativePath
+	mcpConfigPathEnv              = "LOCAL_ARTIFACT_MCP_PATH"
+	mcpServerKey                  = "artifact-mcp"
+	settingsAgentPathKey          = "chat.agentFilesLocations"
+	agentsRelativePath            = ".local/share/ccsubagents/agents"
+	trackedSchemaVersion          = 1
+	installCommand                = "install"
+	updateCommand                 = "update"
+	uninstallCommand              = "uninstall"
+	httpsHeaderAccept             = "application/vnd.github+json"
+	httpsHeaderUserAgent          = "ccsubagents-bootstrap"
+	httpsHeaderAuthorization      = "Authorization"
+	httpsHeaderGithubTokenPref    = "Bearer "
+	attestationOIDCIssuer         = "https://token.actions.githubusercontent.com"
 )
 
 var installAssetNames = []string{assetAgentsZip, assetLocalArtifactZip}
 
+type installDestination string
+
+const (
+	installDestinationStable   installDestination = "stable"
+	installDestinationInsiders installDestination = "insiders"
+	installDestinationBoth     installDestination = "both"
+)
+
+func (m *Manager) promptInstallDestination(ctx context.Context) (installDestination, error) {
+	input := m.promptIn
+	if input == nil {
+		input = os.Stdin
+	}
+	output := m.promptOut
+	if output == nil {
+		output = os.Stdout
+	}
+
+	reader := bufio.NewReader(input)
+	for {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		if _, err := io.WriteString(output, "Select install destination:\n"); err != nil {
+			return "", fmt.Errorf("write install destination prompt: %w", err)
+		}
+		if _, err := io.WriteString(output, "  1. .vscode-server\n"); err != nil {
+			return "", fmt.Errorf("write install destination prompt: %w", err)
+		}
+		if _, err := io.WriteString(output, "  2. .vscode-server-insiders\n"); err != nil {
+			return "", fmt.Errorf("write install destination prompt: %w", err)
+		}
+		if _, err := io.WriteString(output, "  3. both\n"); err != nil {
+			return "", fmt.Errorf("write install destination prompt: %w", err)
+		}
+		if _, err := io.WriteString(output, "Enter choice [1-3]: "); err != nil {
+			return "", fmt.Errorf("write install destination prompt: %w", err)
+		}
+
+		line, err := reader.ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return "", fmt.Errorf("read install destination selection: %w", err)
+		}
+
+		switch strings.TrimSpace(line) {
+		case "1":
+			return installDestinationStable, nil
+		case "2":
+			return installDestinationInsiders, nil
+		case "3":
+			return installDestinationBoth, nil
+		default:
+			if errors.Is(err, io.EOF) {
+				return "", errors.New("install destination selection canceled")
+			}
+			if _, writeErr := io.WriteString(output, "Invalid selection. Enter 1, 2, or 3.\n\n"); writeErr != nil {
+				return "", fmt.Errorf("write install destination prompt: %w", writeErr)
+			}
+		}
+	}
+}
+
 func (m *Manager) Run(ctx context.Context, command Command) error {
 	switch command {
 	case CommandInstall:
+		destination, err := m.promptInstallDestination(ctx)
+		if err != nil {
+			return err
+		}
+		m.installDestination = destination
 		return m.installOrUpdate(ctx, false)
 	case CommandUpdate:
+		m.installDestination = ""
 		return m.installOrUpdate(ctx, true)
 	case CommandUninstall:
+		m.installDestination = ""
 		return m.uninstall(ctx)
 	default:
 		return fmt.Errorf("unknown command %q (expected: install, update, uninstall)", command)
@@ -70,6 +146,81 @@ func commandNameForInstallOrUpdate(isUpdate bool) string {
 		return "Update"
 	}
 	return "Install"
+}
+
+func resolveInstallTargets(paths installPaths, destination installDestination) ([]installConfigTarget, error) {
+	switch destination {
+	case installDestinationStable:
+		return []installConfigTarget{{settingsPath: paths.stable.settingsPath, mcpPath: paths.stable.mcpPath}}, nil
+	case installDestinationInsiders:
+		return []installConfigTarget{{settingsPath: paths.insiders.settingsPath, mcpPath: paths.insiders.mcpPath}}, nil
+	case installDestinationBoth:
+		return uniqueInstallTargets([]installConfigTarget{
+			{settingsPath: paths.stable.settingsPath, mcpPath: paths.stable.mcpPath},
+			{settingsPath: paths.insiders.settingsPath, mcpPath: paths.insiders.mcpPath},
+		}), nil
+	default:
+		return nil, fmt.Errorf("invalid install destination %q", destination)
+	}
+}
+
+func resolveUpdateTargets(paths installPaths, previous *trackedState) []installConfigTarget {
+	if previous == nil {
+		return []installConfigTarget{{settingsPath: paths.insiders.settingsPath, mcpPath: paths.insiders.mcpPath}}
+	}
+
+	settingsEdits := previous.JSONEdits.allSettingsEdits()
+	mcpEdits := previous.JSONEdits.allMCPEdits()
+	count := len(settingsEdits)
+	if len(mcpEdits) > count {
+		count = len(mcpEdits)
+	}
+
+	if count == 0 {
+		return []installConfigTarget{{settingsPath: paths.insiders.settingsPath, mcpPath: paths.insiders.mcpPath}}
+	}
+
+	targets := make([]installConfigTarget, 0, count)
+	for idx := 0; idx < count; idx++ {
+		target := installConfigTarget{}
+		if idx < len(settingsEdits) {
+			target.settingsPath = settingsEdits[idx].File
+		}
+		if idx < len(mcpEdits) {
+			target.mcpPath = mcpEdits[idx].File
+		}
+		if strings.TrimSpace(target.settingsPath) == "" {
+			target.settingsPath = paths.insiders.settingsPath
+		}
+		if strings.TrimSpace(target.mcpPath) == "" {
+			target.mcpPath = paths.insiders.mcpPath
+		}
+		targets = append(targets, target)
+	}
+
+	return uniqueInstallTargets(targets)
+}
+
+func uniqueInstallTargets(targets []installConfigTarget) []installConfigTarget {
+	out := make([]installConfigTarget, 0, len(targets))
+	seen := map[string]struct{}{}
+	for _, target := range targets {
+		settingsPath := strings.TrimSpace(target.settingsPath)
+		mcpPath := strings.TrimSpace(target.mcpPath)
+		if settingsPath == "" || mcpPath == "" {
+			continue
+		}
+		key := filepath.Clean(settingsPath) + "\n" + filepath.Clean(mcpPath)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, installConfigTarget{
+			settingsPath: filepath.Clean(settingsPath),
+			mcpPath:      filepath.Clean(mcpPath),
+		})
+	}
+	return out
 }
 
 func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr error) {
@@ -101,6 +252,21 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 	} else {
 		m.reportAction("Found existing tracked installation")
 	}
+
+	var configTargets []installConfigTarget
+	if isUpdate {
+		configTargets = resolveUpdateTargets(paths, previousState)
+	} else {
+		destination := m.installDestination
+		if destination == "" {
+			destination = installDestinationInsiders
+		}
+		configTargets, err = resolveInstallTargets(paths, destination)
+		if err != nil {
+			return err
+		}
+	}
+
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -136,8 +302,12 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 	}
 
 	m.reportPhase(commandName, "verifying attestations")
-	if err := m.verifyDownloadedAssets(ctx, downloaded); err != nil {
-		return err
+	if m.skipAttestationsCheck {
+		m.reportAction("Skipping attestation verification (--skip-attestations-check)")
+	} else {
+		if err := m.verifyDownloadedAssets(ctx, downloaded); err != nil {
+			return err
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -226,28 +396,29 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 	}
 	m.reportAction("Extracted %s", assetAgentsZip)
 
-	settingsPath := paths.settingsPath
-	if created, err := ensureParentDir(settingsPath); err != nil {
-		return err
-	} else if created {
-		createdDirs = append(createdDirs, filepath.Dir(settingsPath))
-		rollback.trackCreatedDir(filepath.Dir(settingsPath))
-	}
-	if err := rollback.captureFile(settingsPath); err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
+	for _, target := range configTargets {
+		if created, err := ensureParentDir(target.settingsPath); err != nil {
 			return err
+		} else if created {
+			createdDirs = append(createdDirs, filepath.Dir(target.settingsPath))
+			rollback.trackCreatedDir(filepath.Dir(target.settingsPath))
 		}
-	}
-	mcpPath := paths.mcpPath
-	if created, err := ensureParentDir(mcpPath); err != nil {
-		return err
-	} else if created {
-		createdDirs = append(createdDirs, filepath.Dir(mcpPath))
-		rollback.trackCreatedDir(filepath.Dir(mcpPath))
-	}
-	if err := rollback.captureFile(mcpPath); err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
+		if err := rollback.captureFile(target.settingsPath); err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+		}
+
+		if created, err := ensureParentDir(target.mcpPath); err != nil {
 			return err
+		} else if created {
+			createdDirs = append(createdDirs, filepath.Dir(target.mcpPath))
+			rollback.trackCreatedDir(filepath.Dir(target.mcpPath))
+		}
+		if err := rollback.captureFile(target.mcpPath); err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
 		}
 	}
 
@@ -259,14 +430,20 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 	}
 	m.reportAction("Updating settings and MCP configuration")
 
-	settingsEdit, err := applySettingsEdit(settingsPath, settingsAgentPath, previousState)
-	if err != nil {
-		return err
-	}
+	settingsEdits := make([]settingsEdit, 0, len(configTargets))
+	mcpEdits := make([]mcpEdit, 0, len(configTargets))
+	for _, target := range configTargets {
+		settingsEdit, err := applySettingsEdit(target.settingsPath, settingsAgentPath, previousState)
+		if err != nil {
+			return err
+		}
+		settingsEdits = append(settingsEdits, settingsEdit)
 
-	mcpEdit, err := applyMCPEdit(mcpPath, mcpCommandPath, previousState)
-	if err != nil {
-		return err
+		mcpEdit, err := applyMCPEdit(target.mcpPath, mcpCommandPath, previousState)
+		if err != nil {
+			return err
+		}
+		mcpEdits = append(mcpEdits, mcpEdit)
 	}
 
 	state := trackedState{
@@ -279,10 +456,7 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 			Files: uniqueSorted(append(append([]string{}, binaryPaths...), extractedFiles...)),
 			Dirs:  uniqueSorted(append(createdDirs, extractedDirs...)),
 		},
-		JSONEdits: trackedJSONOps{
-			Settings: settingsEdit,
-			MCP:      mcpEdit,
-		},
+		JSONEdits: trackedJSONOpsFromEdits(settingsEdits, mcpEdits),
 	}
 
 	if isUpdate {
@@ -339,9 +513,25 @@ func (m *Manager) uninstall(ctx context.Context) error {
 	m.reportAction("Found tracked installation")
 
 	agentsDir := filepath.Join(home, agentsRelativePath)
-	settingsParentDir := filepath.Dir(paths.settingsPath)
-	mcpParentDir := filepath.Dir(paths.mcpPath)
-	allowedConfigParentDirs := []string{settingsParentDir, mcpParentDir}
+	allowedConfigParentDirs := []string{
+		filepath.Dir(paths.stable.settingsPath),
+		filepath.Dir(paths.stable.mcpPath),
+		filepath.Dir(paths.insiders.settingsPath),
+		filepath.Dir(paths.insiders.mcpPath),
+	}
+	for _, edit := range state.JSONEdits.allSettingsEdits() {
+		if strings.TrimSpace(edit.File) == "" {
+			continue
+		}
+		allowedConfigParentDirs = append(allowedConfigParentDirs, filepath.Dir(edit.File))
+	}
+	for _, edit := range state.JSONEdits.allMCPEdits() {
+		if strings.TrimSpace(edit.File) == "" {
+			continue
+		}
+		allowedConfigParentDirs = append(allowedConfigParentDirs, filepath.Dir(edit.File))
+	}
+	allowedConfigParentDirs = uniqueSorted(allowedConfigParentDirs)
 	allowedBinaries := []string{
 		filepath.Join(paths.binaryDir, assetArtifactMCP),
 		filepath.Join(paths.binaryDir, assetArtifactWeb),
@@ -370,11 +560,21 @@ func (m *Manager) uninstall(ctx context.Context) error {
 	}
 	m.reportPhase("Uninstall", "reverting configuration edits")
 	m.reportAction("Reverting settings and MCP configuration")
-	if err := revertSettingsEdit(state.JSONEdits.Settings); err != nil {
-		return err
+	for _, edit := range state.JSONEdits.allSettingsEdits() {
+		if strings.TrimSpace(edit.File) == "" {
+			continue
+		}
+		if err := revertSettingsEdit(edit); err != nil {
+			return err
+		}
 	}
-	if err := revertMCPEdit(state.JSONEdits.MCP); err != nil {
-		return err
+	for _, edit := range state.JSONEdits.allMCPEdits() {
+		if strings.TrimSpace(edit.File) == "" {
+			continue
+		}
+		if err := revertMCPEdit(edit); err != nil {
+			return err
+		}
 	}
 
 	dirs := append([]string{}, state.Managed.Dirs...)

@@ -11,6 +11,21 @@ import (
 )
 
 func applySettingsEdit(settingsPath, agentsDir string, previous *trackedState) (settingsEdit, error) {
+	var previousEdit settingsEdit
+	hasPreviousEdit := false
+	if previous != nil {
+		if matched, ok := previous.JSONEdits.settingsEditForFile(settingsPath); ok {
+			previousEdit = matched
+			hasPreviousEdit = true
+		} else {
+			all := previous.JSONEdits.allSettingsEdits()
+			if len(all) == 1 && strings.TrimSpace(all[0].File) == "" {
+				previousEdit = all[0]
+				hasPreviousEdit = true
+			}
+		}
+	}
+
 	root, err := readJSONFile(settingsPath)
 	if err != nil {
 		return settingsEdit{}, fmt.Errorf("read settings.json: %w", err)
@@ -22,8 +37,8 @@ func applySettingsEdit(settingsPath, agentsDir string, previous *trackedState) (
 		if !ok {
 			return settingsEdit{}, fmt.Errorf("settings %s must be an object when present", settingsAgentPathKey)
 		}
-		if previous != nil {
-			previousPath := strings.TrimSpace(previous.JSONEdits.Settings.AgentPath)
+		if hasPreviousEdit {
+			previousPath := strings.TrimSpace(previousEdit.AgentPath)
 			if previousPath != "" && previousPath != agentsDir {
 				delete(locations, previousPath)
 			}
@@ -48,7 +63,7 @@ func applySettingsEdit(settingsPath, agentsDir string, previous *trackedState) (
 	}
 
 	wasAdded := added
-	if previous != nil && previous.JSONEdits.Settings.Added {
+	if hasPreviousEdit && previousEdit.Added {
 		wasAdded = true
 	}
 	return settingsEdit{File: settingsPath, AgentPath: agentsDir, Added: wasAdded}, nil
@@ -97,10 +112,27 @@ func applyMCPEdit(path, commandPath string, previous *trackedState) (mcpEdit, er
 	}
 
 	edit := mcpEdit{File: path, Key: mcpServerKey, Touched: true}
-	if prev := previous; prev != nil && prev.JSONEdits.MCP.Touched {
-		edit.HadPrevious = prev.JSONEdits.MCP.HadPrevious
-		if len(prev.JSONEdits.MCP.Previous) > 0 {
-			edit.Previous = slices.Clone(prev.JSONEdits.MCP.Previous)
+	if prev := previous; prev != nil {
+		if matched, ok := prev.JSONEdits.mcpEditForFile(path); ok && matched.Touched {
+			edit.HadPrevious = matched.HadPrevious
+			if len(matched.Previous) > 0 {
+				edit.Previous = slices.Clone(matched.Previous)
+			}
+		} else {
+			all := prev.JSONEdits.allMCPEdits()
+			if len(all) == 1 && all[0].Touched && strings.TrimSpace(all[0].File) == "" {
+				edit.HadPrevious = all[0].HadPrevious
+				if len(all[0].Previous) > 0 {
+					edit.Previous = slices.Clone(all[0].Previous)
+				}
+			} else if existing, ok := servers[mcpServerKey]; ok {
+				encoded, err := json.Marshal(existing)
+				if err != nil {
+					return mcpEdit{}, fmt.Errorf("marshal existing mcp server config: %w", err)
+				}
+				edit.HadPrevious = true
+				edit.Previous = encoded
+			}
 		}
 	} else if existing, ok := servers[mcpServerKey]; ok {
 		encoded, err := json.Marshal(existing)

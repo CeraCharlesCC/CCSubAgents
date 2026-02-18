@@ -145,6 +145,98 @@ func TestApplySettingsEdit_MigratesTrackedPreviousPath(t *testing.T) {
 	}
 }
 
+func TestApplySettingsEdit_CrossTargetFallbackIgnoresConcretePathMismatch(t *testing.T) {
+	dir := t.TempDir()
+	sourceSettingsPath := filepath.Join(dir, "source-settings.json")
+	targetSettingsPath := filepath.Join(dir, "target-settings.json")
+
+	seed := map[string]any{
+		"chat.agentFilesLocations": map[string]any{
+			"/legacy/path":    true,
+			"/managed/agents": true,
+			"/existing":       true,
+		},
+	}
+	if err := writeJSONFile(targetSettingsPath, seed); err != nil {
+		t.Fatalf("seed target settings file: %v", err)
+	}
+
+	previous := &trackedState{
+		JSONEdits: trackedJSONOps{
+			Settings: settingsEdit{
+				File:      sourceSettingsPath,
+				AgentPath: "/legacy/path",
+				Added:     true,
+			},
+		},
+	}
+
+	edit, err := applySettingsEdit(targetSettingsPath, "/managed/agents", previous)
+	if err != nil {
+		t.Fatalf("apply settings edit: %v", err)
+	}
+	if edit.Added {
+		t.Fatalf("expected Added=false when target already contained managed path")
+	}
+
+	root, err := readJSONFile(targetSettingsPath)
+	if err != nil {
+		t.Fatalf("read target settings file: %v", err)
+	}
+	locations := root["chat.agentFilesLocations"].(map[string]any)
+	if locations["/legacy/path"] != true {
+		t.Fatalf("expected legacy path preserved for mismatched tracked file: %#v", locations)
+	}
+	if locations["/managed/agents"] != true {
+		t.Fatalf("expected managed path preserved: %#v", locations)
+	}
+}
+
+func TestApplySettingsEdit_LegacyFallbackUsesSingleNoFileEntry(t *testing.T) {
+	dir := t.TempDir()
+	settingsPath := filepath.Join(dir, "settings.json")
+
+	seed := map[string]any{
+		"chat.agentFilesLocations": map[string]any{
+			"/legacy/path": true,
+			"/existing":    true,
+		},
+	}
+	if err := writeJSONFile(settingsPath, seed); err != nil {
+		t.Fatalf("seed settings file: %v", err)
+	}
+
+	previous := &trackedState{
+		JSONEdits: trackedJSONOps{
+			Settings: settingsEdit{
+				File:      "",
+				AgentPath: "/legacy/path",
+				Added:     true,
+			},
+		},
+	}
+
+	edit, err := applySettingsEdit(settingsPath, "/managed/agents", previous)
+	if err != nil {
+		t.Fatalf("apply settings edit: %v", err)
+	}
+	if !edit.Added {
+		t.Fatalf("expected Added=true")
+	}
+
+	root, err := readJSONFile(settingsPath)
+	if err != nil {
+		t.Fatalf("read settings file: %v", err)
+	}
+	locations := root["chat.agentFilesLocations"].(map[string]any)
+	if locations["/managed/agents"] != true || locations["/existing"] != true {
+		t.Fatalf("unexpected locations after legacy fallback migration: %#v", locations)
+	}
+	if _, exists := locations["/legacy/path"]; exists {
+		t.Fatalf("expected legacy tracked path removed: %#v", locations)
+	}
+}
+
 func TestApplyMCPEdit_PreservesExistingServersAndInputs(t *testing.T) {
 	dir := t.TempDir()
 	mcpPath := filepath.Join(dir, "mcp.json")
@@ -214,6 +306,91 @@ func TestApplyMCPEdit_PreservesPriorBaselineForUninstall(t *testing.T) {
 	}
 	if edit.HadPrevious {
 		t.Fatalf("expected HadPrevious=false from prior baseline")
+	}
+}
+
+func TestApplyMCPEdit_CrossTargetFallbackUsesCurrentFileBaseline(t *testing.T) {
+	dir := t.TempDir()
+	sourceMCPPath := filepath.Join(dir, "source-mcp.json")
+	targetMCPPath := filepath.Join(dir, "target-mcp.json")
+
+	seed := map[string]any{
+		"servers": map[string]any{
+			mcpServerKey: map[string]any{"command": "/usr/bin/target-existing"},
+			"foo":        map[string]any{"command": "foo"},
+		},
+	}
+	if err := writeJSONFile(targetMCPPath, seed); err != nil {
+		t.Fatalf("seed target mcp file: %v", err)
+	}
+
+	previous := &trackedState{
+		JSONEdits: trackedJSONOps{
+			MCP: mcpEdit{File: sourceMCPPath, Touched: true, HadPrevious: false},
+		},
+	}
+
+	edit, err := applyMCPEdit(targetMCPPath, "/usr/local/bin/local-artifact-mcp", previous)
+	if err != nil {
+		t.Fatalf("apply mcp edit: %v", err)
+	}
+	if !edit.HadPrevious {
+		t.Fatalf("expected HadPrevious=true from target file baseline")
+	}
+
+	var previousServer map[string]any
+	if err := json.Unmarshal(edit.Previous, &previousServer); err != nil {
+		t.Fatalf("decode previous server: %v", err)
+	}
+	if previousServer["command"] != "/usr/bin/target-existing" {
+		t.Fatalf("expected target baseline preserved, got %#v", previousServer)
+	}
+}
+
+func TestApplyMCPEdit_LegacyFallbackUsesSingleNoFileEntry(t *testing.T) {
+	dir := t.TempDir()
+	mcpPath := filepath.Join(dir, "mcp.json")
+
+	seed := map[string]any{
+		"servers": map[string]any{
+			mcpServerKey: map[string]any{"command": "/usr/bin/current-existing"},
+		},
+	}
+	if err := writeJSONFile(mcpPath, seed); err != nil {
+		t.Fatalf("seed mcp file: %v", err)
+	}
+
+	legacyPrevious, err := json.Marshal(map[string]any{"command": "/usr/bin/legacy-previous"})
+	if err != nil {
+		t.Fatalf("marshal legacy previous: %v", err)
+	}
+
+	previous := &trackedState{
+		JSONEdits: trackedJSONOps{
+			MCP: mcpEdit{
+				File:        "",
+				Key:         mcpServerKey,
+				Touched:     true,
+				HadPrevious: true,
+				Previous:    legacyPrevious,
+			},
+		},
+	}
+
+	edit, err := applyMCPEdit(mcpPath, "/usr/local/bin/local-artifact-mcp", previous)
+	if err != nil {
+		t.Fatalf("apply mcp edit: %v", err)
+	}
+	if !edit.HadPrevious {
+		t.Fatalf("expected HadPrevious=true from legacy tracked baseline")
+	}
+
+	var previousServer map[string]any
+	if err := json.Unmarshal(edit.Previous, &previousServer); err != nil {
+		t.Fatalf("decode previous server: %v", err)
+	}
+	if previousServer["command"] != "/usr/bin/legacy-previous" {
+		t.Fatalf("expected legacy tracked baseline to be reused, got %#v", previousServer)
 	}
 }
 
@@ -352,11 +529,17 @@ func TestResolveInstallPaths_Defaults(t *testing.T) {
 	if paths.binaryDir != filepath.Join(home, binaryInstallDirDefaultRel) {
 		t.Fatalf("expected default binary dir under home, got %q", paths.binaryDir)
 	}
-	if paths.settingsPath != filepath.Join(home, settingsRelativePath) {
-		t.Fatalf("expected default settings path under home, got %q", paths.settingsPath)
+	if paths.stable.settingsPath != filepath.Join(home, settingsStableRelativePath) {
+		t.Fatalf("expected default stable settings path under home, got %q", paths.stable.settingsPath)
 	}
-	if paths.mcpPath != filepath.Join(home, mcpConfigRelativePath) {
-		t.Fatalf("expected default mcp path under home, got %q", paths.mcpPath)
+	if paths.stable.mcpPath != filepath.Join(home, mcpConfigStableRelativePath) {
+		t.Fatalf("expected default stable mcp path under home, got %q", paths.stable.mcpPath)
+	}
+	if paths.insiders.settingsPath != filepath.Join(home, settingsInsidersRelativePath) {
+		t.Fatalf("expected default insiders settings path under home, got %q", paths.insiders.settingsPath)
+	}
+	if paths.insiders.mcpPath != filepath.Join(home, mcpConfigInsidersRelativePath) {
+		t.Fatalf("expected default insiders mcp path under home, got %q", paths.insiders.mcpPath)
 	}
 }
 
@@ -370,11 +553,220 @@ func TestResolveInstallPaths_EnvOverrides(t *testing.T) {
 	if paths.binaryDir != filepath.Join(home, "bin") {
 		t.Fatalf("expected home-relative binary dir, got %q", paths.binaryDir)
 	}
-	if paths.settingsPath != filepath.Join(home, "custom", "settings.json") {
-		t.Fatalf("expected home-relative settings path, got %q", paths.settingsPath)
+	if paths.stable.settingsPath != filepath.Join(home, "custom", "settings.json") {
+		t.Fatalf("expected home-relative stable settings path, got %q", paths.stable.settingsPath)
 	}
-	if paths.mcpPath != filepath.Join(string(os.PathSeparator), "tmp", "custom-mcp.json") {
-		t.Fatalf("expected absolute mcp path override, got %q", paths.mcpPath)
+	if paths.stable.mcpPath != filepath.Join(string(os.PathSeparator), "tmp", "custom-mcp.json") {
+		t.Fatalf("expected absolute stable mcp path override, got %q", paths.stable.mcpPath)
+	}
+	if paths.insiders.settingsPath != filepath.Join(home, "custom", "settings.json") {
+		t.Fatalf("expected home-relative insiders settings path, got %q", paths.insiders.settingsPath)
+	}
+	if paths.insiders.mcpPath != filepath.Join(string(os.PathSeparator), "tmp", "custom-mcp.json") {
+		t.Fatalf("expected absolute insiders mcp path override, got %q", paths.insiders.mcpPath)
+	}
+}
+
+func TestResolveInstallTargets(t *testing.T) {
+	home := filepath.Join(string(os.PathSeparator), "home", "user")
+	t.Setenv(settingsPathEnv, "")
+	t.Setenv(mcpConfigPathEnv, "")
+	paths := resolveInstallPaths(home)
+
+	t.Run("stable", func(t *testing.T) {
+		targets, err := resolveInstallTargets(paths, installDestinationStable)
+		if err != nil {
+			t.Fatalf("resolve stable targets: %v", err)
+		}
+		if len(targets) != 1 {
+			t.Fatalf("expected 1 stable target, got %d", len(targets))
+		}
+		if targets[0].settingsPath != paths.stable.settingsPath || targets[0].mcpPath != paths.stable.mcpPath {
+			t.Fatalf("unexpected stable target: %#v", targets[0])
+		}
+	})
+
+	t.Run("insiders", func(t *testing.T) {
+		targets, err := resolveInstallTargets(paths, installDestinationInsiders)
+		if err != nil {
+			t.Fatalf("resolve insiders targets: %v", err)
+		}
+		if len(targets) != 1 {
+			t.Fatalf("expected 1 insiders target, got %d", len(targets))
+		}
+		if targets[0].settingsPath != paths.insiders.settingsPath || targets[0].mcpPath != paths.insiders.mcpPath {
+			t.Fatalf("unexpected insiders target: %#v", targets[0])
+		}
+	})
+
+	t.Run("both", func(t *testing.T) {
+		targets, err := resolveInstallTargets(paths, installDestinationBoth)
+		if err != nil {
+			t.Fatalf("resolve both targets: %v", err)
+		}
+		if len(targets) != 2 {
+			t.Fatalf("expected 2 targets for both, got %d", len(targets))
+		}
+
+		got := map[string]bool{}
+		for _, target := range targets {
+			got[target.settingsPath+"\n"+target.mcpPath] = true
+		}
+
+		if !got[paths.stable.settingsPath+"\n"+paths.stable.mcpPath] {
+			t.Fatalf("expected stable target in both set: %#v", targets)
+		}
+		if !got[paths.insiders.settingsPath+"\n"+paths.insiders.mcpPath] {
+			t.Fatalf("expected insiders target in both set: %#v", targets)
+		}
+	})
+
+	t.Run("invalid", func(t *testing.T) {
+		if _, err := resolveInstallTargets(paths, installDestination("nope")); err == nil {
+			t.Fatalf("expected error for invalid destination")
+		}
+	})
+}
+
+func TestResolveUpdateTargets_UsesTrackedMultiEdits(t *testing.T) {
+	home := filepath.Join(string(os.PathSeparator), "home", "user")
+	paths := resolveInstallPaths(home)
+
+	previous := &trackedState{
+		JSONEdits: trackedJSONOpsFromEdits(
+			[]settingsEdit{
+				{File: filepath.Join(home, ".vscode-server", "data", "Machine", "settings.json")},
+				{File: filepath.Join(home, ".vscode-server-insiders", "data", "Machine", "settings.json")},
+			},
+			[]mcpEdit{
+				{File: filepath.Join(home, ".vscode-server", "data", "User", "mcp.json"), Touched: true},
+				{File: filepath.Join(home, ".vscode-server-insiders", "data", "User", "mcp.json"), Touched: true},
+			},
+		),
+	}
+
+	targets := resolveUpdateTargets(paths, previous)
+	if len(targets) != 2 {
+		t.Fatalf("expected 2 targets from tracked multi-edits, got %d", len(targets))
+	}
+
+	got := map[string]bool{}
+	for _, target := range targets {
+		got[target.settingsPath+"\n"+target.mcpPath] = true
+	}
+
+	stableKey := filepath.Join(home, ".vscode-server", "data", "Machine", "settings.json") + "\n" + filepath.Join(home, ".vscode-server", "data", "User", "mcp.json")
+	insidersKey := filepath.Join(home, ".vscode-server-insiders", "data", "Machine", "settings.json") + "\n" + filepath.Join(home, ".vscode-server-insiders", "data", "User", "mcp.json")
+	if !got[stableKey] || !got[insidersKey] {
+		t.Fatalf("unexpected update targets: %#v", targets)
+	}
+}
+
+func TestRun_InstallPromptsForDestination(t *testing.T) {
+	m := NewManager()
+	m.SetInstallPromptIO(strings.NewReader(""), io.Discard)
+
+	err := m.Run(context.Background(), CommandInstall)
+	if err == nil {
+		t.Fatalf("expected install prompt to fail on canceled selection")
+	}
+	if !strings.Contains(err.Error(), "selection canceled") {
+		t.Fatalf("expected canceled-selection error, got %v", err)
+	}
+}
+
+func TestRun_UpdateDoesNotPromptForDestination(t *testing.T) {
+	m := NewManager()
+	m.SetInstallPromptIO(errorReader{err: errors.New("prompt read should not occur")}, io.Discard)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := m.Run(ctx, CommandUpdate)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context canceled for update, got %v", err)
+	}
+}
+
+type errorReader struct {
+	err error
+}
+
+func (r errorReader) Read(_ []byte) (int, error) {
+	return 0, r.err
+}
+
+func TestInstallOrUpdate_TracksBothDestinationTargets(t *testing.T) {
+	home := t.TempDir()
+	agentsArchive := zipBytes(t, map[string]string{"agents/example.agent.md": "content"})
+	bundleArchive := zipBytes(t, map[string]string{
+		"local-artifact-mcp": "mcp-binary",
+		"local-artifact-web": "web-binary",
+	})
+
+	m := &Manager{
+		httpClient: successReleaseHTTPClient(t, "v1.2.3", agentsArchive, bundleArchive),
+		now:        func() time.Time { return time.Unix(0, 0).UTC() },
+		homeDir:    func() (string, error) { return home, nil },
+		lookPath:   func(string) (string, error) { return "/usr/bin/gh", nil },
+		runCommand: func(context.Context, string, ...string) ([]byte, error) { return []byte("ok"), nil },
+		installBinary: func(src, dst string) error {
+			data, err := os.ReadFile(src)
+			if err != nil {
+				return err
+			}
+			return os.WriteFile(dst, data, binaryFilePerm)
+		},
+		installDestination: installDestinationBoth,
+	}
+
+	if err := m.installOrUpdate(context.Background(), false); err != nil {
+		t.Fatalf("install should succeed: %v", err)
+	}
+
+	stateDir := filepath.Join(home, ".local", "share", "ccsubagents")
+	state, err := m.loadTrackedState(stateDir)
+	if err != nil {
+		t.Fatalf("load tracked state: %v", err)
+	}
+	if len(state.JSONEdits.allSettingsEdits()) != 2 {
+		t.Fatalf("expected 2 tracked settings edits, got %d", len(state.JSONEdits.allSettingsEdits()))
+	}
+	if len(state.JSONEdits.allMCPEdits()) != 2 {
+		t.Fatalf("expected 2 tracked mcp edits, got %d", len(state.JSONEdits.allMCPEdits()))
+	}
+
+	paths := resolveInstallPaths(home)
+	for _, settingsPath := range []string{paths.stable.settingsPath, paths.insiders.settingsPath} {
+		root, err := readJSONFile(settingsPath)
+		if err != nil {
+			t.Fatalf("read settings %s: %v", settingsPath, err)
+		}
+		locations, ok := root[settingsAgentPathKey].(map[string]any)
+		if !ok {
+			t.Fatalf("expected agent locations object in %s", settingsPath)
+		}
+		agentPath := "~/.local/share/ccsubagents/agents"
+		if locations[agentPath] != true {
+			t.Fatalf("expected managed agent path in %s", settingsPath)
+		}
+	}
+
+	for _, mcpPath := range []string{paths.stable.mcpPath, paths.insiders.mcpPath} {
+		root, err := readJSONFile(mcpPath)
+		if err != nil {
+			t.Fatalf("read mcp config %s: %v", mcpPath, err)
+		}
+		servers, ok := root["servers"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected servers object in %s", mcpPath)
+		}
+		artifact, ok := servers[mcpServerKey].(map[string]any)
+		if !ok {
+			t.Fatalf("expected managed mcp server in %s", mcpPath)
+		}
+		if artifact["command"] != "~/.local/bin/local-artifact-mcp" {
+			t.Fatalf("unexpected command for %s: %#v", mcpPath, artifact)
+		}
 	}
 }
 
@@ -671,6 +1063,141 @@ func TestUninstall_FailsWhenMCPServersObjectIsMalformed(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "mcp key servers") {
 		t.Fatalf("expected explicit mcp servers error, got: %v", err)
+	}
+}
+
+func TestUninstall_BothTargetMigrationRevertsPerTargetMetadata(t *testing.T) {
+	home := t.TempDir()
+	m := &Manager{
+		httpClient: &http.Client{},
+		now:        func() time.Time { return time.Unix(0, 0).UTC() },
+		homeDir:    func() (string, error) { return home, nil },
+		lookPath:   func(string) (string, error) { return "/usr/bin/gh", nil },
+		runCommand: func(context.Context, string, ...string) ([]byte, error) { return nil, nil },
+	}
+
+	paths := resolveInstallPaths(home)
+	for _, configPath := range []string{paths.stable.settingsPath, paths.insiders.settingsPath, paths.stable.mcpPath, paths.insiders.mcpPath} {
+		if err := os.MkdirAll(filepath.Dir(configPath), stateDirPerm); err != nil {
+			t.Fatalf("create config parent directory: %v", err)
+		}
+	}
+
+	agentPath := "~/.local/share/ccsubagents/agents"
+	if err := writeJSONFile(paths.stable.settingsPath, map[string]any{
+		settingsAgentPathKey: map[string]any{
+			agentPath:      true,
+			"/stable-keep": true,
+		},
+	}); err != nil {
+		t.Fatalf("seed stable settings: %v", err)
+	}
+	if err := writeJSONFile(paths.insiders.settingsPath, map[string]any{
+		settingsAgentPathKey: map[string]any{
+			agentPath:        true,
+			"/insiders-keep": true,
+		},
+	}); err != nil {
+		t.Fatalf("seed insiders settings: %v", err)
+	}
+
+	if err := writeJSONFile(paths.stable.mcpPath, map[string]any{
+		"servers": map[string]any{
+			mcpServerKey: map[string]any{"command": "~/.local/bin/local-artifact-mcp"},
+		},
+	}); err != nil {
+		t.Fatalf("seed stable mcp: %v", err)
+	}
+	if err := writeJSONFile(paths.insiders.mcpPath, map[string]any{
+		"servers": map[string]any{
+			mcpServerKey: map[string]any{"command": "~/.local/bin/local-artifact-mcp"},
+			"foo":        map[string]any{"command": "foo"},
+		},
+	}); err != nil {
+		t.Fatalf("seed insiders mcp: %v", err)
+	}
+
+	insidersPrevious, err := json.Marshal(map[string]any{"command": "/usr/bin/insiders-prev"})
+	if err != nil {
+		t.Fatalf("marshal insiders previous mcp: %v", err)
+	}
+
+	stateDir := filepath.Join(home, ".local", "share", "ccsubagents")
+	if err := os.MkdirAll(stateDir, stateDirPerm); err != nil {
+		t.Fatalf("create state dir: %v", err)
+	}
+
+	state := trackedState{
+		Version:     trackedSchemaVersion,
+		Repo:        releaseRepo,
+		ReleaseID:   1,
+		ReleaseTag:  "v1.0.0",
+		InstalledAt: "2026-01-01T00:00:00Z",
+		Managed:     managedState{},
+		JSONEdits: trackedJSONOpsFromEdits(
+			[]settingsEdit{
+				{File: paths.stable.settingsPath, AgentPath: agentPath, Added: true},
+				{File: paths.insiders.settingsPath, AgentPath: agentPath, Added: false},
+			},
+			[]mcpEdit{
+				{File: paths.stable.mcpPath, Key: mcpServerKey, Touched: true, HadPrevious: false},
+				{File: paths.insiders.mcpPath, Key: mcpServerKey, Touched: true, HadPrevious: true, Previous: insidersPrevious},
+			},
+		),
+	}
+	if err := m.saveTrackedState(stateDir, state); err != nil {
+		t.Fatalf("seed tracked state: %v", err)
+	}
+
+	if err := m.uninstall(context.Background()); err != nil {
+		t.Fatalf("uninstall should succeed: %v", err)
+	}
+
+	stableSettingsRoot, err := readJSONFile(paths.stable.settingsPath)
+	if err != nil {
+		t.Fatalf("read stable settings: %v", err)
+	}
+	stableLocations := stableSettingsRoot[settingsAgentPathKey].(map[string]any)
+	if stableLocations["/stable-keep"] != true {
+		t.Fatalf("expected stable keep path to remain: %#v", stableLocations)
+	}
+	if _, exists := stableLocations[agentPath]; exists {
+		t.Fatalf("expected managed path removed from stable settings: %#v", stableLocations)
+	}
+
+	insidersSettingsRoot, err := readJSONFile(paths.insiders.settingsPath)
+	if err != nil {
+		t.Fatalf("read insiders settings: %v", err)
+	}
+	insidersLocations := insidersSettingsRoot[settingsAgentPathKey].(map[string]any)
+	if insidersLocations["/insiders-keep"] != true || insidersLocations[agentPath] != true {
+		t.Fatalf("expected insiders locations preserved: %#v", insidersLocations)
+	}
+
+	stableMCPRoot, err := readJSONFile(paths.stable.mcpPath)
+	if err != nil {
+		t.Fatalf("read stable mcp: %v", err)
+	}
+	stableServers := stableMCPRoot["servers"].(map[string]any)
+	if _, exists := stableServers[mcpServerKey]; exists {
+		t.Fatalf("expected managed server removed from stable mcp: %#v", stableServers)
+	}
+
+	insidersMCPRoot, err := readJSONFile(paths.insiders.mcpPath)
+	if err != nil {
+		t.Fatalf("read insiders mcp: %v", err)
+	}
+	insidersServers := insidersMCPRoot["servers"].(map[string]any)
+	restored, ok := insidersServers[mcpServerKey].(map[string]any)
+	if !ok {
+		t.Fatalf("expected insiders managed server restored: %#v", insidersServers)
+	}
+	if restored["command"] != "/usr/bin/insiders-prev" {
+		t.Fatalf("expected insiders previous command restored, got %#v", restored)
+	}
+
+	if _, err := os.Stat(filepath.Join(stateDir, trackedFileName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected tracked state removed, stat err: %v", err)
 	}
 }
 
