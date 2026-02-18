@@ -24,9 +24,7 @@ type cliArgs struct {
 func run(args []string, stdout, stderr io.Writer) int {
 	parsed, err := parseCLIArgs(args)
 	if err != nil {
-		if err.Error() != "" {
-			fmt.Fprintln(stderr, err)
-		}
+		fmt.Fprintln(stderr, err)
 		printUsage(stderr)
 		return 2
 	}
@@ -98,10 +96,9 @@ func normalizeGlobalOptionOrder(args []string) []string {
 }
 
 func isGlobalOption(arg string) bool {
-	switch {
-	case arg == "--help", arg == "-h", arg == "--skip-attestations-check":
-		return true
-	case strings.HasPrefix(arg, "--help="), strings.HasPrefix(arg, "-h="), strings.HasPrefix(arg, "--skip-attestations-check="):
+	name := strings.SplitN(strings.TrimLeft(arg, "-"), "=", 2)[0]
+	switch name {
+	case "help", "h", "skip-attestations-check":
 		return true
 	default:
 		return false
