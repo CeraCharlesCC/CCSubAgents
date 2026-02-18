@@ -106,7 +106,7 @@ func TestRun_UsageAndCommandErrors(t *testing.T) {
 		if !strings.Contains(out, "--skip-attestations-check") {
 			t.Fatalf("expected skip option in usage, got %q", out)
 		}
-		if !strings.Contains(out, "1. .vscode-server") || !strings.Contains(out, "2. .vscode-insider-server") || !strings.Contains(out, "3. both") {
+		if !strings.Contains(out, "1. .vscode-server") || !strings.Contains(out, "2. .vscode-server-insiders") || !strings.Contains(out, "3. both") {
 			t.Fatalf("expected destination prompt details in usage, got %q", out)
 		}
 	})
