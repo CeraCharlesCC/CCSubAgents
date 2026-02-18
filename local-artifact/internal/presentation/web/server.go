@@ -2,9 +2,15 @@ package web
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -21,13 +27,21 @@ import (
 )
 
 var subspaceHashPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
+var csrfReadRandom = rand.Read
 
 const globalSubspaceSelector = "global"
+const mebibyte int64 = 1 << 20
+const maxInsertUploadBytes int64 = 10 * mebibyte
+const maxInsertUploadOverheadBytes int64 = 1 * mebibyte
+const maxInsertJSONBodyBytes int64 = ((maxInsertUploadBytes + 2) / 3 * 4) + maxInsertUploadOverheadBytes
+const csrfCookieName = "local-artifact-csrf"
+const csrfFieldName = "csrf_token"
+const csrfTokenBytes = 32
 
 type Server struct {
 	baseStoreRoot string
-	mu             sync.Mutex
-	serviceByKey   map[string]*domain.Service
+	mu            sync.Mutex
+	serviceByKey  map[string]*domain.Service
 }
 
 func New(baseStoreRoot string) *Server {
@@ -65,8 +79,10 @@ func (s *Server) Serve(ctx context.Context, addr string) error {
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleIndex)
+	mux.HandleFunc("/insert", s.handleInsert)
 	mux.HandleFunc("/delete", s.handleDelete)
 	mux.HandleFunc("/api/artifacts", s.handleAPIArtifacts)
+	mux.HandleFunc("/api/artifact-content", s.handleAPIContent)
 	mux.HandleFunc("/api/subspaces", s.handleAPISubspaces)
 	return mux
 }
@@ -86,6 +102,7 @@ type pageData struct {
 	Subspace    string
 	Prefix      string
 	Limit       int
+	CSRFToken   string
 	Message     string
 	Error       string
 	Items       []pageItem
@@ -100,7 +117,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 	subspaces, err := s.discoverSubspaces()
 	if err != nil {
-		renderIndex(w, pageData{
+		renderIndex(w, r, pageData{
 			Limit:       200,
 			Error:       err.Error(),
 			GeneratedAt: time.Now().UTC().Format(time.RFC3339),
@@ -118,7 +135,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
 		parsed, parseErr := strconv.Atoi(raw)
 		if parseErr != nil {
-			renderIndex(w, pageData{
+			renderIndex(w, r, pageData{
 				Subspaces:   subspaces,
 				Subspace:    subspace,
 				Prefix:      prefix,
@@ -132,7 +149,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if subspace != "" && !isValidSubspaceSelector(subspace) {
-		renderIndex(w, pageData{
+		renderIndex(w, r, pageData{
 			Subspaces:   subspaces,
 			Subspace:    subspace,
 			Prefix:      prefix,
@@ -143,7 +160,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if subspace != "" && !containsString(subspaces, subspace) {
-		renderIndex(w, pageData{
+		renderIndex(w, r, pageData{
 			Subspaces:   subspaces,
 			Subspace:    subspace,
 			Prefix:      prefix,
@@ -159,7 +176,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		svc := s.serviceForSubspace(subspace)
 		arts, listErr := svc.List(r.Context(), prefix, limit)
 		if listErr != nil {
-			renderIndex(w, pageData{
+			renderIndex(w, r, pageData{
 				Subspaces:   subspaces,
 				Subspace:    subspace,
 				Prefix:      prefix,
@@ -190,7 +207,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		message = "No subspaces discovered yet."
 	}
 
-	renderIndex(w, pageData{
+	renderIndex(w, r, pageData{
 		Subspaces:   subspaces,
 		Subspace:    subspace,
 		Prefix:      prefix,
@@ -212,51 +229,198 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	subspace := strings.TrimSpace(r.FormValue("subspace"))
-	prefix := strings.TrimSpace(r.FormValue("prefix"))
-	limitRaw := strings.TrimSpace(r.FormValue("limit"))
-	if limitRaw == "" {
-		limitRaw = "200"
-	}
-
-	redirectBase := "/?subspace=" + url.QueryEscape(subspace) + "&prefix=" + url.QueryEscape(prefix) + "&limit=" + url.QueryEscape(limitRaw)
-
-	if !isValidSubspaceSelector(subspace) {
-		http.Redirect(w, r, redirectBase+"&err="+url.QueryEscape("subspace must be 64 lowercase hex or global"), http.StatusSeeOther)
-		return
-	}
-	if ok, err := s.subspaceExists(subspace); err != nil {
+	subspace, prefix, limitRaw := formRedirectContext(r.Form)
+	redirectBase := indexRedirectBase(subspace, prefix, limitRaw)
+	if err := validateCSRFToken(r); err != nil {
 		http.Redirect(w, r, redirectBase+"&err="+url.QueryEscape(err.Error()), http.StatusSeeOther)
 		return
-	} else if !ok {
-		http.Redirect(w, r, redirectBase+"&err="+url.QueryEscape("selected subspace not found"), http.StatusSeeOther)
-		return
 	}
 
-	name := strings.TrimSpace(r.FormValue("name"))
-	ref := strings.TrimSpace(r.FormValue("ref"))
-	svc := s.serviceForSubspace(subspace)
-	a, err := svc.Delete(r.Context(), domain.Selector{Name: name, Ref: ref})
+	svc, err := s.serviceFromSelectedSubspace(subspace)
 	if err != nil {
 		http.Redirect(w, r, redirectBase+"&err="+url.QueryEscape(err.Error()), http.StatusSeeOther)
 		return
 	}
 
-	msg := "deleted artifact"
-	if strings.TrimSpace(a.Name) != "" {
-		msg = fmt.Sprintf("deleted %q", a.Name)
+	parsedSelectors, err := parseDeleteSelectors(r.Form)
+	if err != nil {
+		http.Redirect(w, r, redirectBase+"&err="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		return
+	}
+	if err := prevalidateDeleteSelectors(r.Context(), svc, parsedSelectors.selectors); err != nil {
+		http.Redirect(w, r, redirectBase+"&err="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		return
+	}
+
+	if parsedSelectors.single {
+		if _, err := svc.Delete(r.Context(), parsedSelectors.selectors[0]); err != nil {
+			if errors.Is(err, domain.ErrNotFound) {
+				http.Redirect(w, r, redirectBase+"&err="+url.QueryEscape(domain.ErrNotFound.Error()), http.StatusSeeOther)
+				return
+			}
+			http.Redirect(w, r, redirectBase+"&err="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+			return
+		}
+		http.Redirect(w, r, redirectBase+"&msg="+url.QueryEscape("deleted 1 artifact"), http.StatusSeeOther)
+		return
+	}
+
+	deletedCount := 0
+	notFoundCount := 0
+	var opErr error
+	for _, sel := range parsedSelectors.selectors {
+		if _, err := svc.Delete(r.Context(), sel); err != nil {
+			if errors.Is(err, domain.ErrNotFound) {
+				notFoundCount++
+				continue
+			}
+			opErr = err
+			break
+		}
+		deletedCount++
+	}
+	if opErr != nil {
+		baseMsg := fmt.Sprintf("error after deleting %d artifact", deletedCount)
+		if deletedCount != 1 {
+			baseMsg += "s"
+		}
+		if notFoundCount > 0 {
+			baseMsg = fmt.Sprintf("%s (%d not found)", baseMsg, notFoundCount)
+		}
+		errMsg := fmt.Sprintf("%s: %v", baseMsg, opErr)
+		http.Redirect(w, r, redirectBase+"&err="+url.QueryEscape(errMsg), http.StatusSeeOther)
+		return
+	}
+
+	if deletedCount == 0 {
+		http.Redirect(w, r, redirectBase+"&err="+url.QueryEscape("selected artifacts not found"), http.StatusSeeOther)
+		return
+	}
+
+	msg := fmt.Sprintf("deleted %d artifact", deletedCount)
+	if deletedCount != 1 {
+		msg += "s"
+	}
+	if notFoundCount > 0 {
+		msg = fmt.Sprintf("%s (%d not found)", msg, notFoundCount)
 	}
 	http.Redirect(w, r, redirectBase+"&msg="+url.QueryEscape(msg), http.StatusSeeOther)
+}
+
+func (s *Server) handleInsert(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w, http.MethodPost)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxInsertUploadBytes+maxInsertUploadOverheadBytes)
+	if err := r.ParseMultipartForm(maxInsertUploadBytes); err != nil {
+		errMsg := "invalid form data"
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			errMsg = "upload too large (max 10 MiB)"
+		}
+		http.Redirect(w, r, indexRedirectBase("", "", "")+"&err="+url.QueryEscape(errMsg), http.StatusSeeOther)
+		return
+	}
+	if r.MultipartForm != nil {
+		defer r.MultipartForm.RemoveAll()
+	}
+
+	subspace, prefix, limitRaw := formRedirectContext(r.Form)
+	redirectBase := indexRedirectBase(subspace, prefix, limitRaw)
+	if err := validateCSRFToken(r); err != nil {
+		http.Redirect(w, r, redirectBase+"&err="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		return
+	}
+
+	svc, err := s.serviceFromSelectedSubspace(subspace)
+	if err != nil {
+		http.Redirect(w, r, redirectBase+"&err="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		return
+	}
+
+	name := strings.TrimSpace(r.FormValue("name"))
+	mimeType := strings.TrimSpace(r.FormValue("mimeType"))
+	text := r.FormValue("text")
+	hasText := strings.TrimSpace(text) != ""
+
+	file, fileHeader, err := r.FormFile("file")
+	hasFile := false
+	if err == nil {
+		hasFile = true
+		defer file.Close()
+	} else if !errors.Is(err, http.ErrMissingFile) {
+		http.Redirect(w, r, redirectBase+"&err="+url.QueryEscape("invalid upload file"), http.StatusSeeOther)
+		return
+	}
+
+	if hasText == hasFile {
+		http.Redirect(w, r, redirectBase+"&err="+url.QueryEscape("choose exactly one content source: text or file"), http.StatusSeeOther)
+		return
+	}
+
+	var saved domain.Artifact
+	if hasText {
+		saved, err = svc.SaveText(r.Context(), domain.SaveTextInput{
+			Name:     name,
+			Text:     text,
+			MimeType: mimeType,
+		})
+	} else {
+		data, readErr := io.ReadAll(file)
+		if readErr != nil {
+			var maxErr *http.MaxBytesError
+			if errors.As(readErr, &maxErr) {
+				http.Redirect(w, r, redirectBase+"&err="+url.QueryEscape("upload too large (max 10 MiB)"), http.StatusSeeOther)
+				return
+			}
+			http.Redirect(w, r, redirectBase+"&err="+url.QueryEscape("unable to read upload"), http.StatusSeeOther)
+			return
+		}
+		uploadMimeType := mimeType
+		if uploadMimeType == "" {
+			if fileHeader != nil {
+				uploadMimeType = strings.TrimSpace(fileHeader.Header.Get("Content-Type"))
+			}
+			if uploadMimeType == "" || strings.EqualFold(uploadMimeType, "application/octet-stream") {
+				if len(data) > 0 {
+					uploadMimeType = http.DetectContentType(data)
+				}
+			}
+		}
+		if uploadMimeType == "" {
+			uploadMimeType = "application/octet-stream"
+		}
+		uploadFilename := ""
+		if fileHeader != nil {
+			uploadFilename = sanitizeFilename(fileHeader.Filename)
+		}
+		saved, err = svc.SaveBlob(r.Context(), domain.SaveBlobInput{
+			Name:     name,
+			Data:     data,
+			MimeType: uploadMimeType,
+			Filename: uploadFilename,
+		})
+	}
+	if err != nil {
+		http.Redirect(w, r, redirectBase+"&err="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		return
+	}
+
+	http.Redirect(w, r, redirectBase+"&msg="+url.QueryEscape(fmt.Sprintf("saved %q", saved.Name)), http.StatusSeeOther)
 }
 
 func (s *Server) handleAPIArtifacts(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		s.handleAPIList(w, r)
+	case http.MethodPost:
+		s.handleAPISave(w, r)
 	case http.MethodDelete:
 		s.handleAPIDelete(w, r)
 	default:
-		writeMethodNotAllowed(w, http.MethodGet, http.MethodDelete)
+		writeMethodNotAllowed(w, http.MethodGet, http.MethodPost, http.MethodDelete)
 	}
 }
 
@@ -271,6 +435,44 @@ func (s *Server) handleAPISubspaces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": subspaces})
+}
+
+func (s *Server) handleAPIContent(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w, http.MethodGet)
+		return
+	}
+
+	svc, err := s.serviceFromQuerySubspace(r.URL.Query().Get("subspace"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+
+	selector, err := parseSingleSelector(r.URL.Query())
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+
+	artifact, payload, err := svc.Get(r.Context(), selector)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": domain.ErrNotFound.Error()})
+			return
+		}
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", attachmentDisposition(artifactDownloadFilename(artifact)))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Artifact-Ref", artifact.Ref)
+	w.Header().Set("X-Artifact-Name", artifact.Name)
+	w.Header().Set("X-Artifact-MimeType", artifact.MimeType)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(payload)
 }
 
 func (s *Server) handleAPIList(w http.ResponseWriter, r *http.Request) {
@@ -306,27 +508,359 @@ func (s *Server) handleAPIDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	name := strings.TrimSpace(r.URL.Query().Get("name"))
-	ref := strings.TrimSpace(r.URL.Query().Get("ref"))
-
-	deleted, err := svc.Delete(r.Context(), domain.Selector{Name: name, Ref: ref})
+	parsedSelectors, err := parseDeleteSelectors(r.URL.Query())
 	if err != nil {
-		status := http.StatusBadRequest
-		if errors.Is(err, domain.ErrNotFound) {
-			status = http.StatusNotFound
-		}
-		writeJSON(w, status, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	if err := prevalidateDeleteSelectors(r.Context(), svc, parsedSelectors.selectors); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"deleted": true, "artifact": deleted})
+	if parsedSelectors.single {
+		deletedItem, deleteErr := svc.Delete(r.Context(), parsedSelectors.selectors[0])
+		if deleteErr != nil {
+			if errors.Is(deleteErr, domain.ErrNotFound) {
+				writeJSON(w, http.StatusNotFound, map[string]any{"error": domain.ErrNotFound.Error()})
+				return
+			}
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": deleteErr.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"deleted":  true,
+			"artifact": deletedItem,
+		})
+		return
+	}
+
+	deleted := make([]domain.Artifact, 0, len(parsedSelectors.selectors))
+	notFoundCount := 0
+	for idx, sel := range parsedSelectors.selectors {
+		item, deleteErr := svc.Delete(r.Context(), sel)
+		if deleteErr != nil {
+			if errors.Is(deleteErr, domain.ErrNotFound) {
+				notFoundCount++
+				continue
+			}
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error":          deleteErr.Error(),
+				"deleted":        false,
+				"deletedCount":   len(deleted),
+				"artifacts":      deleted,
+				"notFoundCount":  notFoundCount,
+				"failedIndex":    idx,
+				"failedSelector": sel,
+			})
+			return
+		}
+		deleted = append(deleted, item)
+	}
+
+	if len(deleted) == 0 {
+		writeJSON(w, http.StatusNotFound, map[string]any{
+			"error":        "artifacts not found",
+			"deleted":      false,
+			"deletedCount": 0,
+			"artifacts":    []domain.Artifact{},
+		})
+		return
+	}
+
+	payload := map[string]any{
+		"deleted":       true,
+		"deletedCount":  len(deleted),
+		"artifacts":     deleted,
+		"notFoundCount": notFoundCount,
+	}
+	if len(deleted) == 1 {
+		payload["artifact"] = deleted[0]
+	}
+	writeJSON(w, http.StatusOK, payload)
 }
 
-func (s *Server) serviceFromQuerySubspace(rawSubspace string) (*domain.Service, error) {
-	subspace := normalizeSubspaceSelector(rawSubspace)
-	if subspace == "" {
-		subspace = globalSubspaceSelector
+type apiSaveRequest struct {
+	Name       string  `json:"name"`
+	Text       *string `json:"text"`
+	MimeType   string  `json:"mimeType"`
+	Filename   string  `json:"filename"`
+	DataBase64 string  `json:"dataBase64"`
+}
+
+func (s *Server) handleAPISave(w http.ResponseWriter, r *http.Request) {
+	svc, err := s.serviceFromQuerySubspace(r.URL.Query().Get("subspace"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
 	}
+
+	decoder := json.NewDecoder(io.LimitReader(r.Body, maxInsertJSONBodyBytes))
+	decoder.DisallowUnknownFields()
+	var req apiSaveRequest
+	if err := decoder.Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON body"})
+		return
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON body"})
+		return
+	}
+
+	hasText := req.Text != nil
+	hasBlob := strings.TrimSpace(req.DataBase64) != ""
+	if hasText == hasBlob {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "provide exactly one of text or dataBase64"})
+		return
+	}
+
+	var saved domain.Artifact
+	if hasText {
+		saved, err = svc.SaveText(r.Context(), domain.SaveTextInput{
+			Name:     req.Name,
+			Text:     *req.Text,
+			MimeType: req.MimeType,
+		})
+	} else {
+		data, decodeErr := base64.StdEncoding.DecodeString(strings.TrimSpace(req.DataBase64))
+		if decodeErr != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid dataBase64"})
+			return
+		}
+		if int64(len(data)) > maxInsertUploadBytes {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "upload too large (max 10 MiB)"})
+			return
+		}
+		mimeType := strings.TrimSpace(req.MimeType)
+		if mimeType == "" {
+			if len(data) > 0 {
+				mimeType = http.DetectContentType(data)
+			} else {
+				mimeType = "application/octet-stream"
+			}
+		}
+		saved, err = svc.SaveBlob(r.Context(), domain.SaveBlobInput{
+			Name:     req.Name,
+			Data:     data,
+			MimeType: mimeType,
+			Filename: sanitizeFilename(req.Filename),
+		})
+	}
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{"artifact": saved})
+}
+
+func formRedirectContext(values url.Values) (subspace string, prefix string, limitRaw string) {
+	subspace = strings.TrimSpace(values.Get("subspace"))
+	prefix = strings.TrimSpace(values.Get("prefix"))
+	limitRaw = strings.TrimSpace(values.Get("limit"))
+	if limitRaw == "" {
+		limitRaw = "200"
+	}
+	return
+}
+
+func indexRedirectBase(subspace string, prefix string, limitRaw string) string {
+	if strings.TrimSpace(limitRaw) == "" {
+		limitRaw = "200"
+	}
+	return "/?subspace=" + url.QueryEscape(subspace) + "&prefix=" + url.QueryEscape(prefix) + "&limit=" + url.QueryEscape(limitRaw)
+}
+
+type deleteSelectorRequest struct {
+	selectors []domain.Selector
+	single    bool
+}
+
+func parseDeleteSelectors(values url.Values) (deleteSelectorRequest, error) {
+	names := trimUniqueNonEmpty(values["name"])
+	refs := trimUniqueNonEmpty(values["ref"])
+
+	if len(names) > 0 && len(refs) > 0 {
+		return deleteSelectorRequest{}, domain.ErrRefAndNameMutuallyExclusive
+	}
+
+	selectors := make([]domain.Selector, 0, len(names)+len(refs))
+	for _, name := range names {
+		selectors = append(selectors, domain.Selector{Name: name})
+	}
+	for _, ref := range refs {
+		selectors = append(selectors, domain.Selector{Ref: ref})
+	}
+
+	if len(selectors) == 0 {
+		return deleteSelectorRequest{}, domain.ErrRefOrName
+	}
+
+	return deleteSelectorRequest{selectors: selectors, single: len(selectors) == 1}, nil
+}
+
+func parseSingleSelector(values url.Values) (domain.Selector, error) {
+	names := trimUniqueNonEmpty(values["name"])
+	refs := trimUniqueNonEmpty(values["ref"])
+
+	if len(names) > 0 && len(refs) > 0 {
+		return domain.Selector{}, domain.ErrRefAndNameMutuallyExclusive
+	}
+	if len(names)+len(refs) == 0 {
+		return domain.Selector{}, domain.ErrRefOrName
+	}
+	if len(names)+len(refs) > 1 {
+		return domain.Selector{}, errors.New("provide exactly one ref or name")
+	}
+	if len(names) == 1 {
+		return domain.Selector{Name: names[0]}, nil
+	}
+	return domain.Selector{Ref: refs[0]}, nil
+}
+
+func sanitizeFilename(raw string) string {
+	name := strings.TrimSpace(raw)
+	if name == "" {
+		return ""
+	}
+	name = strings.ReplaceAll(name, "\\", "/")
+	name = filepath.Base(name)
+	if name == "." || name == ".." || name == "/" {
+		return ""
+	}
+	name = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, name)
+	return strings.TrimSpace(name)
+}
+
+func artifactDownloadFilename(artifact domain.Artifact) string {
+	if name := sanitizeFilename(artifact.Filename); name != "" {
+		return name
+	}
+	fallback := strings.ReplaceAll(strings.TrimSpace(artifact.Name), "/", "_")
+	if name := sanitizeFilename(fallback); name != "" {
+		return name
+	}
+	return "artifact.bin"
+}
+
+func attachmentDisposition(filename string) string {
+	disposition := mime.FormatMediaType("attachment", map[string]string{"filename": filename})
+	if strings.TrimSpace(disposition) == "" {
+		return `attachment; filename="artifact.bin"`
+	}
+	return disposition
+}
+
+func prevalidateDeleteSelectors(ctx context.Context, svc *domain.Service, selectors []domain.Selector) error {
+	for _, selector := range selectors {
+		if err := domain.ValidateSelector(selector); err != nil {
+			return err
+		}
+		if selector.Ref != "" {
+			// Skip existence checks for ref selectors to avoid unnecessary blob reads.
+			// Delete will report not-found selectors in the mutation pass.
+			continue
+		}
+		var err error
+		if selector.Name != "" {
+			_, err = svc.Resolve(ctx, selector.Name)
+		}
+		if err == nil || errors.Is(err, domain.ErrNotFound) {
+			continue
+		}
+		return err
+	}
+	return nil
+}
+
+func trimUniqueNonEmpty(values []string) []string {
+	// Preserve first occurrence order while dropping duplicates and empty values.
+	trimmedValues := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		trimmedValues = append(trimmedValues, trimmed)
+	}
+	return trimmedValues
+}
+
+func issueCSRFToken() (string, error) {
+	buf := make([]byte, csrfTokenBytes)
+	if _, err := csrfReadRandom(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
+}
+
+func isValidCSRFToken(token string) bool {
+	if len(token) != csrfTokenBytes*2 {
+		return false
+	}
+	_, err := hex.DecodeString(token)
+	return err == nil
+}
+
+func csrfTokenFromRequest(r *http.Request) string {
+	cookie, err := r.Cookie(csrfCookieName)
+	if err != nil {
+		return ""
+	}
+	token := strings.TrimSpace(cookie.Value)
+	if !isValidCSRFToken(token) {
+		return ""
+	}
+	return token
+}
+
+func ensureCSRFToken(w http.ResponseWriter, r *http.Request) (string, error) {
+	if token := csrfTokenFromRequest(r); token != "" {
+		return token, nil
+	}
+	token, err := issueCSRFToken()
+	if err != nil {
+		return "", err
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     csrfCookieName,
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   r.TLS != nil,
+	})
+	return token, nil
+}
+
+func validateCSRFToken(r *http.Request) error {
+	cookieToken := csrfTokenFromRequest(r)
+	if cookieToken == "" {
+		return errors.New("invalid csrf token")
+	}
+	formToken := strings.TrimSpace(r.FormValue(csrfFieldName))
+	if !isValidCSRFToken(formToken) {
+		return errors.New("invalid csrf token")
+	}
+	if subtle.ConstantTimeCompare([]byte(cookieToken), []byte(formToken)) != 1 {
+		return errors.New("invalid csrf token")
+	}
+	return nil
+}
+
+func (s *Server) serviceFromSelectedSubspace(rawSubspace string) (*domain.Service, error) {
+	subspace := normalizeSubspaceSelector(rawSubspace)
 	if !isValidSubspaceSelector(subspace) {
 		return nil, errors.New("subspace must be 64 lowercase hex or global")
 	}
@@ -338,6 +872,14 @@ func (s *Server) serviceFromQuerySubspace(rawSubspace string) (*domain.Service, 
 		return nil, errors.New("selected subspace not found")
 	}
 	return s.serviceForSubspace(subspace), nil
+}
+
+func (s *Server) serviceFromQuerySubspace(rawSubspace string) (*domain.Service, error) {
+	subspace := normalizeSubspaceSelector(rawSubspace)
+	if subspace == "" {
+		subspace = globalSubspaceSelector
+	}
+	return s.serviceFromSelectedSubspace(subspace)
 }
 
 func (s *Server) serviceForSubspace(selector string) *domain.Service {
@@ -436,7 +978,13 @@ func containsString(items []string, target string) bool {
 	return false
 }
 
-func renderIndex(w http.ResponseWriter, data pageData) {
+func renderIndex(w http.ResponseWriter, r *http.Request, data pageData) {
+	token, err := ensureCSRFToken(w, r)
+	if err != nil {
+		http.Error(w, "csrf setup error", http.StatusInternalServerError)
+		return
+	}
+	data.CSRFToken = token
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := indexTemplate.Execute(w, data); err != nil {
 		http.Error(w, "render error", http.StatusInternalServerError)
