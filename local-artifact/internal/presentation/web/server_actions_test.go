@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -290,6 +291,28 @@ func TestHandleDeleteRejectsMissingCSRFToken(t *testing.T) {
 	}
 	if !strings.Contains(rr.Header().Get("Location"), "invalid+csrf+token") {
 		t.Fatalf("expected invalid csrf token redirect, got location=%q", rr.Header().Get("Location"))
+	}
+}
+
+func TestHandleIndexReturnsInternalServerErrorWhenCSRFTokenIssueFails(t *testing.T) {
+	s := New(t.TempDir())
+	originalReadRandom := csrfReadRandom
+	csrfReadRandom = func(_ []byte) (int, error) {
+		return 0, errors.New("entropy unavailable")
+	}
+	t.Cleanup(func() {
+		csrfReadRandom = originalReadRandom
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	s.handleIndex(rr, req)
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if got := rr.Header().Get("Set-Cookie"); got != "" {
+		t.Fatalf("expected no csrf cookie when issuance fails, got %q", got)
 	}
 }
 

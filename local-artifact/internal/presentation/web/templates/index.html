@@ -361,7 +361,7 @@
         <h1>Local Artifact Store</h1>
         <div class="sub">Track current aliases and delete artifacts quickly.</div>
       </div>
-      <button type="button" class="theme-toggle" id="theme-toggle">Dark mode</button>
+      <button type="button" class="theme-toggle" id="theme-toggle" aria-pressed="false" aria-label="Switch to dark mode">Dark mode</button>
     </header>
 
     <section class="card">
@@ -478,7 +478,10 @@
 
       function applyTheme(theme) {
         themeHelpers.applyTheme(theme);
-        themeToggle.textContent = theme === 'dark' ? 'Light mode' : 'Dark mode';
+        const darkEnabled = theme === 'dark';
+        themeToggle.textContent = darkEnabled ? 'Light mode' : 'Dark mode';
+        themeToggle.setAttribute('aria-pressed', darkEnabled ? 'true' : 'false');
+        themeToggle.setAttribute('aria-label', darkEnabled ? 'Switch to light mode' : 'Switch to dark mode');
       }
 
       let activeTheme = root.dataset.theme || themeHelpers.loadTheme();

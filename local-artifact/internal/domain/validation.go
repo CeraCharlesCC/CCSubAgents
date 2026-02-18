@@ -65,6 +65,11 @@ func normalizeSelector(sel Selector) (Selector, error) {
 	return Selector{Name: name}, nil
 }
 
+func ValidateSelector(sel Selector) error {
+	_, err := normalizeSelector(sel)
+	return err
+}
+
 func normalizePrefix(prefix string) (string, error) {
 	prefix = strings.TrimSpace(prefix)
 	if prefix == "" {

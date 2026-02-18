@@ -13,16 +13,19 @@ func TestIndexTemplateHasPrepaintThemeBootstrapAndSafeStorageGuards(t *testing.T
 	}
 
 	templateText := string(rawTemplate)
-	bootstrap := "applyTheme(loadTheme());"
-	bootstrapIndex := strings.Index(templateText, bootstrap)
-	if bootstrapIndex == -1 {
+	bootstrapPattern := regexp.MustCompile(`applyTheme\s*\(\s*loadTheme\s*\(\s*\)\s*\)\s*;?`)
+	bootstrapLoc := bootstrapPattern.FindStringIndex(templateText)
+	if bootstrapLoc == nil {
 		t.Fatalf("expected prepaint theme bootstrap in template head")
 	}
+	bootstrapIndex := bootstrapLoc[0]
 
-	styleIndex := strings.Index(templateText, "<style>")
-	if styleIndex == -1 {
+	stylePattern := regexp.MustCompile(`<style\b`)
+	styleLoc := stylePattern.FindStringIndex(templateText)
+	if styleLoc == nil {
 		t.Fatalf("expected style tag in template")
 	}
+	styleIndex := styleLoc[0]
 	if bootstrapIndex > styleIndex {
 		t.Fatalf("expected prepaint bootstrap before style application")
 	}
@@ -51,5 +54,12 @@ func TestIndexTemplateHasPrepaintThemeBootstrapAndSafeStorageGuards(t *testing.T
 
 	if !strings.Contains(templateText, `response.headers.get('X-Artifact-MimeType')`) {
 		t.Fatalf("expected viewer to prefer artifact mime metadata header for previews")
+	}
+
+	if !strings.Contains(templateText, `aria-pressed="false"`) {
+		t.Fatalf("expected theme toggle to initialize aria-pressed state")
+	}
+	if !strings.Contains(templateText, `themeToggle.setAttribute('aria-pressed'`) {
+		t.Fatalf("expected theme toggle script to update aria-pressed state")
 	}
 }

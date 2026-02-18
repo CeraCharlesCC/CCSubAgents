@@ -27,6 +27,7 @@ import (
 )
 
 var subspaceHashPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
+var csrfReadRandom = rand.Read
 
 const globalSubspaceSelector = "global"
 const mebibyte int64 = 1 << 20
@@ -758,11 +759,17 @@ func attachmentDisposition(filename string) string {
 
 func prevalidateDeleteSelectors(ctx context.Context, svc *domain.Service, selectors []domain.Selector) error {
 	for _, selector := range selectors {
+		if err := domain.ValidateSelector(selector); err != nil {
+			return err
+		}
+		if selector.Ref != "" {
+			// Skip existence checks for ref selectors to avoid unnecessary blob reads.
+			// Delete will report not-found selectors in the mutation pass.
+			continue
+		}
 		var err error
 		if selector.Name != "" {
 			_, err = svc.Resolve(ctx, selector.Name)
-		} else {
-			_, _, err = svc.Get(ctx, selector)
 		}
 		if err == nil || errors.Is(err, domain.ErrNotFound) {
 			continue
@@ -792,7 +799,7 @@ func trimUniqueNonEmpty(values []string) []string {
 
 func issueCSRFToken() (string, error) {
 	buf := make([]byte, csrfTokenBytes)
-	if _, err := rand.Read(buf); err != nil {
+	if _, err := csrfReadRandom(buf); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(buf), nil
@@ -818,13 +825,13 @@ func csrfTokenFromRequest(r *http.Request) string {
 	return token
 }
 
-func ensureCSRFToken(w http.ResponseWriter, r *http.Request) string {
+func ensureCSRFToken(w http.ResponseWriter, r *http.Request) (string, error) {
 	if token := csrfTokenFromRequest(r); token != "" {
-		return token
+		return token, nil
 	}
 	token, err := issueCSRFToken()
 	if err != nil {
-		return ""
+		return "", err
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     csrfCookieName,
@@ -834,7 +841,7 @@ func ensureCSRFToken(w http.ResponseWriter, r *http.Request) string {
 		SameSite: http.SameSiteLaxMode,
 		Secure:   r.TLS != nil,
 	})
-	return token
+	return token, nil
 }
 
 func validateCSRFToken(r *http.Request) error {
@@ -972,7 +979,12 @@ func containsString(items []string, target string) bool {
 }
 
 func renderIndex(w http.ResponseWriter, r *http.Request, data pageData) {
-	data.CSRFToken = ensureCSRFToken(w, r)
+	token, err := ensureCSRFToken(w, r)
+	if err != nil {
+		http.Error(w, "csrf setup error", http.StatusInternalServerError)
+		return
+	}
+	data.CSRFToken = token
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := indexTemplate.Execute(w, data); err != nil {
 		http.Error(w, "render error", http.StatusInternalServerError)
