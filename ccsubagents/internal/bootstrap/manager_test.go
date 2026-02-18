@@ -636,11 +636,11 @@ func TestResolveUpdateTargets_UsesTrackedMultiEdits(t *testing.T) {
 		JSONEdits: trackedJSONOpsFromEdits(
 			[]settingsEdit{
 				{File: filepath.Join(home, ".vscode-server", "data", "Machine", "settings.json")},
-				{File: filepath.Join(home, ".vscode-insider-server", "data", "Machine", "settings.json")},
+				{File: filepath.Join(home, ".vscode-server-insiders", "data", "Machine", "settings.json")},
 			},
 			[]mcpEdit{
 				{File: filepath.Join(home, ".vscode-server", "data", "User", "mcp.json"), Touched: true},
-				{File: filepath.Join(home, ".vscode-insider-server", "data", "User", "mcp.json"), Touched: true},
+				{File: filepath.Join(home, ".vscode-server-insiders", "data", "User", "mcp.json"), Touched: true},
 			},
 		),
 	}
@@ -656,7 +656,7 @@ func TestResolveUpdateTargets_UsesTrackedMultiEdits(t *testing.T) {
 	}
 
 	stableKey := filepath.Join(home, ".vscode-server", "data", "Machine", "settings.json") + "\n" + filepath.Join(home, ".vscode-server", "data", "User", "mcp.json")
-	insidersKey := filepath.Join(home, ".vscode-insider-server", "data", "Machine", "settings.json") + "\n" + filepath.Join(home, ".vscode-insider-server", "data", "User", "mcp.json")
+	insidersKey := filepath.Join(home, ".vscode-server-insiders", "data", "Machine", "settings.json") + "\n" + filepath.Join(home, ".vscode-server-insiders", "data", "User", "mcp.json")
 	if !got[stableKey] || !got[insidersKey] {
 		t.Fatalf("unexpected update targets: %#v", targets)
 	}

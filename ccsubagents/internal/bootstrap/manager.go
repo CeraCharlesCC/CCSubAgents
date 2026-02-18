@@ -28,11 +28,11 @@ const (
 	binaryInstallDirEnv           = "LOCAL_ARTIFACT_BIN_DIR"
 	trackedFileName               = "tracked.json"
 	settingsStableRelativePath    = ".vscode-server/data/Machine/settings.json"
-	settingsInsidersRelativePath  = ".vscode-insider-server/data/Machine/settings.json"
+	settingsInsidersRelativePath  = ".vscode-server-insiders/data/Machine/settings.json"
 	settingsRelativePath          = settingsInsidersRelativePath
 	settingsPathEnv               = "LOCAL_ARTIFACT_SETTINGS_PATH"
 	mcpConfigStableRelativePath   = ".vscode-server/data/User/mcp.json"
-	mcpConfigInsidersRelativePath = ".vscode-insider-server/data/User/mcp.json"
+	mcpConfigInsidersRelativePath = ".vscode-server-insiders/data/User/mcp.json"
 	mcpConfigRelativePath         = mcpConfigInsidersRelativePath
 	mcpConfigPathEnv              = "LOCAL_ARTIFACT_MCP_PATH"
 	mcpServerKey                  = "artifact-mcp"
@@ -80,7 +80,7 @@ func (m *Manager) promptInstallDestination(ctx context.Context) (installDestinat
 		if _, err := io.WriteString(output, "  1. .vscode-server\n"); err != nil {
 			return "", fmt.Errorf("write install destination prompt: %w", err)
 		}
-		if _, err := io.WriteString(output, "  2. .vscode-insider-server\n"); err != nil {
+		if _, err := io.WriteString(output, "  2. .vscode-server-insiders\n"); err != nil {
 			return "", fmt.Errorf("write install destination prompt: %w", err)
 		}
 		if _, err := io.WriteString(output, "  3. both\n"); err != nil {
