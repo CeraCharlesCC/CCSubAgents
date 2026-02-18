@@ -116,7 +116,7 @@ Global options:
 Install destination prompt:
   install always prompts for destination:
     1. .vscode-server
-    2. .vscode-insider-server
+    2. .vscode-server-insiders
     3. both
 `
 
