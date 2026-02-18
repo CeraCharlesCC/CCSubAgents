@@ -80,7 +80,7 @@ func (m *Manager) promptInstallDestination(ctx context.Context) (installDestinat
 		if _, err := io.WriteString(output, "  1. .vscode-server\n"); err != nil {
 			return "", fmt.Errorf("write install destination prompt: %w", err)
 		}
-		if _, err := io.WriteString(output, "  2. .vscode-insider-server\n"); err != nil {
+		if _, err := io.WriteString(output, "  2. .vscode-server-insiders\n"); err != nil {
 			return "", fmt.Errorf("write install destination prompt: %w", err)
 		}
 		if _, err := io.WriteString(output, "  3. both\n"); err != nil {
