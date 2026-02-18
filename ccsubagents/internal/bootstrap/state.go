@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 )
 
 type trackedState struct {
@@ -24,8 +26,10 @@ type managedState struct {
 }
 
 type trackedJSONOps struct {
-	Settings settingsEdit `json:"settings"`
-	MCP      mcpEdit      `json:"mcp"`
+	Settings      settingsEdit   `json:"settings"`
+	SettingsExtra []settingsEdit `json:"settingsExtra,omitempty"`
+	MCP           mcpEdit        `json:"mcp"`
+	MCPExtra      []mcpEdit      `json:"mcpExtra,omitempty"`
 }
 
 type settingsEdit struct {
@@ -41,6 +45,65 @@ type mcpEdit struct {
 	Touched     bool            `json:"touched"`
 	HadPrevious bool            `json:"hadPrevious"`
 	Previous    json.RawMessage `json:"previous,omitempty"`
+}
+
+func trackedJSONOpsFromEdits(settings []settingsEdit, mcp []mcpEdit) trackedJSONOps {
+	out := trackedJSONOps{}
+	if len(settings) > 0 {
+		out.Settings = settings[0]
+		if len(settings) > 1 {
+			out.SettingsExtra = slices.Clone(settings[1:])
+		}
+	}
+	if len(mcp) > 0 {
+		out.MCP = mcp[0]
+		if len(mcp) > 1 {
+			out.MCPExtra = slices.Clone(mcp[1:])
+		}
+	}
+	return out
+}
+
+func (ops trackedJSONOps) allSettingsEdits() []settingsEdit {
+	out := make([]settingsEdit, 0, 1+len(ops.SettingsExtra))
+	if stringsHasValue(ops.Settings.File) || stringsHasValue(ops.Settings.AgentPath) || ops.Settings.Added {
+		out = append(out, ops.Settings)
+	}
+	out = append(out, ops.SettingsExtra...)
+	return out
+}
+
+func (ops trackedJSONOps) allMCPEdits() []mcpEdit {
+	out := make([]mcpEdit, 0, 1+len(ops.MCPExtra))
+	if stringsHasValue(ops.MCP.File) || stringsHasValue(ops.MCP.Key) || ops.MCP.Touched || ops.MCP.HadPrevious || len(ops.MCP.Previous) > 0 {
+		out = append(out, ops.MCP)
+	}
+	out = append(out, ops.MCPExtra...)
+	return out
+}
+
+func (ops trackedJSONOps) settingsEditForFile(path string) (settingsEdit, bool) {
+	cleanPath := filepath.Clean(path)
+	for _, edit := range ops.allSettingsEdits() {
+		if filepath.Clean(edit.File) == cleanPath {
+			return edit, true
+		}
+	}
+	return settingsEdit{}, false
+}
+
+func (ops trackedJSONOps) mcpEditForFile(path string) (mcpEdit, bool) {
+	cleanPath := filepath.Clean(path)
+	for _, edit := range ops.allMCPEdits() {
+		if filepath.Clean(edit.File) == cleanPath {
+			return edit, true
+		}
+	}
+	return mcpEdit{}, false
+}
+
+func stringsHasValue(value string) bool {
+	return strings.TrimSpace(value) != ""
 }
 
 func (m *Manager) trackedStatePath(stateDir string) string {
