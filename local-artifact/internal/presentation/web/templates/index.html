@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="en">
+
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -71,7 +72,11 @@
       --err-border: #efc4c4;
       --selected-bg: #ebf5f1;
       --selected-line: #5f9c84;
+      --scroll-track: #ece6dc;
+      --scroll-thumb: #b7ac9a;
+      --scroll-thumb-hover: #9f937f;
     }
+
     :root[data-theme="dark"] {
       --bg: #171513;
       --card: #221f1b;
@@ -92,8 +97,40 @@
       --err-border: #644040;
       --selected-bg: #27342e;
       --selected-line: #6bb391;
+      --scroll-track: #26211c;
+      --scroll-thumb: #6d6253;
+      --scroll-thumb-hover: #857866;
     }
-    * { box-sizing: border-box; }
+
+    * {
+      box-sizing: border-box;
+      scrollbar-width: thin;
+      scrollbar-color: var(--scroll-thumb) var(--scroll-track);
+    }
+
+    *::-webkit-scrollbar {
+      width: 11px;
+      height: 11px;
+    }
+
+    *::-webkit-scrollbar-track {
+      background: var(--scroll-track);
+    }
+
+    *::-webkit-scrollbar-thumb {
+      background: var(--scroll-thumb);
+      border-radius: 999px;
+      border: 2px solid var(--scroll-track);
+    }
+
+    *::-webkit-scrollbar-thumb:hover {
+      background: var(--scroll-thumb-hover);
+    }
+
+    *::-webkit-scrollbar-corner {
+      background: var(--scroll-track);
+    }
+
     body {
       margin: 0;
       background:
@@ -102,12 +139,15 @@
         var(--bg);
       color: var(--ink);
       font-family: var(--sans);
+      min-height: 100vh;
     }
+
     main {
-      max-width: 1100px;
+      max-width: 1460px;
       margin: 2rem auto;
-      padding: 0 1rem 2rem;
+      padding: 0 1.1rem 2rem;
     }
+
     .title-row {
       display: flex;
       justify-content: space-between;
@@ -115,22 +155,26 @@
       align-items: start;
       margin-bottom: 1rem;
     }
+
     h1 {
       margin: 0 0 0.35rem;
       font-size: clamp(1.4rem, 2.5vw, 2rem);
       letter-spacing: 0.02em;
     }
+
     .sub {
       margin-bottom: 0;
       color: var(--muted);
     }
+
     .card {
       background: var(--card);
       border: 1px solid var(--line);
       border-radius: 14px;
-      padding: 0.9rem;
-      box-shadow: 0 6px 24px var(--shadow);
+      padding: 0.95rem;
+      box-shadow: 0 14px 32px var(--shadow);
     }
+
     form.filters {
       display: flex;
       gap: 0.65rem;
@@ -138,19 +182,22 @@
       flex-wrap: wrap;
       margin-bottom: 0.75rem;
     }
+
     form.insert {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
       gap: 0.65rem;
       margin: 0;
     }
+
     .insert-panel {
       margin-bottom: 0.75rem;
       border: 1px solid var(--line);
       border-radius: 10px;
       background: var(--input-bg);
     }
-    .insert-panel > summary {
+
+    .insert-panel>summary {
       cursor: pointer;
       list-style: none;
       padding: 0.58rem 0.72rem;
@@ -158,35 +205,45 @@
       font-weight: 650;
       color: var(--ink);
     }
-    .insert-panel > summary::-webkit-details-marker {
+
+    .insert-panel>summary::-webkit-details-marker {
       display: none;
     }
-    .insert-panel[open] > summary {
+
+    .insert-panel[open]>summary {
       border-bottom: 1px solid var(--line);
     }
+
     .insert-panel .insert {
       padding: 0.7rem;
     }
+
     .insert .wide {
       grid-column: 1 / -1;
     }
+
     .insert-actions {
       display: flex;
       align-items: center;
       gap: 0.6rem;
       flex-wrap: wrap;
     }
+
     .hint {
       font-size: 0.8rem;
       color: var(--muted);
     }
+
     label {
       display: grid;
       gap: 0.3rem;
       font-size: 0.85rem;
       color: var(--muted);
     }
-    input, select, textarea {
+
+    input,
+    select,
+    textarea {
       border: 1px solid var(--line);
       border-radius: 8px;
       padding: 0.52rem 0.6rem;
@@ -195,13 +252,16 @@
       background: var(--input-bg);
       color: var(--ink);
     }
+
     textarea {
       min-height: 88px;
       resize: vertical;
     }
+
     input[type="file"] {
       padding: 0.34rem 0.45rem;
     }
+
     input[type="file"]::file-selector-button {
       border: 1px solid var(--line);
       border-radius: 7px;
@@ -213,6 +273,7 @@
       color: var(--ink);
       cursor: pointer;
     }
+
     button {
       border: 0;
       border-radius: 9px;
@@ -222,100 +283,224 @@
       cursor: pointer;
       background: var(--accent);
       color: #fff;
+      transition: transform 120ms ease, filter 160ms ease;
     }
+
     button.delete {
       background: var(--danger);
     }
+
+    button:hover:not(:disabled) {
+      filter: brightness(1.05);
+      transform: translateY(-1px);
+    }
+
     button:disabled {
       opacity: 0.55;
       cursor: not-allowed;
     }
+
     .theme-toggle {
       border: 1px solid var(--line);
       background: transparent;
       color: var(--ink);
       white-space: nowrap;
     }
+
     .msg {
       margin: 0.4rem 0 0.75rem;
       padding: 0.55rem 0.7rem;
       border-radius: 8px;
       font-size: 0.9rem;
     }
+
     .msg.ok {
       background: var(--ok-bg);
       color: var(--ok-ink);
       border: 1px solid var(--ok-border);
     }
+
     .msg.err {
       background: var(--err-bg);
       color: var(--err-ink);
       border: 1px solid var(--err-border);
     }
+
     .bulk-controls {
       display: flex;
       align-items: center;
       gap: 0.6rem;
-      margin: 0.3rem 0 0.8rem;
+      margin: 0.25rem 0 0.7rem;
     }
+
+    .workflow-hint {
+      margin: 0 0 0.55rem;
+      font-size: 0.84rem;
+      color: var(--muted);
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0.8rem;
+      align-items: start;
+      transition: grid-template-columns 240ms ease;
+    }
+
+    .workspace.has-active-viewer {
+      grid-template-columns: minmax(0, 1.1fr) minmax(380px, 0.9fr);
+    }
+
+    .data-pane {
+      min-width: 0;
+    }
+
     .selection-count {
       color: var(--muted);
       font-size: 0.86rem;
       font-family: var(--mono);
     }
+
     .table-wrap {
-      overflow-x: auto;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--input-bg);
+      max-height: min(69vh, 780px);
     }
+
     table {
       width: 100%;
       border-collapse: collapse;
       font-size: 0.9rem;
+      min-width: 680px;
     }
-    th, td {
+
+    th,
+    td {
       text-align: left;
       border-bottom: 1px solid var(--line);
       padding: 0.58rem 0.45rem;
       vertical-align: top;
     }
-    th { color: var(--muted); font-weight: 650; }
+
+    th {
+      color: var(--muted);
+      font-weight: 650;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: var(--card);
+    }
+
     td code {
       font-family: var(--mono);
       font-size: 0.8rem;
       overflow-wrap: anywhere;
     }
-    tr.selectable { cursor: pointer; }
+
+    tr.selectable {
+      cursor: pointer;
+      transition: background-color 140ms ease;
+    }
+
+    tr.selectable:hover td {
+      background: color-mix(in srgb, var(--selected-bg) 65%, var(--card) 35%);
+    }
+
     tr.selectable.selected td {
       background: var(--selected-bg);
     }
+
     tr.selectable.selected td:first-child {
       box-shadow: inset 3px 0 0 var(--selected-line);
     }
+
     tr.selectable:focus-visible td {
       outline: 2px solid var(--selected-line);
       outline-offset: -2px;
     }
+
+    .viewer-shell {
+      min-width: 0;
+      opacity: 0;
+      transform: translateX(10px);
+      pointer-events: none;
+      max-height: 0;
+      overflow: hidden;
+      transition: opacity 180ms ease, transform 220ms ease, max-height 240ms ease;
+    }
+
+    .workspace.has-active-viewer .viewer-shell {
+      opacity: 1;
+      transform: none;
+      pointer-events: auto;
+      max-height: 200vh;
+    }
+
     .viewer {
-      margin-top: 0.8rem;
       border: 1px solid var(--line);
       border-radius: 10px;
       background: var(--input-bg);
       padding: 0.72rem;
+      position: sticky;
+      top: 0.9rem;
     }
+
     .viewer-head {
       display: flex;
-      align-items: baseline;
+      align-items: end;
+      justify-content: space-between;
       gap: 0.6rem;
       flex-wrap: wrap;
       margin-bottom: 0.55rem;
     }
+
+    .viewer-head strong {
+      display: block;
+      margin-bottom: 0.15rem;
+    }
+
+    .viewer-meta-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.42rem 0.62rem;
+      margin: 0 0 0.65rem;
+      padding: 0.65rem;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--card);
+    }
+
+    .viewer-meta-grid .meta-item {
+      min-width: 0;
+    }
+
+    .viewer-meta-grid dt {
+      margin: 0;
+      font-size: 0.74rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .viewer-meta-grid dd {
+      margin: 0.18rem 0 0;
+      font-family: var(--mono);
+      font-size: 0.8rem;
+      overflow-wrap: anywhere;
+    }
+
     .viewer-content {
       border: 1px solid var(--line);
       border-radius: 8px;
-      min-height: 120px;
+      min-height: 240px;
       padding: 0.62rem;
       background: var(--card);
       overflow: auto;
+      max-height: min(53vh, 600px);
     }
+
     .viewer-content pre {
       margin: 0;
       font-family: var(--mono);
@@ -323,37 +508,77 @@
       white-space: pre-wrap;
       overflow-wrap: anywhere;
       line-height: 1.5;
+      animation: preview-fade-in 180ms ease;
     }
+
     .viewer-content img {
       display: block;
       max-width: 100%;
-      max-height: 380px;
+      max-height: min(50vh, 520px);
       height: auto;
       border-radius: 6px;
+      margin: 0 auto;
+      animation: preview-fade-in 200ms ease;
     }
+
     .viewer-content .placeholder {
       margin: 0;
       color: var(--muted);
       font-size: 0.86rem;
     }
+
     .viewer-content .error {
       color: var(--danger);
     }
+
+    @keyframes preview-fade-in {
+      from {
+        opacity: 0;
+        transform: translateY(4px);
+      }
+
+      to {
+        opacity: 1;
+        transform: none;
+      }
+    }
+
     .foot {
       margin-top: 0.75rem;
       font-size: 0.82rem;
       color: var(--muted);
     }
+
     @media (max-width: 700px) {
-      th:nth-child(4), td:nth-child(4), th:nth-child(6), td:nth-child(6) {
+
+      th:nth-child(4),
+      td:nth-child(4),
+      th:nth-child(6),
+      td:nth-child(6) {
         display: none;
       }
+
       .title-row {
         flex-direction: column;
       }
     }
+
+    @media (max-width: 1100px) {
+      .workspace.has-active-viewer {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      .viewer {
+        position: static;
+      }
+
+      .viewer-meta-grid {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
   </style>
 </head>
+
 <body>
   <main>
     <header class="title-row">
@@ -361,7 +586,8 @@
         <h1>Local Artifact Store</h1>
         <div class="sub">Track current aliases and delete artifacts quickly.</div>
       </div>
-      <button type="button" class="theme-toggle" id="theme-toggle" aria-pressed="false" aria-label="Switch to dark mode">Dark mode</button>
+      <button type="button" class="theme-toggle" id="theme-toggle" aria-pressed="false"
+        aria-label="Switch to dark mode">Dark mode</button>
     </header>
 
     <section class="card">
@@ -370,7 +596,8 @@
           <select name="subspace">
             <option value="">-- select --</option>
             {{range .Subspaces}}
-              <option value="{{.}}" {{if eq $.Subspace .}}selected{{end}}>{{if eq . "global"}}global (fallback){{else}}{{.}}{{end}}</option>
+            <option value="{{.}}" {{if eq $.Subspace .}}selected{{end}}>{{if eq . "global"}}global
+              (fallback){{else}}{{.}}{{end}}</option>
             {{end}}
           </select>
         </label>
@@ -412,58 +639,100 @@
       {{if .Message}}<div class="msg ok">{{.Message}}</div>{{end}}
       {{if .Error}}<div class="msg err">{{.Error}}</div>{{end}}
 
-      <form id="bulk-delete-form" method="post" action="/delete">
-        <input type="hidden" name="subspace" value="{{.Subspace}}">
-        <input type="hidden" name="prefix" value="{{.Prefix}}">
-        <input type="hidden" name="limit" value="{{.Limit}}">
-        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-        <div id="selected-inputs"></div>
-        <div class="bulk-controls">
-          <button class="delete" id="delete-selected" type="submit" disabled>Delete selected</button>
-          <span class="selection-count" id="selection-count">0 selected</span>
-        </div>
-      </form>
+      <div class="workspace" id="artifact-workspace">
+        <section class="data-pane">
+          <form id="bulk-delete-form" method="post" action="/delete">
+            <input type="hidden" name="subspace" value="{{.Subspace}}">
+            <input type="hidden" name="prefix" value="{{.Prefix}}">
+            <input type="hidden" name="limit" value="{{.Limit}}">
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+            <div id="selected-inputs"></div>
+            <div class="bulk-controls">
+              <button class="delete" id="delete-selected" type="submit" disabled>Delete selected</button>
+              <span class="selection-count" id="selection-count">0 selected</span>
+            </div>
+          </form>
+          <p class="workflow-hint">Click a row to focus it. Use <code>Shift</code> for ranges and <code>Ctrl/Cmd</code> for multi-select.</p>
 
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Ref</th>
-              <th>Kind</th>
-              <th>MIME</th>
-              <th>Size</th>
-              <th>Created</th>
-            </tr>
-          </thead>
-          <tbody>
-          {{range $idx, $item := .Items}}
-            <tr class="selectable" data-selectable-row data-index="{{$idx}}" data-name="{{$item.Name}}" data-ref="{{$item.Ref}}" data-mime="{{$item.MimeType}}" tabindex="0" aria-selected="false">
-              <td><code>{{$item.Name}}</code></td>
-              <td><code>{{$item.Ref}}</code></td>
-              <td>{{$item.Kind}}</td>
-              <td><code>{{$item.MimeType}}</code></td>
-              <td>{{$item.SizeBytes}}</td>
-              <td><code>{{$item.CreatedAt}}</code></td>
-            </tr>
-          {{else}}
-            <tr><td colspan="6">No artifacts found for this filter.</td></tr>
-          {{end}}
-          </tbody>
-        </table>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Ref</th>
+                  <th>Kind</th>
+                  <th>MIME</th>
+                  <th>Size</th>
+                  <th>Created</th>
+                </tr>
+              </thead>
+              <tbody>
+                {{range $idx, $item := .Items}}
+                <tr class="selectable" data-selectable-row data-index="{{$idx}}" data-name="{{$item.Name}}"
+                  data-ref="{{$item.Ref}}" data-mime="{{$item.MimeType}}" data-kind="{{$item.Kind}}"
+                  data-size="{{$item.SizeBytes}}" data-created="{{$item.CreatedAt}}" tabindex="0" aria-selected="false">
+                  <td><code>{{$item.Name}}</code></td>
+                  <td><code>{{$item.Ref}}</code></td>
+                  <td>{{$item.Kind}}</td>
+                  <td><code>{{$item.MimeType}}</code></td>
+                  <td>{{$item.SizeBytes}}</td>
+                  <td><code>{{$item.CreatedAt}}</code></td>
+                </tr>
+                {{else}}
+                <tr>
+                  <td colspan="6">No artifacts found for this filter.</td>
+                </tr>
+                {{end}}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <aside class="viewer-shell" id="artifact-viewer-shell" aria-hidden="true">
+          <section class="viewer" id="artifact-viewer" aria-live="polite">
+            <div class="viewer-head">
+              <div>
+                <strong>Data viewer</strong>
+                <span class="hint" id="viewer-meta">Select one artifact to preview.</span>
+              </div>
+            </div>
+            <dl class="viewer-meta-grid">
+              <div class="meta-item">
+                <dt>Name</dt>
+                <dd id="viewer-name">-</dd>
+              </div>
+              <div class="meta-item">
+                <dt>Ref</dt>
+                <dd id="viewer-ref">-</dd>
+              </div>
+              <div class="meta-item">
+                <dt>MIME</dt>
+                <dd id="viewer-mime">-</dd>
+              </div>
+              <div class="meta-item">
+                <dt>Kind</dt>
+                <dd id="viewer-kind">-</dd>
+              </div>
+              <div class="meta-item">
+                <dt>Size</dt>
+                <dd id="viewer-size">-</dd>
+              </div>
+              <div class="meta-item">
+                <dt>Created</dt>
+                <dd id="viewer-created">-</dd>
+              </div>
+            </dl>
+            <div class="viewer-content" id="viewer-content">
+              <p class="placeholder">Supported: text/plain, text/markdown, image/*, application/json, application/ld+json.
+              </p>
+            </div>
+          </section>
+        </aside>
       </div>
 
-      <section class="viewer" id="artifact-viewer" aria-live="polite">
-        <div class="viewer-head">
-          <strong>Data viewer</strong>
-          <span class="hint" id="viewer-meta">Select one artifact to preview.</span>
-        </div>
-        <div class="viewer-content" id="viewer-content">
-          <p class="placeholder">Supported: text/plain, text/markdown, image/*, application/json, application/ld+json.</p>
-        </div>
-      </section>
-
-      <div class="foot">Generated at {{.GeneratedAt}} | JSON endpoints: <code>/api/subspaces</code>, <code>/api/artifacts?subspace=&lt;global|hash&gt;</code> (GET, POST, DELETE), <code>/api/artifact-content?subspace=&lt;global|hash&gt;&amp;ref=&lt;ref&gt;</code> (GET)</div>
+      <div class="foot">Generated at {{.GeneratedAt}} | JSON endpoints: <code>/api/subspaces</code>,
+        <code>/api/artifacts?subspace=&lt;global|hash&gt;</code> (GET, POST, DELETE),
+        <code>/api/artifact-content?subspace=&lt;global|hash&gt;&amp;ref=&lt;ref&gt;</code> (GET)</div>
     </section>
   </main>
 
@@ -515,13 +784,22 @@
     (function () {
       const rows = Array.from(document.querySelectorAll('tr[data-selectable-row]'));
       const bulkDeleteForm = document.getElementById('bulk-delete-form');
+      const workspace = document.getElementById('artifact-workspace');
+      const viewerShell = document.getElementById('artifact-viewer-shell');
       const selectedInputs = document.getElementById('selected-inputs');
       const countNode = document.getElementById('selection-count');
       const deleteButton = document.getElementById('delete-selected');
       const viewerMeta = document.getElementById('viewer-meta');
       const viewerContent = document.getElementById('viewer-content');
+      const viewerName = document.getElementById('viewer-name');
+      const viewerRef = document.getElementById('viewer-ref');
+      const viewerMime = document.getElementById('viewer-mime');
+      const viewerKind = document.getElementById('viewer-kind');
+      const viewerSize = document.getElementById('viewer-size');
+      const viewerCreated = document.getElementById('viewer-created');
       let activeImageObjectURL = '';
       let previewRequestID = 0;
+      const previewSupportText = 'Supported: text/plain, text/markdown, image/*, application/json, application/ld+json.';
 
       if (!selectedInputs || !countNode || !deleteButton) {
         return;
@@ -545,6 +823,37 @@
       function normalizeMimeType(rawMimeType) {
         const firstPart = (rawMimeType || '').split(';')[0];
         return firstPart.trim().toLowerCase();
+      }
+
+      function setViewerOpen(isOpen) {
+        if (workspace) {
+          workspace.classList.toggle('has-active-viewer', !!isOpen);
+        }
+        if (viewerShell) {
+          viewerShell.setAttribute('aria-hidden', isOpen ? 'false' : 'true');
+        }
+      }
+
+      function setViewerDetails(row, mimeTypeOverride) {
+        if (viewerName) {
+          viewerName.textContent = row ? (row.dataset.name || '-') : '-';
+        }
+        if (viewerRef) {
+          viewerRef.textContent = row ? (row.dataset.ref || '-') : '-';
+        }
+        if (viewerMime) {
+          const candidate = mimeTypeOverride || (row ? row.dataset.mime : '');
+          viewerMime.textContent = candidate && candidate !== '' ? candidate : '-';
+        }
+        if (viewerKind) {
+          viewerKind.textContent = row ? (row.dataset.kind || '-') : '-';
+        }
+        if (viewerSize) {
+          viewerSize.textContent = row ? (row.dataset.size || '-') : '-';
+        }
+        if (viewerCreated) {
+          viewerCreated.textContent = row ? (row.dataset.created || '-') : '-';
+        }
       }
 
       function clearViewer() {
@@ -609,11 +918,17 @@
 
         const activeRows = sortedSelection();
         if (activeRows.length === 0) {
+          previewRequestID += 1;
+          setViewerOpen(false);
+          setViewerDetails(null, '');
           viewerMeta.textContent = 'Select one artifact to preview.';
-          showViewerPlaceholder('Supported: text/plain, text/markdown, image/*, application/json, application/ld+json.', false);
+          showViewerPlaceholder(previewSupportText, false);
           return;
         }
         if (activeRows.length > 1) {
+          previewRequestID += 1;
+          setViewerOpen(false);
+          setViewerDetails(null, '');
           viewerMeta.textContent = 'Select a single artifact to preview.';
           showViewerPlaceholder('Multiple artifacts selected.', false);
           return;
@@ -621,11 +936,16 @@
 
         const row = rows[activeRows[0]];
         if (!row) {
+          previewRequestID += 1;
+          setViewerOpen(false);
+          setViewerDetails(null, '');
           viewerMeta.textContent = 'Select one artifact to preview.';
           showViewerPlaceholder('No artifact selected.', false);
           return;
         }
 
+        setViewerOpen(true);
+        setViewerDetails(row, row.dataset.mime || '');
         const ref = row.dataset.ref || '';
         const name = row.dataset.name || '';
         if (ref === '') {
@@ -672,6 +992,7 @@
               return;
             }
             const mimeType = normalizeMimeType(result.rawMimeType);
+            setViewerDetails(row, result.rawMimeType);
             viewerMeta.textContent = (name || ref) + ' | ' + result.rawMimeType;
             if (mimeType.indexOf('image/') === 0) {
               showViewerImage(result.blob, name || ref);
@@ -711,6 +1032,7 @@
             if (requestID !== previewRequestID) {
               return;
             }
+            setViewerDetails(row, row.dataset.mime || '');
             viewerMeta.textContent = 'Preview error';
             showViewerPlaceholder(error && error.message ? error.message : 'failed to load preview', true);
           });
@@ -797,15 +1119,42 @@
         });
 
         row.addEventListener('keydown', function (event) {
-          if (event.key !== 'Enter' && event.key !== ' ') {
-            return;
-          }
           const idx = Number(row.dataset.index);
           if (Number.isNaN(idx)) {
             return;
           }
-          event.preventDefault();
-          applySelectionEvent(idx, event);
+
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            applySelectionEvent(idx, event);
+            return;
+          }
+
+          if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            event.preventDefault();
+            const step = event.key === 'ArrowDown' ? 1 : -1;
+            const nextIndex = Math.max(0, Math.min(rows.length - 1, idx + step));
+            if (nextIndex === idx) {
+              return;
+            }
+            applySelectionEvent(nextIndex, {
+              shiftKey: event.shiftKey,
+              ctrlKey: false,
+              metaKey: false
+            });
+            const nextRow = rows[nextIndex];
+            if (nextRow) {
+              nextRow.focus();
+              nextRow.scrollIntoView({ block: 'nearest' });
+            }
+            return;
+          }
+
+          if (event.key === 'Escape') {
+            selected.clear();
+            anchorIndex = null;
+            updateSelectionUI();
+          }
         });
       });
 
@@ -813,4 +1162,5 @@
     }());
   </script>
 </body>
+
 </html>
