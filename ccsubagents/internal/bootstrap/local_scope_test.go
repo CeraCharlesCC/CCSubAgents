@@ -365,7 +365,7 @@ func TestReportGlobalPathWarning_WarnsWhenLocalBinMissing(t *testing.T) {
 
 	m.reportGlobalPathWarning(home)
 	got := out.String()
-	if !strings.Contains(got, "Warning: ~/.local/bin is not in PATH") {
+	if !strings.Contains(got, "⚠ ~/.local/bin is not in PATH") {
 		t.Fatalf("expected PATH warning, got %q", got)
 	}
 	if !strings.Contains(got, "export PATH=\"$HOME/.local/bin:$PATH\"") {

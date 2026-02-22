@@ -19,6 +19,7 @@ type cliArgs struct {
 	commandRaw            string
 	scopeRaw              string
 	skipAttestationsCheck bool
+	verbose               bool
 	showUsage             bool
 }
 
@@ -38,6 +39,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	manager := bootstrap.NewManager()
 	manager.SetStatusWriter(stdout)
 	manager.SetSkipAttestationsCheck(parsed.skipAttestationsCheck)
+	manager.SetVerbose(parsed.verbose)
 
 	command, err := bootstrap.ParseCommand(parsed.commandRaw)
 	if err != nil {
@@ -68,6 +70,7 @@ func parseCLIArgs(args []string) (cliArgs, error) {
 	help := fs.Bool("help", false, "show help")
 	fs.BoolVar(help, "h", false, "show help")
 	skipAttestationsCheck := fs.Bool("skip-attestations-check", false, "skip attestation verification")
+	verbose := fs.Bool("verbose", false, "show detailed status output")
 	scope := fs.String("scope", "", "scope for install lifecycle (local or global)")
 
 	if err := fs.Parse(normalizeGlobalOptionOrder(args)); err != nil {
@@ -75,7 +78,7 @@ func parseCLIArgs(args []string) (cliArgs, error) {
 	}
 
 	if *help {
-		return cliArgs{showUsage: true, skipAttestationsCheck: *skipAttestationsCheck}, nil
+		return cliArgs{showUsage: true, skipAttestationsCheck: *skipAttestationsCheck, verbose: *verbose}, nil
 	}
 
 	positionals := fs.Args()
@@ -87,6 +90,7 @@ func parseCLIArgs(args []string) (cliArgs, error) {
 		commandRaw:            positionals[0],
 		scopeRaw:              *scope,
 		skipAttestationsCheck: *skipAttestationsCheck,
+		verbose:               *verbose,
 	}, nil
 }
 
@@ -150,29 +154,33 @@ func isGlobalOptionName(name string) bool {
 	switch name {
 	case "help", "h", "skip-attestations-check", "scope":
 		return true
+	case "verbose":
+		return true
 	default:
 		return false
 	}
 }
 
 func printUsage(w io.Writer) {
-	const usage = `Usage:
-  ccsubagents [global options] <install|update|uninstall>
+	const usage = `Usage: ccsubagents <command> [options]
 
-Global options:
-  --scope=local|global       Scope for install/update/uninstall lifecycle
-  --skip-attestations-check   Skip release attestation verification
-  --help, -h                  Show this usage text
+Commands:
+  install      Install agent definitions and local-artifact binaries
+  update       Update an existing installation to the latest release
+  uninstall    Remove installed files and revert configuration changes
 
-Default scope by command:
-  install      local
-  update       global
-  uninstall    global
+Options:
+  --scope=local|global         Installation scope (default: install→local, update/uninstall→global)
+  --skip-attestations-check    Skip release attestation verification
+  --verbose                    Show detailed output
+  --help, -h                   Show this usage text
 
-Global install target prompt (--scope=global):
-  1. .vscode-server-insiders
-  2. .vscode-server
-  3. custom path(s)
+Examples:
+  ccsubagents install
+  ccsubagents install --scope=global
+  ccsubagents update
+  ccsubagents uninstall
+  ccsubagents install --scope=global --verbose
 `
 
 	_, _ = io.WriteString(w, usage)

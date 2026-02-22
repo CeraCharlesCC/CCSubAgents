@@ -23,6 +23,34 @@ type releaseAsset struct {
 	BrowserDownloadURL string `json:"browser_download_url"`
 }
 
+type attestationVerificationError struct {
+	Asset string
+	Err   error
+}
+
+func (e *attestationVerificationError) Error() string {
+	if e == nil {
+		return "attestation verification failed"
+	}
+	if strings.TrimSpace(e.Asset) == "" {
+		if e.Err == nil {
+			return "attestation verification failed"
+		}
+		return fmt.Sprintf("attestation verification failed: %v", e.Err)
+	}
+	if e.Err == nil {
+		return fmt.Sprintf("attestation verification failed for %s", e.Asset)
+	}
+	return fmt.Sprintf("attestation verification failed for %s: %v", e.Asset, e.Err)
+}
+
+func (e *attestationVerificationError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
 func mapRequiredAssets(assets []releaseAsset, names []string) (map[string]releaseAsset, error) {
 	byName := make(map[string]releaseAsset, len(assets))
 	for _, asset := range assets {
@@ -123,7 +151,6 @@ func (m *Manager) verifyDownloadedAssets(ctx context.Context, downloaded map[str
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		m.reportAction("Verifying attestation for %s", name)
 		path := downloaded[name]
 		_, err := m.runCommand(
 			ctx,
@@ -139,8 +166,9 @@ func (m *Manager) verifyDownloadedAssets(ctx context.Context, downloaded map[str
 			attestationOIDCIssuer,
 		)
 		if err != nil {
-			return fmt.Errorf("attestation verification failed for %s: %w", name, err)
+			return &attestationVerificationError{Asset: name, Err: err}
 		}
+		m.reportDetail("verified attestation: %s", name)
 	}
 	return nil
 }

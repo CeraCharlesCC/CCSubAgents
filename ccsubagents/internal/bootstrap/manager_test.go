@@ -675,6 +675,65 @@ func TestRun_GlobalInstallPromptsForTargetSelection(t *testing.T) {
 	}
 }
 
+func TestPromptGlobalInstallTargets_UsesPrettyPromptCopy(t *testing.T) {
+	home := t.TempDir()
+	paths := installPaths{
+		stable: configPaths{
+			settingsPath: filepath.Join(home, ".vscode-server", "data", "Machine", "settings.json"),
+			mcpPath:      filepath.Join(home, ".vscode-server", "data", "User", "mcp.json"),
+		},
+		insiders: configPaths{
+			settingsPath: filepath.Join(home, "custom-insiders", "settings.json"),
+			mcpPath:      filepath.Join(home, "custom-insiders", "mcp.json"),
+		},
+	}
+
+	var promptOut bytes.Buffer
+	m := NewManager()
+	m.SetInstallPromptIO(strings.NewReader("1,2\n"), &promptOut)
+
+	targets, err := m.promptGlobalInstallTargets(context.Background(), home, paths)
+	if err != nil {
+		t.Fatalf("promptGlobalInstallTargets returned error: %v", err)
+	}
+	if len(targets) != 2 {
+		t.Fatalf("expected 2 targets, got %d", len(targets))
+	}
+
+	gotTargets := map[string]bool{}
+	for _, target := range targets {
+		gotTargets[target.settingsPath+"\n"+target.mcpPath] = true
+	}
+	if !gotTargets[paths.insiders.settingsPath+"\n"+paths.insiders.mcpPath] {
+		t.Fatalf("expected insiders target from provided paths, got %#v", targets)
+	}
+	if !gotTargets[paths.stable.settingsPath+"\n"+paths.stable.mcpPath] {
+		t.Fatalf("expected stable target from provided paths, got %#v", targets)
+	}
+
+	got := promptOut.String()
+	stableRoot := toHomeTildePath(home, filepath.Join(home, ".vscode-server"))
+	insidersSettings := toHomeTildePath(home, paths.insiders.settingsPath)
+	insidersMCP := toHomeTildePath(home, paths.insiders.mcpPath)
+
+	for _, want := range []string{
+		"Where should ccsubagents be installed?",
+		"VS Code Server — Insiders",
+		"VS Code Server — Stable",
+		"[3] Custom path(s)",
+		"Choice (comma-separated, e.g. 1,2):",
+		stableRoot,
+		insidersSettings,
+		insidersMCP,
+		"settings:",
+		"mcp:",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected prompt output to contain %q, got %q", want, got)
+		}
+	}
+}
+
 func TestRun_GlobalUpdateDoesNotPromptForTargetSelection(t *testing.T) {
 	m := NewManager()
 	m.SetInstallPromptIO(errorReader{err: errors.New("prompt read should not occur")}, io.Discard)
