@@ -20,7 +20,7 @@ tools:
     'artifact-mcp/resolve_artifact',
     'artifact-mcp/save_artifact_text',
   ]
-model: [GPT-5.3-Codex (copilot)]
+model: [GPT-5.2 (copilot)]
 user-invocable: false
 disable-model-invocation: false
 ---
