@@ -140,3 +140,9 @@ When all work is complete, provide a summary that includes:
 - Key decisions and trade-offs
 - Artifacts produced (names and refs)
 - Acceptance criteria status
+
+---
+
+### Note on Subagents
+- Every subagent is inherently **stateless**. Each invocation starts a fresh session — it has no memory of previous conversations or state. All necessary information must be provided explicitly on every dispatch (via artifacts, arguments, or inline context). Avoid creating situations where a subagent would need to rely on implicit context.
+- Because subagents are stateless, re-invoking one after a crash or error does **not** restore any prior state. When re-dispatching, always supply the full context and write the prompt as if addressing a brand-new agent. Do not include language that implicitly references a previous attempt (e.g., "last time you…" or "make sure you finish this time"). The new instance starts completely from scratch and has no awareness of earlier failures.
