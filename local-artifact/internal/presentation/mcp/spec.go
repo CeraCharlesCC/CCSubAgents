@@ -198,14 +198,11 @@ func saveOutputSchema() map[string]any {
 			"kind":      map[string]any{"type": "string"},
 			"mimeType":  map[string]any{"type": "string"},
 			"filename":  map[string]any{"type": "string"},
-			"sizeBytes": map[string]any{"type": "integer"},
-			"sha256":    map[string]any{"type": "string"},
-			"createdAt": map[string]any{"type": "string"},
 			"uriByName": map[string]any{"type": "string"},
 			"uriByRef":  map[string]any{"type": "string"},
 			"prevRef":   map[string]any{"type": "string"},
 		},
-		"name", "ref", "kind", "mimeType", "sizeBytes", "sha256", "createdAt", "uriByName", "uriByRef",
+		"name", "ref", "kind", "mimeType", "uriByName", "uriByRef",
 	)
 }
 

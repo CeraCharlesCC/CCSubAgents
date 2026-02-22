@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/url"
-	"time"
 
 	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/domain"
 )
@@ -29,9 +28,6 @@ type saveOut struct {
 	Kind      string `json:"kind"`
 	MimeType  string `json:"mimeType"`
 	Filename  string `json:"filename,omitempty"`
-	SizeBytes int64  `json:"sizeBytes"`
-	SHA256    string `json:"sha256"`
-	CreatedAt string `json:"createdAt"`
 	URIByName string `json:"uriByName"`
 	URIByRef  string `json:"uriByRef"`
 	PrevRef   string `json:"prevRef,omitempty"`
@@ -44,9 +40,6 @@ func toSaveOut(a domain.Artifact, nameEscaped string) saveOut {
 		Kind:      string(a.Kind),
 		MimeType:  a.MimeType,
 		Filename:  a.Filename,
-		SizeBytes: a.SizeBytes,
-		SHA256:    a.SHA256,
-		CreatedAt: a.CreatedAt.Format(time.RFC3339),
 		URIByName: domain.URIByName(nameEscaped),
 		URIByRef:  a.URIByRef(),
 		PrevRef:   a.PrevRef,
@@ -67,12 +60,10 @@ func (s *Server) toolSaveText(ctx context.Context, argsRaw json.RawMessage) (any
 
 	nameEsc := url.PathEscape(a.Name)
 	out := toSaveOut(a, nameEsc)
-	jsonStr, _ := json.Marshal(out)
 
 	return toolResult{
 		Content: []any{
 			textContent("saved"),
-			textContent(string(jsonStr)),
 			resourceLink(a.Name, domain.URIByName(nameEsc), a.MimeType, a.SizeBytes),
 		},
 		StructuredContent: out,
@@ -98,12 +89,10 @@ func (s *Server) toolSaveBlob(ctx context.Context, argsRaw json.RawMessage) (any
 
 	nameEsc := url.PathEscape(a.Name)
 	out := toSaveOut(a, nameEsc)
-	jsonStr, _ := json.Marshal(out)
 
 	return toolResult{
 		Content: []any{
 			textContent("saved"),
-			textContent(string(jsonStr)),
 			resourceLink(a.Name, domain.URIByName(nameEsc), a.MimeType, a.SizeBytes),
 		},
 		StructuredContent: out,

@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"strings"
 
@@ -48,10 +49,9 @@ func (s *Server) toolResolve(ctx context.Context, argsRaw json.RawMessage) (any,
 		"uriByName": domain.URIByName(nameEsc),
 		"uriByRef":  "artifact://ref/" + ref,
 	}
-	jsonStr, _ := json.Marshal(out)
 
 	return toolResult{
-		Content:           []any{textContent(string(jsonStr))},
+		Content:           []any{textContent("resolved")},
 		StructuredContent: out,
 	}, nil
 }
@@ -75,14 +75,13 @@ func (s *Server) toolGet(ctx context.Context, argsRaw json.RawMessage) (any, *js
 
 	nameEsc := url.PathEscape(a.Name)
 	meta := toSaveOut(a, nameEsc)
-	metaJSON, _ := json.Marshal(meta)
 
 	lowerMime := strings.ToLower(a.MimeType)
 	isText := strings.HasPrefix(lowerMime, "text/") || a.Kind == domain.ArtifactKindText
 	isImage := strings.HasPrefix(lowerMime, "image/") || a.Kind == domain.ArtifactKindImage
 
 	if mode == modeMeta {
-		return toolResult{Content: []any{textContent(string(metaJSON))}, StructuredContent: meta}, nil
+		return toolResult{Content: []any{textContent("metadata only")}, StructuredContent: meta}, nil
 	}
 
 	if mode == modeAuto {
@@ -111,7 +110,6 @@ func (s *Server) toolGet(ctx context.Context, argsRaw json.RawMessage) (any, *js
 		return toolError("mode must be one of " + modeAuto + "|" + modeText + "|" + modeResource + "|" + modeImage + "|" + modeMeta), nil
 	}
 
-	content = append(content, textContent(string(metaJSON)))
 	content = append(content, resourceLink(a.Name, meta.URIByName, a.MimeType, a.SizeBytes))
 
 	return toolResult{Content: content, StructuredContent: meta}, nil
@@ -136,10 +134,9 @@ func (s *Server) toolList(ctx context.Context, argsRaw json.RawMessage) (any, *j
 		items = append(items, toSaveOut(a, url.PathEscape(a.Name)))
 	}
 	out := map[string]any{"items": items}
-	jsonStr, _ := json.Marshal(out)
 
 	return toolResult{
-		Content:           []any{textContent(string(jsonStr))},
+		Content:           []any{textContent(fmt.Sprintf("%d artifacts", len(items)))},
 		StructuredContent: out,
 	}, nil
 }
@@ -168,12 +165,10 @@ func (s *Server) toolDelete(ctx context.Context, argsRaw json.RawMessage) (any, 
 		out["name"] = name
 		out["uriByName"] = domain.URIByName(nameEsc)
 	}
-	jsonStr, _ := json.Marshal(out)
 
 	return toolResult{
 		Content: []any{
 			textContent("deleted"),
-			textContent(string(jsonStr)),
 		},
 		StructuredContent: out,
 	}, nil
