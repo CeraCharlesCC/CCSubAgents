@@ -163,7 +163,7 @@ func (m *Manager) promptGlobalInstallTargets(ctx context.Context, home string, p
 		if _, err := io.WriteString(output, "  2. .vscode-server\n"); err != nil {
 			return nil, fmt.Errorf("write install target prompt: %w", err)
 		}
-		if _, err := io.WriteString(output, "  3. custom path\n"); err != nil {
+		if _, err := io.WriteString(output, "  3. custom path(s)\n"); err != nil {
 			return nil, fmt.Errorf("write install target prompt: %w", err)
 		}
 		if _, err := io.WriteString(output, "Enter choices (comma-separated, e.g. 1,2): "); err != nil {

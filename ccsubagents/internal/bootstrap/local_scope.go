@@ -67,7 +67,7 @@ func (m *Manager) installLocal(ctx context.Context) error {
 
 	binaryOnly := false
 	if mode == localInstallModeTeam && location.inGitRepo {
-		detected, err := detectExistingTeamLocalSetup(location.installRoot)
+		detected, err := detectExistingTeamLocalSetup(location.installRoot, location.repoRoot)
 		if err != nil {
 			return err
 		}
@@ -438,19 +438,16 @@ func (m *Manager) installOrUpdateLocal(ctx context.Context, cfg localInstallConf
 	}
 	if !cfg.isUpdate && cfg.location.inGitRepo {
 		m.reportAction("Updating repository ignore rules")
-		ignoreFile := ""
-		switch cfg.mode {
-		case localInstallModePersonal:
-			ignoreFile = filepath.Join(cfg.location.installRoot, ".git", "info", "exclude")
-		case localInstallModeTeam:
-			ignoreFile = filepath.Join(cfg.location.installRoot, ".gitignore")
+		ignoreFile, _, err := resolveLocalIgnoreTarget(cfg.location.installRoot, cfg.location.repoRoot, cfg.mode)
+		if err != nil {
+			return err
 		}
 		if ignoreFile != "" {
 			if err := rollback.captureFile(ignoreFile); err != nil {
 				return err
 			}
 		}
-		newEdits, err := applyLocalIgnoreRules(cfg.location.installRoot, cfg.mode)
+		newEdits, err := applyLocalIgnoreRules(cfg.location.installRoot, cfg.location.repoRoot, cfg.mode)
 		if err != nil {
 			return err
 		}
@@ -660,29 +657,99 @@ func (m *Manager) detectGitRepoRoot(ctx context.Context, cwd string) (string, bo
 	return filepath.Clean(root), true
 }
 
-func applyLocalIgnoreRules(installRoot string, mode localInstallMode) ([]ignoreEdit, error) {
-	edits := []ignoreEdit{}
+func localIgnorePathPrefix(installRoot, repoRoot string) string {
+	if strings.TrimSpace(repoRoot) == "" {
+		return ""
+	}
+	rel, err := filepath.Rel(filepath.Clean(repoRoot), filepath.Clean(installRoot))
+	if err != nil {
+		return ""
+	}
+	rel = filepath.Clean(rel)
+	if rel == "." || rel == "" || rel == string(os.PathSeparator) || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || rel == ".." {
+		return ""
+	}
+	return filepath.ToSlash(rel)
+}
+
+func resolveGitExcludePath(repoRoot string) (string, error) {
+	gitPath := filepath.Join(filepath.Clean(repoRoot), ".git")
+	info, err := os.Stat(gitPath)
+	if err != nil {
+		return "", fmt.Errorf("inspect git metadata path %s: %w", gitPath, err)
+	}
+	if info.IsDir() {
+		return filepath.Join(gitPath, "info", "exclude"), nil
+	}
+
+	b, err := os.ReadFile(gitPath)
+	if err != nil {
+		return "", fmt.Errorf("read git metadata path %s: %w", gitPath, err)
+	}
+	line := strings.TrimSpace(string(b))
+	const gitDirPrefix = "gitdir:"
+	if !strings.HasPrefix(line, gitDirPrefix) {
+		return "", fmt.Errorf("unsupported git metadata format in %s", gitPath)
+	}
+	gitDir := strings.TrimSpace(strings.TrimPrefix(line, gitDirPrefix))
+	if gitDir == "" {
+		return "", fmt.Errorf("missing gitdir in %s", gitPath)
+	}
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(filepath.Dir(gitPath), gitDir)
+	}
+	return filepath.Join(filepath.Clean(gitDir), "info", "exclude"), nil
+}
+
+func resolveLocalIgnoreTarget(installRoot, repoRoot string, mode localInstallMode) (string, []string, error) {
+	if strings.TrimSpace(repoRoot) == "" {
+		repoRoot = installRoot
+	}
+	prefix := localIgnorePathPrefix(installRoot, repoRoot)
+	toRepoPath := func(rel string) string {
+		if prefix == "" {
+			return filepath.ToSlash(rel)
+		}
+		return filepath.ToSlash(filepath.Join(prefix, rel))
+	}
+
 	switch mode {
 	case localInstallModePersonal:
-		path := filepath.Join(installRoot, ".git", "info", "exclude")
-		added, err := appendMissingIgnoreLines(path, []string{localManagedDirRelativePath, filepath.ToSlash(filepath.Join(localAgentsRelativePath, "*.agent.md"))})
+		excludePath, err := resolveGitExcludePath(repoRoot)
 		if err != nil {
-			return nil, err
+			return "", nil, err
 		}
-		if len(added) > 0 {
-			edits = append(edits, ignoreEdit{File: path, AddedLines: added})
+		lines := []string{
+			toRepoPath(localManagedDirRelativePath),
+			toRepoPath(filepath.Join(localAgentsRelativePath, "*.agent.md")),
 		}
+		return excludePath, lines, nil
 	case localInstallModeTeam:
-		path := filepath.Join(installRoot, ".gitignore")
-		added, err := appendMissingIgnoreLines(path, []string{localManagedDirRelativePath})
-		if err != nil {
-			return nil, err
-		}
-		if len(added) > 0 {
-			edits = append(edits, ignoreEdit{File: path, AddedLines: added})
-		}
+		gitIgnorePath := filepath.Join(repoRoot, ".gitignore")
+		lines := []string{toRepoPath(localManagedDirRelativePath)}
+		return gitIgnorePath, lines, nil
+	default:
+		return "", nil, nil
 	}
-	return edits, nil
+}
+
+func applyLocalIgnoreRules(installRoot, repoRoot string, mode localInstallMode) ([]ignoreEdit, error) {
+	path, lines, err := resolveLocalIgnoreTarget(installRoot, repoRoot, mode)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(path) == "" || len(lines) == 0 {
+		return nil, nil
+	}
+
+	added, err := appendMissingIgnoreLines(path, lines)
+	if err != nil {
+		return nil, err
+	}
+	if len(added) == 0 {
+		return nil, nil
+	}
+	return []ignoreEdit{{File: path, AddedLines: added}}, nil
 }
 
 func mergeIgnoreEdits(base []ignoreEdit, next []ignoreEdit) []ignoreEdit {
@@ -818,8 +885,16 @@ func removeIgnoreLines(path string, lines []string) error {
 	return nil
 }
 
-func detectExistingTeamLocalSetup(installRoot string) (bool, error) {
-	gitIgnoreHasManagedDir, err := ignoreFileHasLine(filepath.Join(installRoot, ".gitignore"), localManagedDirRelativePath)
+func detectExistingTeamLocalSetup(installRoot, repoRoot string) (bool, error) {
+	ignorePath, lines, err := resolveLocalIgnoreTarget(installRoot, repoRoot, localInstallModeTeam)
+	if err != nil {
+		return false, err
+	}
+	if ignorePath == "" || len(lines) == 0 {
+		return false, nil
+	}
+
+	gitIgnoreHasManagedDir, err := ignoreFileHasLine(ignorePath, lines[0])
 	if err != nil {
 		return false, err
 	}

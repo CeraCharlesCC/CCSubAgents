@@ -78,7 +78,12 @@ func TestInstallOrUpdateLocal_RollbackRestoresIgnoreFile_OnPostIgnoreFailure(t *
 
 func TestApplyLocalIgnoreRules_PersonalUsesGitInfoExclude(t *testing.T) {
 	installRoot := t.TempDir()
-	edits, err := applyLocalIgnoreRules(installRoot, localInstallModePersonal)
+	excludePath := filepath.Join(installRoot, ".git", "info", "exclude")
+	if err := os.MkdirAll(filepath.Dir(excludePath), stateDirPerm); err != nil {
+		t.Fatalf("create exclude dir: %v", err)
+	}
+
+	edits, err := applyLocalIgnoreRules(installRoot, installRoot, localInstallModePersonal)
 	if err != nil {
 		t.Fatalf("applyLocalIgnoreRules returned error: %v", err)
 	}
@@ -109,7 +114,7 @@ func TestApplyLocalIgnoreRules_PersonalUsesGitInfoExclude(t *testing.T) {
 
 func TestApplyLocalIgnoreRules_TeamUsesGitignore(t *testing.T) {
 	installRoot := t.TempDir()
-	edits, err := applyLocalIgnoreRules(installRoot, localInstallModeTeam)
+	edits, err := applyLocalIgnoreRules(installRoot, installRoot, localInstallModeTeam)
 	if err != nil {
 		t.Fatalf("applyLocalIgnoreRules returned error: %v", err)
 	}
@@ -134,6 +139,91 @@ func TestApplyLocalIgnoreRules_TeamUsesGitignore(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(installRoot, ".git", "info", "exclude")); err == nil {
 		t.Fatalf("did not expect .git/info/exclude to be created for team mode")
 	}
+}
+
+func TestApplyLocalIgnoreRules_PersonalUsesGitdirPointerExcludePath(t *testing.T) {
+	repoRoot := t.TempDir()
+	installRoot := filepath.Join(repoRoot, "nested", "workspace")
+	if err := os.MkdirAll(installRoot, stateDirPerm); err != nil {
+		t.Fatalf("create install root: %v", err)
+	}
+
+	worktreeGitDir := filepath.Join(repoRoot, ".worktrees", "nested")
+	if err := os.MkdirAll(filepath.Join(worktreeGitDir, "info"), stateDirPerm); err != nil {
+		t.Fatalf("create worktree gitdir info dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .worktrees/nested\n"), stateFilePerm); err != nil {
+		t.Fatalf("write .git pointer file: %v", err)
+	}
+
+	edits, err := applyLocalIgnoreRules(installRoot, repoRoot, localInstallModePersonal)
+	if err != nil {
+		t.Fatalf("applyLocalIgnoreRules returned error: %v", err)
+	}
+	if len(edits) != 1 {
+		t.Fatalf("expected exactly 1 ignore edit, got %d", len(edits))
+	}
+
+	wantPath := filepath.Join(worktreeGitDir, "info", "exclude")
+	if filepath.Clean(edits[0].File) != wantPath {
+		t.Fatalf("expected edit file %s, got %s", wantPath, edits[0].File)
+	}
+
+	b, err := os.ReadFile(wantPath)
+	if err != nil {
+		t.Fatalf("read exclude file: %v", err)
+	}
+	got := string(b)
+	for _, want := range []string{
+		"nested/workspace/.ccsubagents",
+		"nested/workspace/.github/agents/*.agent.md",
+	} {
+		if !strings.Contains(got, want+"\n") {
+			t.Fatalf("expected %q in exclude file, got %q", want, got)
+		}
+	}
+}
+
+func TestApplyLocalIgnoreRules_TeamUsesRepoRootGitignoreForSubdirInstall(t *testing.T) {
+	repoRoot := t.TempDir()
+	installRoot := filepath.Join(repoRoot, "nested", "workspace")
+	if err := os.MkdirAll(installRoot, stateDirPerm); err != nil {
+		t.Fatalf("create install root: %v", err)
+	}
+
+	edits, err := applyLocalIgnoreRules(installRoot, repoRoot, localInstallModeTeam)
+	if err != nil {
+		t.Fatalf("applyLocalIgnoreRules returned error: %v", err)
+	}
+	if len(edits) != 1 {
+		t.Fatalf("expected exactly 1 ignore edit, got %d", len(edits))
+	}
+
+	wantPath := filepath.Join(repoRoot, ".gitignore")
+	if filepath.Clean(edits[0].File) != wantPath {
+		t.Fatalf("expected edit file %s, got %s", wantPath, edits[0].File)
+	}
+	if !containsString(edits[0].AddedLines, "nested/workspace/.ccsubagents") {
+		t.Fatalf("expected nested managed-dir rule in edits: %#v", edits[0].AddedLines)
+	}
+
+	b, err := os.ReadFile(wantPath)
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
+	got := string(b)
+	if !strings.Contains(got, "nested/workspace/.ccsubagents\n") {
+		t.Fatalf("expected nested managed-dir rule in .gitignore, got %q", got)
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestReportGlobalPathWarning_WarnsWhenLocalBinMissing(t *testing.T) {
