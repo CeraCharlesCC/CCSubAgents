@@ -106,8 +106,12 @@ func normalizeGlobalOptionOrder(args []string) []string {
 		if isOption && isGlobalOptionName(name) {
 			globalOptions = append(globalOptions, arg)
 			if name == "scope" && !hasInlineValue && idx+1 < len(args) {
-				globalOptions = append(globalOptions, args[idx+1])
-				skipNext = true
+				// Shell quoting is resolved before os.Args is built, so quoted
+				// values (for example --scope="my scope") arrive as one token.
+				if _, _, nextIsOption := parseOptionName(args[idx+1]); !nextIsOption {
+					globalOptions = append(globalOptions, args[idx+1])
+					skipNext = true
+				}
 			}
 			continue
 		}

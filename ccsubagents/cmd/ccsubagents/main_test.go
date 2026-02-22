@@ -40,6 +40,11 @@ func TestParseCLIArgs(t *testing.T) {
 			want: cliArgs{commandRaw: "install", scopeRaw: "local"},
 		},
 		{
+			name: "scope value token with spaces",
+			args: []string{"install", "--scope", "my scope"},
+			want: cliArgs{commandRaw: "install", scopeRaw: "my scope"},
+		},
+		{
 			name: "help and skip attestations in mixed order",
 			args: []string{"install", "--skip-attestations-check", "--help"},
 			want: cliArgs{showUsage: true, skipAttestationsCheck: true},

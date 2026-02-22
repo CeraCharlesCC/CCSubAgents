@@ -403,19 +403,11 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 	if err != nil {
 		return err
 	}
-	hasPreviousGlobal := previousState != nil && previousState.hasGlobalInstall()
-	if !hasPreviousGlobal {
+	previousGlobal := previousState.globalInstallSnapshot()
+	if previousGlobal == nil {
 		m.reportAction("No existing tracked installation found")
 	} else {
 		m.reportAction("Found existing tracked installation")
-	}
-
-	var previousGlobal *trackedState
-	if hasPreviousGlobal {
-		previousGlobal = &trackedState{
-			Managed:   previousState.Managed,
-			JSONEdits: previousState.JSONEdits,
-		}
 	}
 
 	var configTargets []installConfigTarget

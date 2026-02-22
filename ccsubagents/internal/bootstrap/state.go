@@ -73,6 +73,31 @@ type mcpEdit struct {
 	Previous    json.RawMessage `json:"previous,omitempty"`
 }
 
+func cloneMCPEdit(edit mcpEdit) mcpEdit {
+	out := edit
+	if len(edit.Previous) > 0 {
+		out.Previous = slices.Clone(edit.Previous)
+	}
+	return out
+}
+
+func (ops trackedJSONOps) clone() trackedJSONOps {
+	out := trackedJSONOps{
+		Settings: ops.Settings,
+		MCP:      cloneMCPEdit(ops.MCP),
+	}
+	if len(ops.SettingsExtra) > 0 {
+		out.SettingsExtra = slices.Clone(ops.SettingsExtra)
+	}
+	if len(ops.MCPExtra) > 0 {
+		out.MCPExtra = make([]mcpEdit, 0, len(ops.MCPExtra))
+		for _, edit := range ops.MCPExtra {
+			out.MCPExtra = append(out.MCPExtra, cloneMCPEdit(edit))
+		}
+	}
+	return out
+}
+
 func trackedJSONOpsFromEdits(settings []settingsEdit, mcp []mcpEdit) trackedJSONOps {
 	out := trackedJSONOps{}
 	if len(settings) > 0 {
@@ -146,6 +171,24 @@ func (state *trackedState) hasGlobalInstall() bool {
 		return true
 	}
 	return false
+}
+
+func (state *trackedState) globalInstallSnapshot() *trackedState {
+	if state == nil || !state.hasGlobalInstall() {
+		return nil
+	}
+	return &trackedState{
+		Version:     state.Version,
+		Repo:        state.Repo,
+		ReleaseID:   state.ReleaseID,
+		ReleaseTag:  state.ReleaseTag,
+		InstalledAt: state.InstalledAt,
+		Managed: managedState{
+			Files: slices.Clone(state.Managed.Files),
+			Dirs:  slices.Clone(state.Managed.Dirs),
+		},
+		JSONEdits: state.JSONEdits.clone(),
+	}
 }
 
 func (state *trackedState) localInstallForRoot(root string) (*localInstall, int) {

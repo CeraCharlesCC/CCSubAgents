@@ -54,9 +54,11 @@ chmod +x ./ccsubagents
   - `.vscode-server-insiders`
   - `.vscode-server`
   - custom path(s)
-- Custom path target(s) resolve as:
+- For custom path target(s), `<path>` means each path you enter at the prompt (for example, `~/my-project`).
+- Each custom path resolves as:
   - `<path>/data/Machine/settings.json`
   - `<path>/data/User/mcp.json`
+  - example: `~/my-project/data/Machine/settings.json` and `~/my-project/data/User/mcp.json`
 
 Examples:
 
