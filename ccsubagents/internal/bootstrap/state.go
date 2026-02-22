@@ -298,10 +298,6 @@ func (m *Manager) saveTrackedState(stateDir string, state trackedState) error {
 		_ = tmp.Close()
 		return fmt.Errorf("write tracked temp file: %w", err)
 	}
-	if err := tmp.Chmod(stateFilePerm); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("chmod tracked temp file: %w", err)
-	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close tracked temp file: %w", err)
 	}
