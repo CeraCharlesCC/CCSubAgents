@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -138,6 +139,44 @@ func makeCustomConfigTarget(base string) installConfigTarget {
 	}
 }
 
+func trimConfigFileSuffix(path string, suffixParts ...string) (string, bool) {
+	cleanPath := filepath.Clean(strings.TrimSpace(path))
+	suffix := filepath.Clean(filepath.Join(suffixParts...))
+	if !strings.HasSuffix(cleanPath, suffix) {
+		return "", false
+	}
+
+	base := strings.TrimSuffix(cleanPath, suffix)
+	base = strings.TrimRight(base, string(os.PathSeparator))
+	if strings.TrimSpace(base) == "" {
+		base = string(os.PathSeparator)
+	}
+	if volume := filepath.VolumeName(base); volume != "" && base == volume {
+		base += string(os.PathSeparator)
+	}
+
+	return filepath.Clean(base), true
+}
+
+func describeGlobalInstallTargetPath(home string, target installConfigTarget) string {
+	settingsPath := filepath.Clean(strings.TrimSpace(target.settingsPath))
+	mcpPath := filepath.Clean(strings.TrimSpace(target.mcpPath))
+
+	settingsRoot, settingsHasRoot := trimConfigFileSuffix(settingsPath, "data", "Machine", "settings.json")
+	mcpRoot, mcpHasRoot := trimConfigFileSuffix(mcpPath, "data", "User", "mcp.json")
+	if settingsHasRoot && mcpHasRoot && filepath.Clean(settingsRoot) == filepath.Clean(mcpRoot) {
+		return toHomeTildePath(home, settingsRoot)
+	}
+
+	settingsDisplay := toHomeTildePath(home, settingsPath)
+	mcpDisplay := toHomeTildePath(home, mcpPath)
+	if settingsDisplay == mcpDisplay {
+		return settingsDisplay
+	}
+
+	return fmt.Sprintf("settings: %s; mcp: %s", settingsDisplay, mcpDisplay)
+}
+
 func (m *Manager) promptGlobalInstallTargets(ctx context.Context, home string, paths installPaths) ([]installConfigTarget, error) {
 	input := m.promptIn
 	if input == nil {
@@ -154,19 +193,24 @@ func (m *Manager) promptGlobalInstallTargets(ctx context.Context, home string, p
 			return nil, err
 		}
 
-		if _, err := io.WriteString(output, "Select global install target(s):\n"); err != nil {
-			return nil, fmt.Errorf("write install target prompt: %w", err)
-		}
-		if _, err := io.WriteString(output, "  1. .vscode-server-insiders\n"); err != nil {
-			return nil, fmt.Errorf("write install target prompt: %w", err)
-		}
-		if _, err := io.WriteString(output, "  2. .vscode-server\n"); err != nil {
-			return nil, fmt.Errorf("write install target prompt: %w", err)
-		}
-		if _, err := io.WriteString(output, "  3. custom path(s)\n"); err != nil {
-			return nil, fmt.Errorf("write install target prompt: %w", err)
-		}
-		if _, err := io.WriteString(output, "Enter choices (comma-separated, e.g. 1,2): "); err != nil {
+		insidersDisplay := describeGlobalInstallTargetPath(home, installConfigTarget{
+			settingsPath: paths.insiders.settingsPath,
+			mcpPath:      paths.insiders.mcpPath,
+		})
+		stableDisplay := describeGlobalInstallTargetPath(home, installConfigTarget{
+			settingsPath: paths.stable.settingsPath,
+			mcpPath:      paths.stable.mcpPath,
+		})
+
+		var prompt bytes.Buffer
+		prompt.WriteString("Where should ccsubagents be installed?\n\n")
+		fmt.Fprintf(&prompt, "[1] VS Code Server — Insiders   (%s)\n", insidersDisplay)
+		fmt.Fprintf(&prompt, "[2] VS Code Server — Stable     (%s)\n", stableDisplay)
+		prompt.WriteString("[3] Custom path(s)\n")
+		prompt.WriteString("\n")
+		prompt.WriteString("Choice (comma-separated, e.g. 1,2): ")
+
+		if _, err := io.Copy(output, &prompt); err != nil {
 			return nil, fmt.Errorf("write install target prompt: %w", err)
 		}
 
@@ -289,12 +333,45 @@ func (m *Manager) Run(ctx context.Context, command Command, scope Scope) error {
 	}
 }
 
-func (m *Manager) reportPhase(commandName, phase string) {
-	m.statusf("==> %s: %s\n", commandName, phase)
+func (m *Manager) reportVersionHeader(tag string) {
+	m.statusf("ccsubagents %s\n", tag)
 }
 
-func (m *Manager) reportAction(format string, args ...any) {
-	m.statusf("  - %s\n", fmt.Sprintf(format, args...))
+func (m *Manager) reportStepOK(summary, trailing string) {
+	if strings.TrimSpace(trailing) == "" {
+		m.statusf("✓ %s\n", summary)
+		return
+	}
+	m.statusf("✓ %s (%s)\n", summary, trailing)
+}
+
+func (m *Manager) reportStepFail(summary string) {
+	m.statusf("✗ %s\n", summary)
+}
+
+func (m *Manager) reportDetail(format string, args ...any) {
+	if !m.verbose {
+		return
+	}
+	m.statusf("  %s\n", fmt.Sprintf(format, args...))
+}
+
+func (m *Manager) reportMessageLine(format string, args ...any) {
+	m.statusf("  %s\n", fmt.Sprintf(format, args...))
+}
+
+func (m *Manager) reportWarning(headline string, details ...string) {
+	m.statusf("\n⚠ %s\n", headline)
+	for _, detail := range details {
+		if strings.TrimSpace(detail) == "" {
+			continue
+		}
+		m.statusf("  %s\n", detail)
+	}
+}
+
+func (m *Manager) reportCompletion(command string) {
+	m.statusf("%s complete.\n", command)
 }
 
 func commandNameForInstallOrUpdate(isUpdate bool) string {
@@ -302,6 +379,26 @@ func commandNameForInstallOrUpdate(isUpdate bool) string {
 		return "Update"
 	}
 	return "Install"
+}
+
+func commandForAttestationSkip(isUpdate bool, scope Scope) string {
+	command := installCommand
+	if isUpdate {
+		command = updateCommand
+	}
+	args := []string{"ccsubagents", command}
+	if scope == ScopeLocal {
+		args = append(args, "--scope=local")
+	}
+	args = append(args, "--skip-attestations-check")
+	return strings.Join(args, " ")
+}
+
+func formatAttestationVerificationFailure(attestationErr *attestationVerificationError, skipCommand string) error {
+	if attestationErr == nil {
+		return fmt.Errorf("Error: attestation verification failed\nTo skip verification: %s\n(not recommended for production use)", skipCommand)
+	}
+	return fmt.Errorf("Error: %w\nTo skip verification: %s\n(not recommended for production use)", attestationErr, skipCommand)
 }
 
 func resolveInstallTargets(paths installPaths, destination installDestination) ([]installConfigTarget, error) {
@@ -384,9 +481,6 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 		return err
 	}
 
-	commandName := commandNameForInstallOrUpdate(isUpdate)
-	m.reportPhase(commandName, "resolving environment")
-
 	home, err := m.homeDir()
 	if err != nil {
 		return fmt.Errorf("determine home directory: %w", err)
@@ -398,17 +492,11 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 		return fmt.Errorf("create state directory %s: %w", stateDir, err)
 	}
 
-	m.reportAction("Loading tracked installation state")
 	previousState, err := m.loadTrackedStateForInstall(stateDir)
 	if err != nil {
 		return err
 	}
 	previousGlobal := previousState.globalInstallSnapshot()
-	if previousGlobal == nil {
-		m.reportAction("No existing tracked installation found")
-	} else {
-		m.reportAction("Found existing tracked installation")
-	}
 
 	var configTargets []installConfigTarget
 	if isUpdate {
@@ -432,17 +520,27 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 		return err
 	}
 
-	m.reportPhase(commandName, "fetching latest release metadata")
 	release, err := m.fetchLatestRelease(ctx)
 	if err != nil {
 		return err
 	}
+	if isUpdate && previousGlobal != nil && release.TagName == previousGlobal.ReleaseTag {
+		m.statusf("ccsubagents: already at latest version (%s). Nothing to do.\n", release.TagName)
+		return nil
+	}
+
+	m.reportVersionHeader(release.TagName)
+	if previousGlobal == nil {
+		m.reportStepOK("Checked for existing installation", "none found")
+	} else {
+		m.reportStepOK("Checked for existing installation", fmt.Sprintf("%s found", previousGlobal.ReleaseTag))
+	}
+	m.reportDetail("tracked state path: %s", filepath.Join(stateDir, trackedFileName))
 
 	assets, err := mapRequiredAssets(release.Assets, installAssetNames)
 	if err != nil {
 		return err
 	}
-	m.reportAction("Using release %s", release.TagName)
 
 	tmpDir, err := os.MkdirTemp(stateDir, "download-*")
 	if err != nil {
@@ -450,31 +548,39 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 	}
 	defer os.RemoveAll(tmpDir)
 
-	m.reportPhase(commandName, "downloading required assets")
 	downloaded := map[string]string{}
 	for _, name := range installAssetNames {
 		asset := assets[name]
 		dest := filepath.Join(tmpDir, name)
-		m.reportAction("Downloading %s", name)
 		if err := m.downloadFile(ctx, asset.BrowserDownloadURL, dest); err != nil {
 			return fmt.Errorf("download release asset %q: %w", name, err)
 		}
 		downloaded[name] = dest
+		if info, statErr := os.Stat(dest); statErr == nil {
+			m.reportDetail("downloaded %s (%d bytes)", name, info.Size())
+		}
 	}
+	m.reportStepOK("Downloaded release assets", release.TagName)
 
-	m.reportPhase(commandName, "verifying attestations")
 	if m.skipAttestationsCheck {
-		m.reportAction("Skipping attestation verification (--skip-attestations-check)")
+		m.reportStepOK("Verified attestations", "skipped (--skip-attestations-check)")
+		m.reportDetail("attestation verification skipped by flag")
 	} else {
 		if err := m.verifyDownloadedAssets(ctx, downloaded); err != nil {
+			var attestationErr *attestationVerificationError
+			if errors.As(err, &attestationErr) {
+				m.reportStepFail("Verified attestations")
+				m.reportMessageLine("Failed asset: %s", attestationErr.Asset)
+				return formatAttestationVerificationFailure(attestationErr, commandForAttestationSkip(isUpdate, ScopeGlobal))
+			}
 			return err
 		}
+		m.reportStepOK("Verified attestations", "")
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 
-	m.reportPhase(commandName, "extracting bundles")
 	bundleDir := filepath.Join(tmpDir, "local-artifact")
 	if err := os.MkdirAll(bundleDir, stateDirPerm); err != nil {
 		return fmt.Errorf("create local-artifact bundle extraction dir: %w", err)
@@ -484,7 +590,7 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 	if err != nil {
 		return fmt.Errorf("extract %s: %w", assetLocalArtifactZip, err)
 	}
-	m.reportAction("Extracted %s", assetLocalArtifactZip)
+	m.reportDetail("extracted bundle %s", assetLocalArtifactZip)
 
 	rollback := newInstallRollback()
 	defer func() {
@@ -527,7 +633,6 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 	if installer == nil {
 		installer = installBinary
 	}
-	m.reportPhase(commandName, "installing binaries and updating configuration")
 
 	for _, binaryName := range []string{assetArtifactMCP, assetArtifactWeb} {
 		if err := ctx.Err(); err != nil {
@@ -535,7 +640,6 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 		}
 		src := bundleBinaries[binaryName]
 		dst := filepath.Join(paths.binaryDir, binaryName)
-		m.reportAction("Installing %s", binaryName)
 		if err := rollback.captureFile(dst); err != nil {
 			return err
 		}
@@ -545,7 +649,9 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 			}
 			return fmt.Errorf("install %s into %s: %w", binaryName, paths.binaryDir, err)
 		}
+		m.reportDetail("installed binary: %s", binaryName)
 	}
+	m.reportStepOK("Installed binaries", fmt.Sprintf("→ %s", toHomeTildePath(home, paths.binaryDir)))
 
 	if err := ctx.Err(); err != nil {
 		return err
@@ -555,7 +661,8 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 	if err != nil {
 		return fmt.Errorf("extract %s into %s: %w", assetAgentsZip, agentsDir, err)
 	}
-	m.reportAction("Extracted %s", assetAgentsZip)
+	m.reportStepOK("Installed agent definitions", fmt.Sprintf("→ %s", toHomeTildePath(home, agentsDir)))
+	m.reportDetail("extracted %d agent definitions", len(extractedFiles))
 
 	for _, target := range configTargets {
 		if created, err := ensureParentDir(target.settingsPath); err != nil {
@@ -589,7 +696,6 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	m.reportAction("Updating settings and MCP configuration")
 
 	settingsEdits := make([]settingsEdit, 0, len(configTargets))
 	mcpEdits := make([]mcpEdit, 0, len(configTargets))
@@ -605,7 +711,11 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 			return err
 		}
 		mcpEdits = append(mcpEdits, mcpEdit)
+
+		m.reportDetail("updated settings: %s", target.settingsPath)
+		m.reportDetail("updated mcp config: %s", target.mcpPath)
 	}
+	m.reportStepOK("Updated VS Code settings and MCP config", "")
 
 	state := trackedState{
 		Version:     trackedSchemaVersion,
@@ -624,30 +734,24 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 	}
 
 	if isUpdate {
-		m.reportPhase(commandName, "cleaning up stale managed agent files")
 		if previousGlobal == nil {
-			m.reportAction("No previously tracked files; skipping cleanup")
+			m.reportDetail("no previously tracked files; skipped stale cleanup")
 		} else {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			m.reportAction("Removing stale managed agent files")
 			if err := removeStaleAgentFilesWithHook(previousGlobal.Managed.Files, extractedFiles, agentsDir, rollback.captureFile); err != nil {
 				return err
 			}
+			m.reportStepOK("Removed stale managed agent files", "")
 		}
 	}
 
-	m.reportPhase(commandName, "finalizing installation state")
-	m.reportAction("Saving tracked state")
 	if err := m.saveTrackedState(stateDir, state); err != nil {
 		return err
 	}
-	if isUpdate {
-		m.reportAction("Update complete: %s", release.TagName)
-	} else {
-		m.reportAction("Install complete: %s", release.TagName)
-	}
+	m.reportDetail("saved tracked state: %s", filepath.Join(stateDir, trackedFileName))
+	m.reportCompletion(commandNameForInstallOrUpdate(isUpdate))
 	m.reportGlobalPathWarning(home)
 
 	return nil
@@ -657,7 +761,6 @@ func (m *Manager) uninstall(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	m.reportPhase("Uninstall", "resolving environment")
 
 	home, err := m.homeDir()
 	if err != nil {
@@ -666,16 +769,20 @@ func (m *Manager) uninstall(ctx context.Context) error {
 	paths := resolveInstallPaths(home)
 
 	stateDir := filepath.Join(home, ".local", "share", "ccsubagents")
-	m.reportAction("Loading tracked installation state")
 	state, err := m.loadTrackedState(stateDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			m.reportAction("No tracked install found (nothing to uninstall)")
+			m.reportStepOK("Checked tracked installation state", "none found")
 			return nil
 		}
 		return err
 	}
-	m.reportAction("Found tracked installation")
+
+	if strings.TrimSpace(state.ReleaseTag) == "" {
+		m.reportStepOK("Checked tracked installation state", "found")
+	} else {
+		m.reportStepOK("Checked tracked installation state", fmt.Sprintf("%s found", state.ReleaseTag))
+	}
 
 	agentsDir := filepath.Join(home, agentsRelativePath)
 	allowedConfigParentDirs := []string{
@@ -702,8 +809,6 @@ func (m *Manager) uninstall(ctx context.Context) error {
 		filepath.Join(paths.binaryDir, assetArtifactWeb),
 	}
 
-	m.reportPhase("Uninstall", "removing managed files")
-	m.reportAction("Removing %d tracked files", len(state.Managed.Files))
 	for _, path := range state.Managed.Files {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -719,12 +824,11 @@ func (m *Manager) uninstall(ctx context.Context) error {
 			return fmt.Errorf("remove %s: %w", clean, err)
 		}
 	}
+	m.reportStepOK("Removed managed files", "")
 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	m.reportPhase("Uninstall", "reverting configuration edits")
-	m.reportAction("Reverting settings and MCP configuration")
 	for _, edit := range state.JSONEdits.allSettingsEdits() {
 		if strings.TrimSpace(edit.File) == "" {
 			continue
@@ -741,13 +845,12 @@ func (m *Manager) uninstall(ctx context.Context) error {
 			return err
 		}
 	}
+	m.reportStepOK("Reverted settings and MCP configuration", "")
 
 	dirs := append([]string{}, state.Managed.Dirs...)
 	sort.SliceStable(dirs, func(i, j int) bool {
 		return len(dirs[i]) > len(dirs[j])
 	})
-	m.reportPhase("Uninstall", "cleaning managed directories")
-	m.reportAction("Removing %d tracked directories", len(dirs))
 	for _, dir := range dirs {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -763,25 +866,25 @@ func (m *Manager) uninstall(ctx context.Context) error {
 			return fmt.Errorf("remove tracked directory %s: %w", clean, err)
 		}
 	}
+	m.reportStepOK("Removed managed directories", "")
 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	m.reportPhase("Uninstall", "finalizing")
 	state.clearGlobalInstall()
 	state.Version = trackedSchemaVersion
 	if state.empty() {
-		m.reportAction("Removing tracked state file")
 		if err := os.Remove(filepath.Join(stateDir, trackedFileName)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("remove tracked state: %w", err)
 		}
+		m.reportStepOK("Updated tracked installation state", "removed")
 	} else {
-		m.reportAction("Saving tracked state")
 		if err := m.saveTrackedState(stateDir, *state); err != nil {
 			return err
 		}
+		m.reportStepOK("Updated tracked installation state", "saved")
 	}
-	m.reportAction("Uninstall complete")
+	m.reportCompletion("Uninstall")
 
 	return nil
 }

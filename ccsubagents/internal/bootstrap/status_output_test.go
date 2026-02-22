@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -56,6 +57,12 @@ func statusTestManager(home string, client *http.Client, statusOut io.Writer) *M
 		lookPath:   func(string) (string, error) { return "/usr/bin/gh", nil },
 		runCommand: func(context.Context, string, ...string) ([]byte, error) { return []byte("ok"), nil },
 		statusOut:  statusOut,
+		getenv: func(key string) string {
+			if key != "PATH" {
+				return ""
+			}
+			return strings.Join([]string{"/usr/bin", filepath.Join(home, binaryInstallDirDefaultRel), "/bin"}, string(os.PathListSeparator))
+		},
 	}
 }
 
@@ -76,28 +83,21 @@ func TestInstallOrUpdate_ReportsInstallProgress(t *testing.T) {
 
 	status := out.String()
 	assertStatusContainsInOrder(t, status, []string{
-		"==> Install: resolving environment",
-		"  - Loading tracked installation state",
-		"  - No existing tracked installation found",
-		"==> Install: fetching latest release metadata",
-		"  - Using release v1.2.3",
-		"==> Install: downloading required assets",
-		"  - Downloading agents.zip",
-		"  - Downloading local-artifact.zip",
-		"==> Install: verifying attestations",
-		"  - Verifying attestation for agents.zip",
-		"  - Verifying attestation for local-artifact.zip",
-		"==> Install: extracting bundles",
-		"  - Extracted local-artifact.zip",
-		"==> Install: installing binaries and updating configuration",
-		"  - Installing local-artifact-mcp",
-		"  - Installing local-artifact-web",
-		"  - Extracted agents.zip",
-		"  - Updating settings and MCP configuration",
-		"==> Install: finalizing installation state",
-		"  - Saving tracked state",
-		"  - Install complete: v1.2.3",
+		"ccsubagents v1.2.3",
+		"✓ Checked for existing installation (none found)",
+		"✓ Downloaded release assets (v1.2.3)",
+		"✓ Verified attestations",
+		"✓ Installed binaries (→ ~/.local/bin)",
+		"✓ Installed agent definitions (→ ~/.local/share/ccsubagents/agents)",
+		"✓ Updated VS Code settings and MCP config",
+		"Install complete.",
 	})
+
+	for _, disallowed := range []string{"==>", "  - ", "local-artifact-mcp", "local-artifact-web", "agents.zip", "local-artifact.zip"} {
+		if strings.Contains(status, disallowed) {
+			t.Fatalf("expected compact default status without %q, got:\n%s", disallowed, status)
+		}
+	}
 }
 
 func TestInstallOrUpdate_ReportsUpdateCleanupProgress(t *testing.T) {
@@ -144,29 +144,15 @@ func TestInstallOrUpdate_ReportsUpdateCleanupProgress(t *testing.T) {
 
 	status := out.String()
 	assertStatusContainsInOrder(t, status, []string{
-		"==> Update: resolving environment",
-		"  - Loading tracked installation state",
-		"  - Found existing tracked installation",
-		"==> Update: fetching latest release metadata",
-		"  - Using release v2.0.0",
-		"==> Update: downloading required assets",
-		"  - Downloading agents.zip",
-		"  - Downloading local-artifact.zip",
-		"==> Update: verifying attestations",
-		"  - Verifying attestation for agents.zip",
-		"  - Verifying attestation for local-artifact.zip",
-		"==> Update: extracting bundles",
-		"  - Extracted local-artifact.zip",
-		"==> Update: installing binaries and updating configuration",
-		"  - Installing local-artifact-mcp",
-		"  - Installing local-artifact-web",
-		"  - Extracted agents.zip",
-		"  - Updating settings and MCP configuration",
-		"==> Update: cleaning up stale managed agent files",
-		"  - Removing stale managed agent files",
-		"==> Update: finalizing installation state",
-		"  - Saving tracked state",
-		"  - Update complete: v2.0.0",
+		"ccsubagents v2.0.0",
+		"✓ Checked for existing installation (v1.9.9 found)",
+		"✓ Downloaded release assets (v2.0.0)",
+		"✓ Verified attestations",
+		"✓ Installed binaries (→ ~/.local/bin)",
+		"✓ Installed agent definitions (→ ~/.local/share/ccsubagents/agents)",
+		"✓ Updated VS Code settings and MCP config",
+		"✓ Removed stale managed agent files",
+		"Update complete.",
 	})
 }
 
@@ -188,12 +174,164 @@ func TestInstallOrUpdate_ReportsSkipAttestationWhenFlagSet(t *testing.T) {
 
 	status := out.String()
 	assertStatusContainsInOrder(t, status, []string{
-		"==> Install: verifying attestations",
-		"  - Skipping attestation verification (--skip-attestations-check)",
+		"✓ Verified attestations (skipped (--skip-attestations-check))",
 	})
-	if strings.Contains(status, "Verifying attestation for") {
-		t.Fatalf("expected no attestation verification output when skip flag is enabled, got:\n%s", status)
+	if strings.Contains(status, "verified attestation:") {
+		t.Fatalf("expected no per-asset attestation details in compact mode, got:\n%s", status)
 	}
+}
+
+func TestInstallOrUpdate_ReportsAlreadyLatestNoopForUpdate(t *testing.T) {
+	home := t.TempDir()
+	requestCount := 0
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requestCount++
+		if req.URL.String() != releaseLatestURL {
+			return nil, fmt.Errorf("unexpected request URL: %s", req.URL.String())
+		}
+		body := `{"id":101,"tag_name":"v2.0.0","assets":[]}`
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+	})}
+
+	var out bytes.Buffer
+	m := statusTestManager(home, client, &out)
+
+	stateDir := filepath.Join(home, ".local", "share", "ccsubagents")
+	if err := os.MkdirAll(stateDir, stateDirPerm); err != nil {
+		t.Fatalf("create state dir: %v", err)
+	}
+	if err := m.saveTrackedState(stateDir, trackedState{
+		Version:     trackedSchemaVersion,
+		Repo:        releaseRepo,
+		ReleaseID:   100,
+		ReleaseTag:  "v2.0.0",
+		InstalledAt: "2026-01-01T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("seed tracked state: %v", err)
+	}
+
+	if err := m.installOrUpdate(context.Background(), true); err != nil {
+		t.Fatalf("update no-op should succeed: %v", err)
+	}
+	if requestCount != 1 {
+		t.Fatalf("expected only release metadata request on no-op update, got %d", requestCount)
+	}
+
+	want := "ccsubagents: already at latest version (v2.0.0). Nothing to do.\n"
+	if out.String() != want {
+		t.Fatalf("expected exact no-op update message %q, got %q", want, out.String())
+	}
+}
+
+func TestInstallOrUpdate_VerboseDetailGating(t *testing.T) {
+	runInstall := func(t *testing.T, verbose bool) string {
+		t.Helper()
+		home := t.TempDir()
+		agentsArchive := zipBytes(t, map[string]string{"agents/example.agent.md": "content"})
+		bundleArchive := zipBytes(t, map[string]string{
+			"local-artifact-mcp": "mcp-binary",
+			"local-artifact-web": "web-binary",
+		})
+
+		var out bytes.Buffer
+		m := statusTestManager(home, successReleaseHTTPClient(t, "v1.2.3", agentsArchive, bundleArchive), &out)
+		m.verbose = verbose
+
+		if err := m.installOrUpdate(context.Background(), false); err != nil {
+			t.Fatalf("install should succeed: %v", err)
+		}
+		return out.String()
+	}
+
+	compact := runInstall(t, false)
+	verbose := runInstall(t, true)
+
+	for _, detail := range []string{"downloaded agents.zip", "verified attestation:", "installed binary:", "updated settings:", "updated mcp config:"} {
+		if strings.Contains(compact, detail) {
+			t.Fatalf("expected compact output to omit detail %q, got:\n%s", detail, compact)
+		}
+		if !strings.Contains(verbose, detail) {
+			t.Fatalf("expected verbose output to include detail %q, got:\n%s", detail, verbose)
+		}
+	}
+}
+
+func TestInstallOrUpdate_AttestationFailureReportsActionableGuidance(t *testing.T) {
+	home := t.TempDir()
+	agentsArchive := zipBytes(t, map[string]string{"agents/example.agent.md": "content"})
+	bundleArchive := zipBytes(t, map[string]string{
+		"local-artifact-mcp": "mcp-binary",
+		"local-artifact-web": "web-binary",
+	})
+
+	var out bytes.Buffer
+	m := statusTestManager(home, successReleaseHTTPClient(t, "v1.2.3", agentsArchive, bundleArchive), &out)
+	m.runCommand = func(context.Context, string, ...string) ([]byte, error) {
+		return nil, errors.New("verification failed")
+	}
+
+	err := m.installOrUpdate(context.Background(), false)
+	if err == nil {
+		t.Fatalf("expected attestation verification error")
+	}
+	for _, want := range []string{
+		"Error: attestation verification failed for agents.zip",
+		"To skip verification: ccsubagents install --skip-attestations-check",
+		"(not recommended for production use)",
+		"verification failed",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error to include %q, got %v", want, err)
+		}
+	}
+
+	status := out.String()
+	assertStatusContainsInOrder(t, status, []string{
+		"ccsubagents v1.2.3",
+		"✓ Checked for existing installation (none found)",
+		"✓ Downloaded release assets (v1.2.3)",
+		"✗ Verified attestations",
+		"Failed asset: agents.zip",
+	})
+}
+
+func TestInstallOrUpdate_AttestationFailureUpdateReportsActionableGuidance(t *testing.T) {
+	home := t.TempDir()
+	agentsArchive := zipBytes(t, map[string]string{"agents/example.agent.md": "content"})
+	bundleArchive := zipBytes(t, map[string]string{
+		"local-artifact-mcp": "mcp-binary",
+		"local-artifact-web": "web-binary",
+	})
+
+	var out bytes.Buffer
+	m := statusTestManager(home, successReleaseHTTPClient(t, "v1.2.3", agentsArchive, bundleArchive), &out)
+	m.runCommand = func(context.Context, string, ...string) ([]byte, error) {
+		return nil, errors.New("verification failed")
+	}
+
+	err := m.installOrUpdate(context.Background(), true)
+	if err == nil {
+		t.Fatalf("expected attestation verification error")
+	}
+	for _, want := range []string{
+		"Error: attestation verification failed for agents.zip",
+		"To skip verification: ccsubagents update --skip-attestations-check",
+		"(not recommended for production use)",
+		"verification failed",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error to include %q, got %v", want, err)
+		}
+	}
+
+	status := out.String()
+	assertStatusContainsInOrder(t, status, []string{
+		"ccsubagents v1.2.3",
+		"✓ Checked for existing installation (none found)",
+		"✓ Downloaded release assets (v1.2.3)",
+		"✗ Verified attestations",
+		"Failed asset: agents.zip",
+	})
 }
 
 func TestUninstall_ReportsNoopWhenNoTrackedState(t *testing.T) {
@@ -207,9 +345,7 @@ func TestUninstall_ReportsNoopWhenNoTrackedState(t *testing.T) {
 
 	status := out.String()
 	assertStatusContainsInOrder(t, status, []string{
-		"==> Uninstall: resolving environment",
-		"  - Loading tracked installation state",
-		"  - No tracked install found (nothing to uninstall)",
+		"✓ Checked tracked installation state (none found)",
 	})
 }
 
@@ -252,17 +388,55 @@ func TestUninstall_ReportsProgressOnTrackedState(t *testing.T) {
 
 	status := out.String()
 	assertStatusContainsInOrder(t, status, []string{
-		"==> Uninstall: resolving environment",
-		"  - Loading tracked installation state",
-		"  - Found tracked installation",
-		"==> Uninstall: removing managed files",
-		"  - Removing 1 tracked files",
-		"==> Uninstall: reverting configuration edits",
-		"  - Reverting settings and MCP configuration",
-		"==> Uninstall: cleaning managed directories",
-		"  - Removing 1 tracked directories",
-		"==> Uninstall: finalizing",
-		"  - Removing tracked state file",
-		"  - Uninstall complete",
+		"✓ Checked tracked installation state (v1.0.0 found)",
+		"✓ Removed managed files",
+		"✓ Reverted settings and MCP configuration",
+		"✓ Removed managed directories",
+		"✓ Updated tracked installation state (removed)",
+		"Uninstall complete.",
 	})
+}
+
+func TestReportGlobalPathWarning_ContainsHeadlineAndGuidanceLines(t *testing.T) {
+	home := t.TempDir()
+
+	var out bytes.Buffer
+	m := statusTestManager(home, &http.Client{}, &out)
+	m.getenv = func(key string) string {
+		if key != "PATH" {
+			return ""
+		}
+		return strings.Join([]string{"/usr/bin", "/bin"}, string(os.PathListSeparator))
+	}
+
+	m.reportGlobalPathWarning(home)
+	status := out.String()
+	for _, want := range []string{
+		"⚠ ~/.local/bin is not in PATH",
+		"Add it to your shell profile:",
+		"export PATH=\"$HOME/.local/bin:$PATH\"",
+	} {
+		if !strings.Contains(status, want) {
+			t.Fatalf("expected PATH warning output to contain %q, got %q", want, status)
+		}
+	}
+}
+
+func TestReportGlobalPathWarning_NoWarningWhenPathContainsLocalBin(t *testing.T) {
+	home := t.TempDir()
+	expected := filepath.Join(home, binaryInstallDirDefaultRel)
+
+	var out bytes.Buffer
+	m := statusTestManager(home, &http.Client{}, &out)
+	m.getenv = func(key string) string {
+		if key != "PATH" {
+			return ""
+		}
+		return strings.Join([]string{"/usr/bin", expected, "/bin"}, string(os.PathListSeparator))
+	}
+
+	m.reportGlobalPathWarning(home)
+	if got := out.String(); got != "" {
+		t.Fatalf("expected no PATH warning when local bin is present, got %q", got)
+	}
 }

@@ -26,6 +26,7 @@ type Manager struct {
 	promptIn              io.Reader
 	promptOut             io.Writer
 	skipAttestationsCheck bool
+	verbose               bool
 	globalInstallTargets  []installConfigTarget
 	installDestination    installDestination
 }
@@ -51,6 +52,10 @@ func (m *Manager) SetStatusWriter(writer io.Writer) {
 
 func (m *Manager) SetSkipAttestationsCheck(skip bool) {
 	m.skipAttestationsCheck = skip
+}
+
+func (m *Manager) SetVerbose(verbose bool) {
+	m.verbose = verbose
 }
 
 func (m *Manager) SetInstallPromptIO(input io.Reader, output io.Writer) {

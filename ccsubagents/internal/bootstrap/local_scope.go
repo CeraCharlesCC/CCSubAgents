@@ -120,7 +120,7 @@ func (m *Manager) updateLocal(ctx context.Context) error {
 	state, err := m.loadTrackedState(stateDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			m.reportAction("No tracked local install found for %s", location.installRoot)
+			m.reportStepOK("Checked tracked local installation", fmt.Sprintf("none found for %s", filepath.ToSlash(location.installRoot)))
 			return nil
 		}
 		return err
@@ -128,7 +128,7 @@ func (m *Manager) updateLocal(ctx context.Context) error {
 
 	existing, _ := state.localInstallForRoot(location.installRoot)
 	if existing == nil {
-		m.reportAction("No tracked local install found for %s", location.installRoot)
+		m.reportStepOK("Checked tracked local installation", fmt.Sprintf("none found for %s", filepath.ToSlash(location.installRoot)))
 		return nil
 	}
 	clone := *existing
@@ -163,12 +163,10 @@ func (m *Manager) uninstallLocal(ctx context.Context) error {
 		return err
 	}
 
-	m.reportPhase("Local Uninstall", "resolving environment")
-	m.reportAction("Loading tracked installation state")
 	state, err := m.loadTrackedState(stateDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			m.reportAction("No tracked install found (nothing to uninstall)")
+			m.reportStepOK("Checked tracked local installation", fmt.Sprintf("none found for %s", filepath.ToSlash(location.installRoot)))
 			return nil
 		}
 		return err
@@ -176,10 +174,16 @@ func (m *Manager) uninstallLocal(ctx context.Context) error {
 
 	record, _ := state.localInstallForRoot(location.installRoot)
 	if record == nil {
-		m.reportAction("No tracked local install found for %s", location.installRoot)
+		m.reportStepOK("Checked tracked local installation", fmt.Sprintf("none found for %s", filepath.ToSlash(location.installRoot)))
 		return nil
 	}
-	m.reportAction("Found tracked local installation")
+
+	if strings.TrimSpace(record.ReleaseTag) == "" {
+		m.reportStepOK("Checked tracked local installation", fmt.Sprintf("found for %s", filepath.ToSlash(location.installRoot)))
+	} else {
+		m.reportStepOK("Checked tracked local installation", fmt.Sprintf("%s found for %s", record.ReleaseTag, filepath.ToSlash(location.installRoot)))
+	}
+
 	if record.Mode == localInstallModeTeam {
 		if err := m.confirmTeamLocalUninstall(ctx, location.installRoot); err != nil {
 			return err
@@ -194,8 +198,6 @@ func (m *Manager) uninstallLocal(ctx context.Context) error {
 		filepath.Join(managedDir, assetArtifactWeb),
 	}
 
-	m.reportPhase("Local Uninstall", "removing managed files")
-	m.reportAction("Removing %d tracked files", len(record.Managed.Files))
 	for _, path := range record.Managed.Files {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -208,8 +210,8 @@ func (m *Manager) uninstallLocal(ctx context.Context) error {
 			return fmt.Errorf("remove %s: %w", clean, err)
 		}
 	}
+	m.reportStepOK("Removed managed local files", "")
 
-	m.reportPhase("Local Uninstall", "reverting configuration edits")
 	for _, edit := range record.JSONEdits.allSettingsEdits() {
 		if strings.TrimSpace(edit.File) == "" {
 			continue
@@ -229,14 +231,13 @@ func (m *Manager) uninstallLocal(ctx context.Context) error {
 	if err := revertIgnoreEdits(record.IgnoreEdits); err != nil {
 		return err
 	}
+	m.reportStepOK("Reverted local configuration edits", "")
 
 	allowedConfigParentDirs := []string{filepath.Dir(mcpPath), managedDir}
 	dirs := append([]string{}, record.Managed.Dirs...)
 	sort.SliceStable(dirs, func(i, j int) bool {
 		return len(dirs[i]) > len(dirs[j])
 	})
-	m.reportPhase("Local Uninstall", "cleaning managed directories")
-	m.reportAction("Removing %d tracked directories", len(dirs))
 	for _, dir := range dirs {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -252,22 +253,22 @@ func (m *Manager) uninstallLocal(ctx context.Context) error {
 			return fmt.Errorf("remove tracked directory %s: %w", clean, err)
 		}
 	}
+	m.reportStepOK("Removed managed local directories", "")
 
-	m.reportPhase("Local Uninstall", "finalizing")
 	state.removeLocalInstall(location.installRoot)
 	state.Version = trackedSchemaVersion
 	if state.empty() {
-		m.reportAction("Removing tracked state file")
 		if err := os.Remove(filepath.Join(stateDir, trackedFileName)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("remove tracked state: %w", err)
 		}
+		m.reportStepOK("Updated tracked installation state", "removed")
 	} else {
-		m.reportAction("Saving tracked state")
 		if err := m.saveTrackedState(stateDir, *state); err != nil {
 			return err
 		}
+		m.reportStepOK("Updated tracked installation state", "saved")
 	}
-	m.reportAction("Local uninstall complete")
+	m.reportCompletion("Local uninstall")
 	return nil
 }
 
@@ -276,20 +277,14 @@ func (m *Manager) installOrUpdateLocal(ctx context.Context, cfg localInstallConf
 		return err
 	}
 
-	commandName := "Local Install"
-	if cfg.isUpdate {
-		commandName = "Local Update"
-	}
-	m.reportPhase(commandName, "resolving environment")
-	m.reportAction("Install root: %s", cfg.location.installRoot)
-	if cfg.binaryOnly {
-		m.reportAction("Existing team setup detected; refreshing binaries only")
-	}
-
-	m.reportPhase(commandName, "fetching latest release metadata")
 	release, err := m.fetchLatestRelease(ctx)
 	if err != nil {
 		return err
+	}
+	m.reportVersionHeader(release.TagName)
+	m.reportStepOK("Checked local install root", filepath.ToSlash(cfg.location.installRoot))
+	if cfg.binaryOnly {
+		m.reportStepOK("Detected existing team setup", "refreshing binaries only")
 	}
 
 	requiredAssets := []string{assetLocalArtifactZip}
@@ -300,7 +295,6 @@ func (m *Manager) installOrUpdateLocal(ctx context.Context, cfg localInstallConf
 	if err != nil {
 		return err
 	}
-	m.reportAction("Using release %s", release.TagName)
 
 	tmpDir, err := os.MkdirTemp(cfg.stateDir, "download-local-*")
 	if err != nil {
@@ -308,28 +302,36 @@ func (m *Manager) installOrUpdateLocal(ctx context.Context, cfg localInstallConf
 	}
 	defer os.RemoveAll(tmpDir)
 
-	m.reportPhase(commandName, "downloading required assets")
 	downloaded := map[string]string{}
 	for _, name := range requiredAssets {
 		asset := assets[name]
 		dest := filepath.Join(tmpDir, name)
-		m.reportAction("Downloading %s", name)
 		if err := m.downloadFile(ctx, asset.BrowserDownloadURL, dest); err != nil {
 			return fmt.Errorf("download release asset %q: %w", name, err)
 		}
 		downloaded[name] = dest
-	}
-
-	m.reportPhase(commandName, "verifying attestations")
-	if m.skipAttestationsCheck {
-		m.reportAction("Skipping attestation verification (--skip-attestations-check)")
-	} else {
-		if err := m.verifyDownloadedAssets(ctx, downloaded); err != nil {
-			return err
+		if info, statErr := os.Stat(dest); statErr == nil {
+			m.reportDetail("downloaded %s (%d bytes)", name, info.Size())
 		}
 	}
+	m.reportStepOK("Downloaded release assets", release.TagName)
 
-	m.reportPhase(commandName, "extracting bundles")
+	if m.skipAttestationsCheck {
+		m.reportStepOK("Verified attestations", "skipped (--skip-attestations-check)")
+		m.reportDetail("attestation verification skipped by flag")
+	} else {
+		if err := m.verifyDownloadedAssets(ctx, downloaded); err != nil {
+			var attestationErr *attestationVerificationError
+			if errors.As(err, &attestationErr) {
+				m.reportStepFail("Verified attestations")
+				m.reportMessageLine("Failed asset: %s", attestationErr.Asset)
+				return formatAttestationVerificationFailure(attestationErr, commandForAttestationSkip(cfg.isUpdate, ScopeLocal))
+			}
+			return err
+		}
+		m.reportStepOK("Verified attestations", "")
+	}
+
 	bundleDir := filepath.Join(tmpDir, "local-artifact")
 	if err := os.MkdirAll(bundleDir, stateDirPerm); err != nil {
 		return fmt.Errorf("create local-artifact bundle extraction dir: %w", err)
@@ -339,7 +341,7 @@ func (m *Manager) installOrUpdateLocal(ctx context.Context, cfg localInstallConf
 	if err != nil {
 		return fmt.Errorf("extract %s: %w", assetLocalArtifactZip, err)
 	}
-	m.reportAction("Extracted %s", assetLocalArtifactZip)
+	m.reportDetail("extracted bundle %s", assetLocalArtifactZip)
 
 	rollback := newInstallRollback()
 	defer func() {
@@ -369,21 +371,21 @@ func (m *Manager) installOrUpdateLocal(ctx context.Context, cfg localInstallConf
 		installer = installBinary
 	}
 
-	m.reportPhase(commandName, "installing binaries")
 	for _, binaryName := range []string{assetArtifactMCP, assetArtifactWeb} {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		src := bundleBinaries[binaryName]
 		dst := filepath.Join(managedDir, binaryName)
-		m.reportAction("Installing %s", binaryName)
 		if err := rollback.captureFile(dst); err != nil {
 			return err
 		}
 		if err := installer(src, dst); err != nil {
 			return fmt.Errorf("install %s into %s: %w", binaryName, managedDir, err)
 		}
+		m.reportDetail("installed binary: %s", binaryName)
 	}
+	m.reportStepOK("Installed local binaries", fmt.Sprintf("→ %s", filepath.ToSlash(managedDir)))
 
 	extractedFiles := []string{}
 	extractedDirs := []string{}
@@ -403,12 +405,12 @@ func (m *Manager) installOrUpdateLocal(ctx context.Context, cfg localInstallConf
 			rollback.trackCreatedDir(agentsDir)
 		}
 
-		m.reportPhase(commandName, "extracting agents")
 		extractedFiles, extractedDirs, err = extractAgentsArchiveWithHook(downloaded[assetAgentsZip], agentsDir, rollback.captureFile)
 		if err != nil {
 			return fmt.Errorf("extract %s into %s: %w", assetAgentsZip, agentsDir, err)
 		}
-		m.reportAction("Extracted %s", assetAgentsZip)
+		m.reportStepOK("Installed local agent definitions", fmt.Sprintf("→ %s", filepath.ToSlash(agentsDir)))
+		m.reportDetail("extracted %d local agent definitions", len(extractedFiles))
 
 		mcpPath := filepath.Join(cfg.location.installRoot, localMCPRelativePath)
 		if created, err := ensureParentDir(mcpPath); err != nil {
@@ -425,20 +427,22 @@ func (m *Manager) installOrUpdateLocal(ctx context.Context, cfg localInstallConf
 		if cfg.previous != nil {
 			previousState = &trackedState{JSONEdits: cfg.previous.JSONEdits}
 		}
-		m.reportAction("Updating workspace MCP configuration")
 		mcpEdit, err := applyMCPEdit(mcpPath, localMCPCommand, previousState)
 		if err != nil {
 			return err
 		}
 		mcpEdits = append(mcpEdits, mcpEdit)
+		m.reportStepOK("Updated workspace MCP configuration", "")
+		m.reportDetail("updated workspace MCP config: %s", mcpPath)
 
 		if cfg.isUpdate && cfg.previous != nil {
-			m.reportPhase(commandName, "cleaning up stale managed agent files")
-			m.reportAction("Removing stale managed agent files")
 			if err := removeStaleAgentFilesWithHook(cfg.previous.Managed.Files, extractedFiles, agentsDir, rollback.captureFile); err != nil {
 				return err
 			}
+			m.reportStepOK("Removed stale managed local agent files", "")
 		}
+	} else {
+		m.reportDetail("skipped local agent definitions and workspace MCP update (binary-only mode)")
 	}
 
 	ignoreEdits := []ignoreEdit{}
@@ -446,7 +450,6 @@ func (m *Manager) installOrUpdateLocal(ctx context.Context, cfg localInstallConf
 		ignoreEdits = mergeIgnoreEdits(ignoreEdits, cfg.previous.IgnoreEdits)
 	}
 	if !cfg.isUpdate && cfg.location.inGitRepo {
-		m.reportAction("Updating repository ignore rules")
 		ignoreFile, _, err := resolveLocalIgnoreTarget(cfg.location.installRoot, cfg.location.repoRoot, cfg.mode)
 		if err != nil {
 			return err
@@ -463,6 +466,10 @@ func (m *Manager) installOrUpdateLocal(ctx context.Context, cfg localInstallConf
 		ignoreEdits = mergeIgnoreEdits(ignoreEdits, newEdits)
 		if cfg.previous != nil {
 			ignoreEdits = mergeIgnoreEdits(ignoreEdits, cfg.previous.IgnoreEdits)
+		}
+		m.reportStepOK("Updated repository ignore rules", "")
+		if strings.TrimSpace(ignoreFile) != "" {
+			m.reportDetail("updated ignore rules: %s", ignoreFile)
 		}
 	}
 
@@ -485,15 +492,15 @@ func (m *Manager) installOrUpdateLocal(ctx context.Context, cfg localInstallConf
 	cfg.state.Version = trackedSchemaVersion
 	cfg.state.setLocalInstall(record)
 
-	m.reportPhase(commandName, "finalizing installation state")
-	m.reportAction("Saving tracked state")
 	if err := m.saveTrackedState(cfg.stateDir, *cfg.state); err != nil {
 		return err
 	}
+	m.reportStepOK("Updated tracked installation state", "saved")
+	m.reportDetail("saved tracked state: %s", filepath.Join(cfg.stateDir, trackedFileName))
 	if cfg.isUpdate {
-		m.reportAction("Local update complete: %s", release.TagName)
+		m.reportCompletion("Local update")
 	} else {
-		m.reportAction("Local install complete: %s", release.TagName)
+		m.reportCompletion("Local install")
 	}
 	return nil
 }
@@ -1039,6 +1046,9 @@ func (m *Manager) reportGlobalPathWarning(home string) {
 			return
 		}
 	}
-	m.reportAction("Warning: %s is not in PATH", toHomeTildePath(home, expected))
-	m.reportAction("Add it to your shell profile, e.g.: export PATH=\"$HOME/.local/bin:$PATH\"")
+	m.reportWarning(
+		fmt.Sprintf("%s is not in PATH", toHomeTildePath(home, expected)),
+		"Add it to your shell profile:",
+		"export PATH=\"$HOME/.local/bin:$PATH\"",
+	)
 }

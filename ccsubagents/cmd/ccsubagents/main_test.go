@@ -25,9 +25,19 @@ func TestParseCLIArgs(t *testing.T) {
 			want: cliArgs{commandRaw: "update", skipAttestationsCheck: true},
 		},
 		{
+			name: "verbose flag before command",
+			args: []string{"--verbose", "install"},
+			want: cliArgs{commandRaw: "install", verbose: true},
+		},
+		{
 			name: "skip attestations flag after command",
 			args: []string{"update", "--skip-attestations-check"},
 			want: cliArgs{commandRaw: "update", skipAttestationsCheck: true},
+		},
+		{
+			name: "verbose flag after command",
+			args: []string{"update", "--verbose"},
+			want: cliArgs{commandRaw: "update", verbose: true},
 		},
 		{
 			name: "scope inline before command",
@@ -112,6 +122,9 @@ func TestParseCLIArgs(t *testing.T) {
 			if got.skipAttestationsCheck != tc.want.skipAttestationsCheck {
 				t.Fatalf("expected skipAttestationsCheck=%v, got %v", tc.want.skipAttestationsCheck, got.skipAttestationsCheck)
 			}
+			if got.verbose != tc.want.verbose {
+				t.Fatalf("expected verbose=%v, got %v", tc.want.verbose, got.verbose)
+			}
 			if got.showUsage != tc.want.showUsage {
 				t.Fatalf("expected showUsage=%v, got %v", tc.want.showUsage, got.showUsage)
 			}
@@ -128,20 +141,36 @@ func TestRun_UsageAndCommandErrors(t *testing.T) {
 			t.Fatalf("expected exit code 2, got %d", exit)
 		}
 		out := stderr.String()
-		if !strings.Contains(out, "Usage:") {
+		if !strings.Contains(out, "Usage: ccsubagents <command> [options]") {
 			t.Fatalf("expected usage text on stderr, got %q", out)
 		}
-		if !strings.Contains(out, "--skip-attestations-check") {
-			t.Fatalf("expected skip option in usage, got %q", out)
+		if !strings.Contains(out, "Commands:") {
+			t.Fatalf("expected commands section in usage, got %q", out)
 		}
-		if !strings.Contains(out, "--scope=local|global") {
-			t.Fatalf("expected scope option in usage, got %q", out)
+		if !strings.Contains(out, "Options:") {
+			t.Fatalf("expected options section in usage, got %q", out)
 		}
-		if !strings.Contains(out, "Default scope by command") || !strings.Contains(out, "install      local") || !strings.Contains(out, "update       global") || !strings.Contains(out, "uninstall    global") {
-			t.Fatalf("expected default scope section in usage, got %q", out)
+		if !strings.Contains(out, "Examples:") {
+			t.Fatalf("expected examples section in usage, got %q", out)
 		}
-		if !strings.Contains(out, "Global install target prompt (--scope=global)") || !strings.Contains(out, "1. .vscode-server-insiders") || !strings.Contains(out, "2. .vscode-server") || !strings.Contains(out, "3. custom path(s)") {
-			t.Fatalf("expected global target prompt details in usage, got %q", out)
+
+		for _, want := range []string{
+			"install",
+			"update",
+			"uninstall",
+			"--scope=local|global",
+			"--skip-attestations-check",
+			"--verbose",
+			"--help, -h",
+			"ccsubagents install",
+			"ccsubagents install --scope=global",
+			"ccsubagents update",
+			"ccsubagents uninstall",
+			"ccsubagents install --scope=global --verbose",
+		} {
+			if !strings.Contains(out, want) {
+				t.Fatalf("expected usage output to contain %q, got %q", want, out)
+			}
 		}
 	})
 

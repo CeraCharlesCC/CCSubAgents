@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -74,6 +75,68 @@ func TestInstallOrUpdateLocal_RollbackRestoresIgnoreFile_OnPostIgnoreFailure(t *
 	}
 	if string(gotExclude) != originalExclude {
 		t.Fatalf("expected exclude file rollback to original content; got %q", string(gotExclude))
+	}
+}
+
+func TestInstallOrUpdateLocal_AttestationFailureUpdateReportsActionableGuidance(t *testing.T) {
+	installRoot := t.TempDir()
+	stateDir := filepath.Join(t.TempDir(), "state")
+	if err := os.MkdirAll(stateDir, stateDirPerm); err != nil {
+		t.Fatalf("create state dir: %v", err)
+	}
+
+	agentsArchive := zipBytes(t, map[string]string{"agents/example.agent.md": "content"})
+	bundleArchive := zipBytes(t, map[string]string{
+		"local-artifact-mcp": "mcp-binary",
+		"local-artifact-web": "web-binary",
+	})
+
+	var out bytes.Buffer
+	m := &Manager{
+		httpClient: successReleaseHTTPClient(t, "v1.2.3", agentsArchive, bundleArchive),
+		now:        func() time.Time { return time.Unix(0, 0).UTC() },
+		lookPath:   func(string) (string, error) { return "/usr/bin/gh", nil },
+		runCommand: func(context.Context, string, ...string) ([]byte, error) {
+			return nil, errors.New("verification failed")
+		},
+		statusOut: &out,
+	}
+
+	err := m.installOrUpdateLocal(context.Background(), localInstallConfig{
+		isUpdate: true,
+		location: localScopeLocation{
+			installRoot: installRoot,
+			repoRoot:    installRoot,
+		},
+		mode:     localInstallModePersonal,
+		stateDir: stateDir,
+		state:    &trackedState{Version: trackedSchemaVersion},
+	})
+	if err == nil {
+		t.Fatalf("expected attestation verification error")
+	}
+	for _, want := range []string{
+		"Error: attestation verification failed for agents.zip",
+		"To skip verification: ccsubagents update --scope=local --skip-attestations-check",
+		"(not recommended for production use)",
+		"verification failed",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error to include %q, got %v", want, err)
+		}
+	}
+
+	status := out.String()
+	for _, want := range []string{
+		"ccsubagents v1.2.3",
+		"✓ Checked local install root",
+		"✓ Downloaded release assets (v1.2.3)",
+		"✗ Verified attestations",
+		"Failed asset: agents.zip",
+	} {
+		if !strings.Contains(status, want) {
+			t.Fatalf("expected status output to include %q, got:\n%s", want, status)
+		}
 	}
 }
 
@@ -365,7 +428,7 @@ func TestReportGlobalPathWarning_WarnsWhenLocalBinMissing(t *testing.T) {
 
 	m.reportGlobalPathWarning(home)
 	got := out.String()
-	if !strings.Contains(got, "Warning: ~/.local/bin is not in PATH") {
+	if !strings.Contains(got, "⚠ ~/.local/bin is not in PATH") {
 		t.Fatalf("expected PATH warning, got %q", got)
 	}
 	if !strings.Contains(got, "export PATH=\"$HOME/.local/bin:$PATH\"") {
