@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -146,11 +147,12 @@ func trimConfigFileSuffix(path string, suffixParts ...string) (string, bool) {
 	}
 
 	base := strings.TrimSuffix(cleanPath, suffix)
-	for strings.HasSuffix(base, string(os.PathSeparator)) {
-		base = strings.TrimSuffix(base, string(os.PathSeparator))
-	}
+	base = strings.TrimRight(base, string(os.PathSeparator))
 	if strings.TrimSpace(base) == "" {
 		base = string(os.PathSeparator)
+	}
+	if volume := filepath.VolumeName(base); volume != "" && base == volume {
+		base += string(os.PathSeparator)
 	}
 
 	return filepath.Clean(base), true
@@ -200,24 +202,17 @@ func (m *Manager) promptGlobalInstallTargets(ctx context.Context, home string, p
 			mcpPath:      paths.stable.mcpPath,
 		})
 
-if _, err := io.WriteString(output, "Where should ccsubagents be installed?\n\n"); err != nil {
-return nil, fmt.Errorf("write install target prompt: %w", err)
-}
-		if _, err := fmt.Fprintf(output, "[1] VS Code Server — Insiders   (%s)\n", insidersDisplay); err != nil {
+		var prompt bytes.Buffer
+		prompt.WriteString("Where should ccsubagents be installed?\n\n")
+		fmt.Fprintf(&prompt, "[1] VS Code Server — Insiders   (%s)\n", insidersDisplay)
+		fmt.Fprintf(&prompt, "[2] VS Code Server — Stable     (%s)\n", stableDisplay)
+		prompt.WriteString("[3] Custom path(s)\n")
+		prompt.WriteString("\n")
+		prompt.WriteString("Choice (comma-separated, e.g. 1,2): ")
+
+		if _, err := io.Copy(output, &prompt); err != nil {
 			return nil, fmt.Errorf("write install target prompt: %w", err)
 		}
-		if _, err := fmt.Fprintf(output, "[2] VS Code Server — Stable     (%s)\n", stableDisplay); err != nil {
-			return nil, fmt.Errorf("write install target prompt: %w", err)
-		}
-if _, err := io.WriteString(output, "[3] Custom path(s)\n"); err != nil {
-return nil, fmt.Errorf("write install target prompt: %w", err)
-}
-if _, err := io.WriteString(output, "\n"); err != nil {
-return nil, fmt.Errorf("write install target prompt: %w", err)
-}
-if _, err := io.WriteString(output, "Choice (comma-separated, e.g. 1,2): "); err != nil {
-return nil, fmt.Errorf("write install target prompt: %w", err)
-}
 
 		line, err := reader.ReadString('\n')
 		if err != nil && !errors.Is(err, io.EOF) {
@@ -366,10 +361,10 @@ func (m *Manager) reportMessageLine(format string, args ...any) {
 }
 
 func (m *Manager) reportWarning(headline string, details ...string) {
-m.statusf("\n⚠ %s\n", headline)
-for _, detail := range details {
-if strings.TrimSpace(detail) == "" {
-continue
+	m.statusf("\n⚠ %s\n", headline)
+	for _, detail := range details {
+		if strings.TrimSpace(detail) == "" {
+			continue
 		}
 		m.statusf("  %s\n", detail)
 	}
@@ -384,6 +379,26 @@ func commandNameForInstallOrUpdate(isUpdate bool) string {
 		return "Update"
 	}
 	return "Install"
+}
+
+func commandForAttestationSkip(isUpdate bool, scope Scope) string {
+	command := installCommand
+	if isUpdate {
+		command = updateCommand
+	}
+	args := []string{"ccsubagents", command}
+	if scope == ScopeLocal {
+		args = append(args, "--scope=local")
+	}
+	args = append(args, "--skip-attestations-check")
+	return strings.Join(args, " ")
+}
+
+func formatAttestationVerificationFailure(attestationErr *attestationVerificationError, skipCommand string) error {
+	if attestationErr == nil {
+		return fmt.Errorf("Error: attestation verification failed\nTo skip verification: %s\n(not recommended for production use)", skipCommand)
+	}
+	return fmt.Errorf("Error: %w\nTo skip verification: %s\n(not recommended for production use)", attestationErr, skipCommand)
 }
 
 func resolveInstallTargets(paths installPaths, destination installDestination) ([]installConfigTarget, error) {
@@ -556,7 +571,7 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 			if errors.As(err, &attestationErr) {
 				m.reportStepFail("Verified attestations")
 				m.reportMessageLine("Failed asset: %s", attestationErr.Asset)
-				return fmt.Errorf("Error: attestation verification failed for %s\nTo skip verification: ccsubagents install --skip-attestations-check\n(not recommended for production use)", attestationErr.Asset)
+				return formatAttestationVerificationFailure(attestationErr, commandForAttestationSkip(isUpdate, ScopeGlobal))
 			}
 			return err
 		}

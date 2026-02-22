@@ -325,7 +325,7 @@ func (m *Manager) installOrUpdateLocal(ctx context.Context, cfg localInstallConf
 			if errors.As(err, &attestationErr) {
 				m.reportStepFail("Verified attestations")
 				m.reportMessageLine("Failed asset: %s", attestationErr.Asset)
-				return fmt.Errorf("Error: attestation verification failed for %s\nTo skip verification: ccsubagents install --skip-attestations-check\n(not recommended for production use)", attestationErr.Asset)
+				return formatAttestationVerificationFailure(attestationErr, commandForAttestationSkip(cfg.isUpdate, ScopeLocal))
 			}
 			return err
 		}

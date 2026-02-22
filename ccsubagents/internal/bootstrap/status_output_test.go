@@ -278,6 +278,46 @@ func TestInstallOrUpdate_AttestationFailureReportsActionableGuidance(t *testing.
 		"Error: attestation verification failed for agents.zip",
 		"To skip verification: ccsubagents install --skip-attestations-check",
 		"(not recommended for production use)",
+		"verification failed",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error to include %q, got %v", want, err)
+		}
+	}
+
+	status := out.String()
+	assertStatusContainsInOrder(t, status, []string{
+		"ccsubagents v1.2.3",
+		"✓ Checked for existing installation (none found)",
+		"✓ Downloaded release assets (v1.2.3)",
+		"✗ Verified attestations",
+		"Failed asset: agents.zip",
+	})
+}
+
+func TestInstallOrUpdate_AttestationFailureUpdateReportsActionableGuidance(t *testing.T) {
+	home := t.TempDir()
+	agentsArchive := zipBytes(t, map[string]string{"agents/example.agent.md": "content"})
+	bundleArchive := zipBytes(t, map[string]string{
+		"local-artifact-mcp": "mcp-binary",
+		"local-artifact-web": "web-binary",
+	})
+
+	var out bytes.Buffer
+	m := statusTestManager(home, successReleaseHTTPClient(t, "v1.2.3", agentsArchive, bundleArchive), &out)
+	m.runCommand = func(context.Context, string, ...string) ([]byte, error) {
+		return nil, errors.New("verification failed")
+	}
+
+	err := m.installOrUpdate(context.Background(), true)
+	if err == nil {
+		t.Fatalf("expected attestation verification error")
+	}
+	for _, want := range []string{
+		"Error: attestation verification failed for agents.zip",
+		"To skip verification: ccsubagents update --skip-attestations-check",
+		"(not recommended for production use)",
+		"verification failed",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("expected error to include %q, got %v", want, err)

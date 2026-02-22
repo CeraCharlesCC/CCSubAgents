@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -845,6 +846,63 @@ func TestToHomeTildePath(t *testing.T) {
 	got = toHomeTildePath(home, filepath.Join(string(os.PathSeparator), "opt", "tool"))
 	if got != "/opt/tool" {
 		t.Fatalf("expected non-home path to remain absolute, got %q", got)
+	}
+}
+
+func TestCommandForAttestationSkip(t *testing.T) {
+	tests := []struct {
+		name     string
+		isUpdate bool
+		scope    Scope
+		want     string
+	}{
+		{
+			name:     "global install",
+			isUpdate: false,
+			scope:    ScopeGlobal,
+			want:     "ccsubagents install --skip-attestations-check",
+		},
+		{
+			name:     "global update",
+			isUpdate: true,
+			scope:    ScopeGlobal,
+			want:     "ccsubagents update --skip-attestations-check",
+		},
+		{
+			name:     "local install",
+			isUpdate: false,
+			scope:    ScopeLocal,
+			want:     "ccsubagents install --scope=local --skip-attestations-check",
+		},
+		{
+			name:     "local update",
+			isUpdate: true,
+			scope:    ScopeLocal,
+			want:     "ccsubagents update --scope=local --skip-attestations-check",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := commandForAttestationSkip(tc.isUpdate, tc.scope)
+			if got != tc.want {
+				t.Fatalf("expected %q, got %q", tc.want, got)
+			}
+		})
+	}
+}
+
+func TestTrimConfigFileSuffix_PreservesWindowsVolumeRoot(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("windows-specific path behavior")
+	}
+
+	got, ok := trimConfigFileSuffix(`C:\data\Machine\settings.json`, "data", "Machine", "settings.json")
+	if !ok {
+		t.Fatalf("expected suffix match for windows root path")
+	}
+	if got != `C:\` {
+		t.Fatalf("expected windows volume root preserved, got %q", got)
 	}
 }
 
