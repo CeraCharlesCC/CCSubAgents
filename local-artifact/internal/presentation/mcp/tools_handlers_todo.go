@@ -83,11 +83,7 @@ func (s *Server) toolTodo(ctx context.Context, argsRaw json.RawMessage) (any, *j
 					Name:      todoName,
 					URIByName: domain.URIByName(nameEsc),
 				}
-				jsonStr, err := json.Marshal(out)
-				if err != nil {
-					return toolError("internal error: failed to marshal output"), nil
-				}
-				return toolResult{Content: []any{textContent(string(jsonStr))}, StructuredContent: out}, nil
+				return toolResult{Content: todoSuccessContent(operation, out), StructuredContent: out}, nil
 			}
 			return toolErrorFromErr(err), nil
 		}
@@ -106,11 +102,7 @@ func (s *Server) toolTodo(ctx context.Context, argsRaw json.RawMessage) (any, *j
 			URIByName: domain.URIByName(nameEsc),
 			URIByRef:  a.URIByRef(),
 		}
-		jsonStr, err := json.Marshal(out)
-		if err != nil {
-			return toolError("internal error: failed to marshal output"), nil
-		}
-		return toolResult{Content: []any{textContent(string(jsonStr))}, StructuredContent: out}, nil
+		return toolResult{Content: todoSuccessContent(operation, out), StructuredContent: out}, nil
 	}
 
 	if args.TodoList == nil {
@@ -145,11 +137,21 @@ func (s *Server) toolTodo(ctx context.Context, argsRaw json.RawMessage) (any, *j
 		URIByName: domain.URIByName(nameEsc),
 		URIByRef:  a.URIByRef(),
 	}
-	jsonStr, err := json.Marshal(out)
-	if err != nil {
-		return toolError("internal error: failed to marshal output"), nil
+	return toolResult{Content: todoSuccessContent(operation, out), StructuredContent: out}, nil
+}
+
+func todoSuccessContent(operation string, out todoOut) []any {
+	switch operation {
+	case "read":
+		if out.Exists {
+			return []any{textContent(fmt.Sprintf("todo list loaded (%d items)", len(out.TodoList)))}
+		}
+		return []any{textContent("todo list not found; returning empty list")}
+	case "write":
+		return []any{textContent(fmt.Sprintf("todo list saved (%d items)", len(out.TodoList)))}
+	default:
+		return []any{textContent("todo list ok")}
 	}
-	return toolResult{Content: []any{textContent(string(jsonStr))}, StructuredContent: out}, nil
 }
 
 func resolveTodoBaseName(ctx context.Context, svc *domain.Service, sel todoArtifactSelector) (string, error) {

@@ -75,6 +75,9 @@ func TestToolTodo_ReadMissingReturnsEmptyList(t *testing.T) {
 	if out.Name != "plan/task-123/todo" {
 		t.Fatalf("unexpected todo artifact name: %q", out.Name)
 	}
+	if got := firstContentText(resp); got != "todo list not found; returning empty list" {
+		t.Fatalf("unexpected read-missing content text: %q", got)
+	}
 }
 
 func TestToolTodo_WriteThenReadRoundTrip(t *testing.T) {
@@ -106,6 +109,9 @@ func TestToolTodo_WriteThenReadRoundTrip(t *testing.T) {
 	if len(writeOut.TodoList) != 2 {
 		t.Fatalf("expected two todo items, got %d", len(writeOut.TodoList))
 	}
+	if got := firstContentText(writeResp); got != "todo list saved (2 items)" {
+		t.Fatalf("unexpected write content text: %q", got)
+	}
 
 	readRespAny, rpcErr := s.toolTodo(ctx, mustRawJSON(t, map[string]any{
 		"operation": "read",
@@ -124,6 +130,9 @@ func TestToolTodo_WriteThenReadRoundTrip(t *testing.T) {
 	}
 	if len(readOut.TodoList) != 2 || readOut.TodoList[1].Status != "in-progress" {
 		t.Fatalf("unexpected read todo list: %+v", readOut.TodoList)
+	}
+	if got := firstContentText(readResp); got != "todo list loaded (2 items)" {
+		t.Fatalf("unexpected read content text: %q", got)
 	}
 }
 
