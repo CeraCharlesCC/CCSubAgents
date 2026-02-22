@@ -30,6 +30,31 @@ func TestParseCLIArgs(t *testing.T) {
 			want: cliArgs{commandRaw: "update", skipAttestationsCheck: true},
 		},
 		{
+			name: "scope inline before command",
+			args: []string{"--scope=global", "install"},
+			want: cliArgs{commandRaw: "install", scopeRaw: "global"},
+		},
+		{
+			name: "scope value after command",
+			args: []string{"install", "--scope", "local"},
+			want: cliArgs{commandRaw: "install", scopeRaw: "local"},
+		},
+		{
+			name: "scope value token with spaces",
+			args: []string{"install", "--scope", "my scope"},
+			want: cliArgs{commandRaw: "install", scopeRaw: "my scope"},
+		},
+		{
+			name: "scope missing value before another flag",
+			args: []string{"install", "--scope", "--skip-attestations-check"},
+			want: cliArgs{commandRaw: "install", skipAttestationsCheck: true},
+		},
+		{
+			name: "scope missing trailing value",
+			args: []string{"install", "--scope"},
+			want: cliArgs{commandRaw: "install"},
+		},
+		{
 			name: "help and skip attestations in mixed order",
 			args: []string{"install", "--skip-attestations-check", "--help"},
 			want: cliArgs{showUsage: true, skipAttestationsCheck: true},
@@ -81,6 +106,9 @@ func TestParseCLIArgs(t *testing.T) {
 			if got.commandRaw != tc.want.commandRaw {
 				t.Fatalf("expected commandRaw=%q, got %q", tc.want.commandRaw, got.commandRaw)
 			}
+			if got.scopeRaw != tc.want.scopeRaw {
+				t.Fatalf("expected scopeRaw=%q, got %q", tc.want.scopeRaw, got.scopeRaw)
+			}
 			if got.skipAttestationsCheck != tc.want.skipAttestationsCheck {
 				t.Fatalf("expected skipAttestationsCheck=%v, got %v", tc.want.skipAttestationsCheck, got.skipAttestationsCheck)
 			}
@@ -106,8 +134,14 @@ func TestRun_UsageAndCommandErrors(t *testing.T) {
 		if !strings.Contains(out, "--skip-attestations-check") {
 			t.Fatalf("expected skip option in usage, got %q", out)
 		}
-		if !strings.Contains(out, "1. .vscode-server") || !strings.Contains(out, "2. .vscode-server-insiders") || !strings.Contains(out, "3. both") {
-			t.Fatalf("expected destination prompt details in usage, got %q", out)
+		if !strings.Contains(out, "--scope=local|global") {
+			t.Fatalf("expected scope option in usage, got %q", out)
+		}
+		if !strings.Contains(out, "Default scope by command") || !strings.Contains(out, "install      local") || !strings.Contains(out, "update       global") || !strings.Contains(out, "uninstall    global") {
+			t.Fatalf("expected default scope section in usage, got %q", out)
+		}
+		if !strings.Contains(out, "Global install target prompt (--scope=global)") || !strings.Contains(out, "1. .vscode-server-insiders") || !strings.Contains(out, "2. .vscode-server") || !strings.Contains(out, "3. custom path(s)") {
+			t.Fatalf("expected global target prompt details in usage, got %q", out)
 		}
 	})
 
@@ -140,6 +174,22 @@ func TestRun_UsageAndCommandErrors(t *testing.T) {
 		}
 		if !strings.Contains(out, "Usage:") {
 			t.Fatalf("expected usage text for command error, got %q", out)
+		}
+	})
+
+	t.Run("unknown scope exits 1 and prints usage", func(t *testing.T) {
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+		exit := run([]string{"install", "--scope=team"}, &stdout, &stderr)
+		if exit != 1 {
+			t.Fatalf("expected exit code 1, got %d", exit)
+		}
+		out := stderr.String()
+		if !strings.Contains(out, "unknown scope") {
+			t.Fatalf("expected unknown scope error, got %q", out)
+		}
+		if !strings.Contains(out, "Usage:") {
+			t.Fatalf("expected usage text for scope error, got %q", out)
 		}
 	})
 }

@@ -43,6 +43,34 @@ chmod +x ./ccsubagents
 ./ccsubagents install
 ```
 
+## CLI scope behavior
+
+- Use `--scope=local|global` with `install`, `update`, and `uninstall`.
+- Default scope by command:
+  - `install` → `local`
+  - `update` → `global`
+  - `uninstall` → `global`
+- For `install --scope=global`, you can target:
+  - `.vscode-server-insiders`
+  - `.vscode-server`
+  - custom path(s)
+- For custom path target(s), `<path>` means each path you enter at the prompt (for example, `~/my-project`).
+- Each custom path resolves as:
+  - `<path>/data/Machine/settings.json`
+  - `<path>/data/User/mcp.json`
+  - example: `~/my-project/data/Machine/settings.json` and `~/my-project/data/User/mcp.json`
+
+Examples:
+
+```bash
+# Local scope by default (equivalent to --scope=local)
+./ccsubagents install
+
+# Global scope with custom path target
+./ccsubagents install --scope=global
+# At the prompt: choose 3, then enter one or more comma-separated paths
+```
+
 ## What's the benefit?
 
 LLMs are not perfect (nor, for that matter, is any intelligent being). They sometimes fail tool calls, or inspect files they didn't need to look at — and unlike a human who can simply forget, that information lingers in the context. (On that note, it would be interesting to have a tool that lets the LLM itself omit tool-call results it deems unnecessary, with a stated reason.)
