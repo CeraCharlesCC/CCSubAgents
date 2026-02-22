@@ -36,11 +36,6 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	manager := bootstrap.NewManager()
-	manager.SetStatusWriter(stdout)
-	manager.SetSkipAttestationsCheck(parsed.skipAttestationsCheck)
-	manager.SetVerbose(parsed.verbose)
-
 	command, err := bootstrap.ParseCommand(parsed.commandRaw)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -55,7 +50,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	if err := manager.Run(context.Background(), command, scope); err != nil {
+	if err := bootstrap.Execute(context.Background(), bootstrap.ExecuteRequest{
+		Command: command,
+		Scope:   scope,
+		Options: bootstrap.ExecuteOptions{
+			SkipAttestationsCheck: parsed.skipAttestationsCheck,
+			Verbose:               parsed.verbose,
+			StatusWriter:          stdout,
+		},
+	}); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
