@@ -17,13 +17,16 @@ type Manager struct {
 	httpClient            *http.Client
 	now                   func() time.Time
 	homeDir               func() (string, error)
+	workingDir            func() (string, error)
 	lookPath              func(string) (string, error)
 	runCommand            func(context.Context, string, ...string) ([]byte, error)
+	getenv                func(string) string
 	installBinary         func(string, string) error
 	statusOut             io.Writer
 	promptIn              io.Reader
 	promptOut             io.Writer
 	skipAttestationsCheck bool
+	globalInstallTargets  []installConfigTarget
 	installDestination    installDestination
 }
 
@@ -32,8 +35,10 @@ func NewManager() *Manager {
 		httpClient:    &http.Client{Timeout: 30 * time.Second},
 		now:           time.Now,
 		homeDir:       os.UserHomeDir,
+		workingDir:    os.Getwd,
 		lookPath:      exec.LookPath,
 		runCommand:    runCommand,
+		getenv:        os.Getenv,
 		installBinary: installBinary,
 		promptIn:      os.Stdin,
 		promptOut:     os.Stdout,

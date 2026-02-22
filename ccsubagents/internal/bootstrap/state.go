@@ -18,6 +18,32 @@ type trackedState struct {
 	InstalledAt string         `json:"installedAt"`
 	Managed     managedState   `json:"managed"`
 	JSONEdits   trackedJSONOps `json:"jsonEdits"`
+	Local       []localInstall `json:"local,omitempty"`
+}
+
+type localInstallMode string
+
+const (
+	localInstallModePersonal localInstallMode = "personal"
+	localInstallModeTeam     localInstallMode = "team"
+)
+
+type localInstall struct {
+	InstallRoot string           `json:"installRoot"`
+	Mode        localInstallMode `json:"mode,omitempty"`
+	BinaryOnly  bool             `json:"binaryOnly,omitempty"`
+	Repo        string           `json:"repo"`
+	ReleaseID   int64            `json:"releaseId"`
+	ReleaseTag  string           `json:"releaseTag"`
+	InstalledAt string           `json:"installedAt"`
+	Managed     managedState     `json:"managed"`
+	JSONEdits   trackedJSONOps   `json:"jsonEdits"`
+	IgnoreEdits []ignoreEdit     `json:"ignoreEdits,omitempty"`
+}
+
+type ignoreEdit struct {
+	File       string   `json:"file"`
+	AddedLines []string `json:"addedLines,omitempty"`
 }
 
 type managedState struct {
@@ -106,6 +132,77 @@ func stringsHasValue(value string) bool {
 	return strings.TrimSpace(value) != ""
 }
 
+func (state *trackedState) hasGlobalInstall() bool {
+	if state == nil {
+		return false
+	}
+	if stringsHasValue(state.Repo) || stringsHasValue(state.ReleaseTag) || stringsHasValue(state.InstalledAt) || state.ReleaseID != 0 {
+		return true
+	}
+	if len(state.Managed.Files) > 0 || len(state.Managed.Dirs) > 0 {
+		return true
+	}
+	if len(state.JSONEdits.allSettingsEdits()) > 0 || len(state.JSONEdits.allMCPEdits()) > 0 {
+		return true
+	}
+	return false
+}
+
+func (state *trackedState) localInstallForRoot(root string) (*localInstall, int) {
+	if state == nil {
+		return nil, -1
+	}
+	cleanRoot := filepath.Clean(root)
+	for idx := range state.Local {
+		if filepath.Clean(state.Local[idx].InstallRoot) == cleanRoot {
+			return &state.Local[idx], idx
+		}
+	}
+	return nil, -1
+}
+
+func (state *trackedState) setLocalInstall(next localInstall) {
+	if state == nil {
+		return
+	}
+	next.InstallRoot = filepath.Clean(next.InstallRoot)
+	if existing, idx := state.localInstallForRoot(next.InstallRoot); idx >= 0 && existing != nil {
+		state.Local[idx] = next
+		return
+	}
+	state.Local = append(state.Local, next)
+}
+
+func (state *trackedState) removeLocalInstall(root string) {
+	if state == nil {
+		return
+	}
+	_, idx := state.localInstallForRoot(root)
+	if idx < 0 {
+		return
+	}
+	state.Local = append(state.Local[:idx], state.Local[idx+1:]...)
+}
+
+func (state *trackedState) clearGlobalInstall() {
+	if state == nil {
+		return
+	}
+	state.Repo = ""
+	state.ReleaseID = 0
+	state.ReleaseTag = ""
+	state.InstalledAt = ""
+	state.Managed = managedState{}
+	state.JSONEdits = trackedJSONOps{}
+}
+
+func (state *trackedState) empty() bool {
+	if state == nil {
+		return true
+	}
+	return !state.hasGlobalInstall() && len(state.Local) == 0
+}
+
 func (m *Manager) trackedStatePath(stateDir string) string {
 	return filepath.Join(stateDir, trackedFileName)
 }
@@ -122,6 +219,9 @@ func (m *Manager) loadTrackedState(stateDir string) (*trackedState, error) {
 	}
 	if state.Version == 0 {
 		return nil, fmt.Errorf("tracked state %s is missing version", trackedPath)
+	}
+	if state.Version < trackedSchemaVersion {
+		state.Version = trackedSchemaVersion
 	}
 	return &state, nil
 }

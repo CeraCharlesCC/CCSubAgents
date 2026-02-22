@@ -38,7 +38,11 @@ const (
 	mcpServerKey                  = "artifact-mcp"
 	settingsAgentPathKey          = "chat.agentFilesLocations"
 	agentsRelativePath            = ".local/share/ccsubagents/agents"
-	trackedSchemaVersion          = 1
+	localManagedDirRelativePath   = ".ccsubagents"
+	localAgentsRelativePath       = ".github/agents"
+	localMCPRelativePath          = ".vscode/mcp.json"
+	localMCPCommand               = "${workspaceFolder}/.ccsubagents/local-artifact-mcp"
+	trackedSchemaVersion          = 2
 	installCommand                = "install"
 	updateCommand                 = "update"
 	uninstallCommand              = "uninstall"
@@ -113,23 +117,175 @@ func (m *Manager) promptInstallDestination(ctx context.Context) (installDestinat
 	}
 }
 
-func (m *Manager) Run(ctx context.Context, command Command) error {
-	switch command {
-	case CommandInstall:
-		destination, err := m.promptInstallDestination(ctx)
-		if err != nil {
-			return err
+func parseCommaSeparatedChoices(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			continue
 		}
-		m.installDestination = destination
-		return m.installOrUpdate(ctx, false)
-	case CommandUpdate:
-		m.installDestination = ""
-		return m.installOrUpdate(ctx, true)
-	case CommandUninstall:
-		m.installDestination = ""
-		return m.uninstall(ctx)
+		out = append(out, trimmed)
+	}
+	return out
+}
+
+func makeCustomConfigTarget(base string) installConfigTarget {
+	cleanBase := filepath.Clean(base)
+	return installConfigTarget{
+		settingsPath: filepath.Join(cleanBase, "data", "Machine", "settings.json"),
+		mcpPath:      filepath.Join(cleanBase, "data", "User", "mcp.json"),
+	}
+}
+
+func (m *Manager) promptGlobalInstallTargets(ctx context.Context, home string, paths installPaths) ([]installConfigTarget, error) {
+	input := m.promptIn
+	if input == nil {
+		input = os.Stdin
+	}
+	output := m.promptOut
+	if output == nil {
+		output = os.Stdout
+	}
+
+	reader := bufio.NewReader(input)
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
+		if _, err := io.WriteString(output, "Select global install target(s):\n"); err != nil {
+			return nil, fmt.Errorf("write install target prompt: %w", err)
+		}
+		if _, err := io.WriteString(output, "  1. .vscode-server-insiders\n"); err != nil {
+			return nil, fmt.Errorf("write install target prompt: %w", err)
+		}
+		if _, err := io.WriteString(output, "  2. .vscode-server\n"); err != nil {
+			return nil, fmt.Errorf("write install target prompt: %w", err)
+		}
+		if _, err := io.WriteString(output, "  3. custom path\n"); err != nil {
+			return nil, fmt.Errorf("write install target prompt: %w", err)
+		}
+		if _, err := io.WriteString(output, "Enter choices (comma-separated, e.g. 1,2): "); err != nil {
+			return nil, fmt.Errorf("write install target prompt: %w", err)
+		}
+
+		line, err := reader.ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return nil, fmt.Errorf("read install target selection: %w", err)
+		}
+
+		choices := parseCommaSeparatedChoices(line)
+		selected := map[string]struct{}{}
+		valid := true
+		for _, choice := range choices {
+			switch choice {
+			case "1", "2", "3":
+				selected[choice] = struct{}{}
+			default:
+				valid = false
+			}
+		}
+
+		if len(selected) == 0 || !valid {
+			if errors.Is(err, io.EOF) {
+				return nil, errors.New("global install target selection canceled")
+			}
+			if _, writeErr := io.WriteString(output, "Invalid selection. Enter comma-separated values using 1, 2, and/or 3.\n\n"); writeErr != nil {
+				return nil, fmt.Errorf("write install target prompt: %w", writeErr)
+			}
+			continue
+		}
+
+		targets := make([]installConfigTarget, 0, len(selected)+1)
+		if _, ok := selected["1"]; ok {
+			targets = append(targets, installConfigTarget{settingsPath: paths.insiders.settingsPath, mcpPath: paths.insiders.mcpPath})
+		}
+		if _, ok := selected["2"]; ok {
+			targets = append(targets, installConfigTarget{settingsPath: paths.stable.settingsPath, mcpPath: paths.stable.mcpPath})
+		}
+		if _, ok := selected["3"]; ok {
+			if _, err := io.WriteString(output, "Enter custom target path(s), comma-separated: "); err != nil {
+				return nil, fmt.Errorf("write custom target prompt: %w", err)
+			}
+			customLine, customErr := reader.ReadString('\n')
+			if customErr != nil && !errors.Is(customErr, io.EOF) {
+				return nil, fmt.Errorf("read custom target paths: %w", customErr)
+			}
+
+			customPaths := parseCommaSeparatedChoices(customLine)
+			if len(customPaths) == 0 {
+				if errors.Is(customErr, io.EOF) {
+					return nil, errors.New("custom install target selection canceled")
+				}
+				if _, writeErr := io.WriteString(output, "Custom paths cannot be empty.\n\n"); writeErr != nil {
+					return nil, fmt.Errorf("write custom target prompt: %w", writeErr)
+				}
+				continue
+			}
+
+			for _, customPath := range customPaths {
+				resolved := resolveConfiguredPath(home, customPath)
+				if strings.TrimSpace(resolved) == "" {
+					continue
+				}
+				targets = append(targets, makeCustomConfigTarget(resolved))
+			}
+		}
+
+		targets = uniqueInstallTargets(targets)
+		if len(targets) == 0 {
+			if errors.Is(err, io.EOF) {
+				return nil, errors.New("global install target selection canceled")
+			}
+			if _, writeErr := io.WriteString(output, "No valid targets selected.\n\n"); writeErr != nil {
+				return nil, fmt.Errorf("write install target prompt: %w", writeErr)
+			}
+			continue
+		}
+
+		return targets, nil
+	}
+}
+
+func (m *Manager) Run(ctx context.Context, command Command, scope Scope) error {
+	switch scope {
+	case ScopeGlobal:
+		switch command {
+		case CommandInstall:
+			home, err := m.homeDir()
+			if err != nil {
+				return fmt.Errorf("determine home directory: %w", err)
+			}
+			paths := resolveInstallPaths(home)
+			targets, err := m.promptGlobalInstallTargets(ctx, home, paths)
+			if err != nil {
+				return err
+			}
+			m.globalInstallTargets = targets
+			return m.installOrUpdate(ctx, false)
+		case CommandUpdate:
+			m.globalInstallTargets = nil
+			return m.installOrUpdate(ctx, true)
+		case CommandUninstall:
+			m.globalInstallTargets = nil
+			return m.uninstall(ctx)
+		default:
+			return fmt.Errorf("unknown command %q (expected: install, update, uninstall)", command)
+		}
+	case ScopeLocal:
+		switch command {
+		case CommandInstall:
+			return m.installLocal(ctx)
+		case CommandUpdate:
+			return m.updateLocal(ctx)
+		case CommandUninstall:
+			return m.uninstallLocal(ctx)
+		default:
+			return fmt.Errorf("unknown command %q (expected: install, update, uninstall)", command)
+		}
 	default:
-		return fmt.Errorf("unknown command %q (expected: install, update, uninstall)", command)
+		return fmt.Errorf("unknown scope %q (expected: local, global)", scope)
 	}
 }
 
@@ -247,23 +403,36 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 	if err != nil {
 		return err
 	}
-	if previousState == nil {
+	hasPreviousGlobal := previousState != nil && previousState.hasGlobalInstall()
+	if !hasPreviousGlobal {
 		m.reportAction("No existing tracked installation found")
 	} else {
 		m.reportAction("Found existing tracked installation")
 	}
 
+	var previousGlobal *trackedState
+	if hasPreviousGlobal {
+		previousGlobal = &trackedState{
+			Managed:   previousState.Managed,
+			JSONEdits: previousState.JSONEdits,
+		}
+	}
+
 	var configTargets []installConfigTarget
 	if isUpdate {
-		configTargets = resolveUpdateTargets(paths, previousState)
+		configTargets = resolveUpdateTargets(paths, previousGlobal)
 	} else {
-		destination := m.installDestination
-		if destination == "" {
-			destination = installDestinationInsiders
-		}
-		configTargets, err = resolveInstallTargets(paths, destination)
-		if err != nil {
-			return err
+		if len(m.globalInstallTargets) > 0 {
+			configTargets = uniqueInstallTargets(m.globalInstallTargets)
+		} else {
+			destination := m.installDestination
+			if destination == "" {
+				destination = installDestinationInsiders
+			}
+			configTargets, err = resolveInstallTargets(paths, destination)
+			if err != nil {
+				return err
+			}
 		}
 	}
 
@@ -433,13 +602,13 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 	settingsEdits := make([]settingsEdit, 0, len(configTargets))
 	mcpEdits := make([]mcpEdit, 0, len(configTargets))
 	for _, target := range configTargets {
-		settingsEdit, err := applySettingsEdit(target.settingsPath, settingsAgentPath, previousState)
+		settingsEdit, err := applySettingsEdit(target.settingsPath, settingsAgentPath, previousGlobal)
 		if err != nil {
 			return err
 		}
 		settingsEdits = append(settingsEdits, settingsEdit)
 
-		mcpEdit, err := applyMCPEdit(target.mcpPath, mcpCommandPath, previousState)
+		mcpEdit, err := applyMCPEdit(target.mcpPath, mcpCommandPath, previousGlobal)
 		if err != nil {
 			return err
 		}
@@ -458,17 +627,20 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 		},
 		JSONEdits: trackedJSONOpsFromEdits(settingsEdits, mcpEdits),
 	}
+	if previousState != nil {
+		state.Local = append(state.Local, previousState.Local...)
+	}
 
 	if isUpdate {
 		m.reportPhase(commandName, "cleaning up stale managed agent files")
-		if previousState == nil {
+		if previousGlobal == nil {
 			m.reportAction("No previously tracked files; skipping cleanup")
 		} else {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
 			m.reportAction("Removing stale managed agent files")
-			if err := removeStaleAgentFilesWithHook(previousState.Managed.Files, extractedFiles, agentsDir, rollback.captureFile); err != nil {
+			if err := removeStaleAgentFilesWithHook(previousGlobal.Managed.Files, extractedFiles, agentsDir, rollback.captureFile); err != nil {
 				return err
 			}
 		}
@@ -484,6 +656,7 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 	} else {
 		m.reportAction("Install complete: %s", release.TagName)
 	}
+	m.reportGlobalPathWarning(home)
 
 	return nil
 }
@@ -603,9 +776,18 @@ func (m *Manager) uninstall(ctx context.Context) error {
 		return err
 	}
 	m.reportPhase("Uninstall", "finalizing")
-	m.reportAction("Removing tracked state file")
-	if err := os.Remove(filepath.Join(stateDir, trackedFileName)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("remove tracked state: %w", err)
+	state.clearGlobalInstall()
+	state.Version = trackedSchemaVersion
+	if state.empty() {
+		m.reportAction("Removing tracked state file")
+		if err := os.Remove(filepath.Join(stateDir, trackedFileName)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove tracked state: %w", err)
+		}
+	} else {
+		m.reportAction("Saving tracked state")
+		if err := m.saveTrackedState(stateDir, *state); err != nil {
+			return err
+		}
 	}
 	m.reportAction("Uninstall complete")
 

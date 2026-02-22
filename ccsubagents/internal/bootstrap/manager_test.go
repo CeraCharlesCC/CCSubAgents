@@ -662,26 +662,26 @@ func TestResolveUpdateTargets_UsesTrackedMultiEdits(t *testing.T) {
 	}
 }
 
-func TestRun_InstallPromptsForDestination(t *testing.T) {
+func TestRun_GlobalInstallPromptsForTargetSelection(t *testing.T) {
 	m := NewManager()
 	m.SetInstallPromptIO(strings.NewReader(""), io.Discard)
 
-	err := m.Run(context.Background(), CommandInstall)
+	err := m.Run(context.Background(), CommandInstall, ScopeGlobal)
 	if err == nil {
-		t.Fatalf("expected install prompt to fail on canceled selection")
+		t.Fatalf("expected global install prompt to fail on canceled selection")
 	}
 	if !strings.Contains(err.Error(), "selection canceled") {
 		t.Fatalf("expected canceled-selection error, got %v", err)
 	}
 }
 
-func TestRun_UpdateDoesNotPromptForDestination(t *testing.T) {
+func TestRun_GlobalUpdateDoesNotPromptForTargetSelection(t *testing.T) {
 	m := NewManager()
 	m.SetInstallPromptIO(errorReader{err: errors.New("prompt read should not occur")}, io.Discard)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	err := m.Run(ctx, CommandUpdate)
+	err := m.Run(ctx, CommandUpdate, ScopeGlobal)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context canceled for update, got %v", err)
 	}
