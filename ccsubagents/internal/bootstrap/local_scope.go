@@ -30,16 +30,23 @@ type localInstallConfig struct {
 	previous   *localInstall
 }
 
+func (m *Manager) localTrackedStateDir() (string, error) {
+	home, err := m.homeDir()
+	if err != nil {
+		return "", fmt.Errorf("determine home directory: %w", err)
+	}
+	return filepath.Join(home, ".local", "share", "ccsubagents"), nil
+}
+
 func (m *Manager) installLocal(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	home, err := m.homeDir()
+	stateDir, err := m.localTrackedStateDir()
 	if err != nil {
-		return fmt.Errorf("determine home directory: %w", err)
+		return err
 	}
 
-	stateDir := filepath.Join(home, ".local", "share", "ccsubagents")
 	if err := os.MkdirAll(stateDir, stateDirPerm); err != nil {
 		return fmt.Errorf("create state directory %s: %w", stateDir, err)
 	}
@@ -100,9 +107,9 @@ func (m *Manager) updateLocal(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	home, err := m.homeDir()
+	stateDir, err := m.localTrackedStateDir()
 	if err != nil {
-		return fmt.Errorf("determine home directory: %w", err)
+		return err
 	}
 
 	location, err := m.resolveLocalScopeLocation(ctx, "update")
@@ -110,7 +117,6 @@ func (m *Manager) updateLocal(ctx context.Context) error {
 		return err
 	}
 
-	stateDir := filepath.Join(home, ".local", "share", "ccsubagents")
 	state, err := m.loadTrackedState(stateDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -147,11 +153,10 @@ func (m *Manager) uninstallLocal(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	home, err := m.homeDir()
+	stateDir, err := m.localTrackedStateDir()
 	if err != nil {
-		return fmt.Errorf("determine home directory: %w", err)
+		return err
 	}
-	stateDir := filepath.Join(home, ".local", "share", "ccsubagents")
 
 	location, err := m.resolveLocalScopeLocation(ctx, "uninstall")
 	if err != nil {
@@ -820,7 +825,7 @@ func appendMissingIgnoreLines(path string, lines []string) ([]string, error) {
 	if len(added) == 0 {
 		return nil, nil
 	}
-	if err := os.WriteFile(path, []byte(builder), stateFilePerm); err != nil {
+	if err := writeFileAtomic(path, []byte(builder), stateFilePerm); err != nil {
 		return nil, fmt.Errorf("write ignore file %s: %w", path, err)
 	}
 	return added, nil
@@ -883,8 +888,33 @@ func removeIgnoreLines(path string, lines []string) error {
 	if out != "" {
 		out += "\n"
 	}
-	if err := os.WriteFile(path, []byte(out), stateFilePerm); err != nil {
+	if err := writeFileAtomic(path, []byte(out), stateFilePerm); err != nil {
 		return fmt.Errorf("write ignore file %s during uninstall: %w", path, err)
+	}
+	return nil
+}
+
+func writeFileAtomic(path string, data []byte, perm fs.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp file for %s: %w", path, err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write temp file for %s: %w", path, err)
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("chmod temp file for %s: %w", path, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp file for %s: %w", path, err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("replace %s: %w", path, err)
 	}
 	return nil
 }
