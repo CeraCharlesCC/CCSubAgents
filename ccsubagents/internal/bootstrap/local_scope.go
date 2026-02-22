@@ -65,19 +65,23 @@ func (m *Manager) installLocal(ctx context.Context) error {
 		}
 	}
 
-	binaryOnly := false
-	if mode == localInstallModeTeam && location.inGitRepo {
-		detected, err := detectExistingTeamLocalSetup(location.installRoot, location.repoRoot)
-		if err != nil {
-			return err
-		}
-		binaryOnly = detected
-	}
-
 	var previous *localInstall
 	if existing, _ := state.localInstallForRoot(location.installRoot); existing != nil {
 		clone := *existing
 		previous = &clone
+	}
+
+	binaryOnly := false
+	if mode == localInstallModeTeam && location.inGitRepo {
+		if previous != nil {
+			binaryOnly = previous.BinaryOnly
+		} else {
+			detected, err := detectExistingTeamLocalSetup(location.installRoot, location.repoRoot)
+			if err != nil {
+				return err
+			}
+			binaryOnly = detected
+		}
 	}
 
 	cfg := localInstallConfig{

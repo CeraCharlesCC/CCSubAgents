@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -73,6 +74,128 @@ func TestInstallOrUpdateLocal_RollbackRestoresIgnoreFile_OnPostIgnoreFailure(t *
 	}
 	if string(gotExclude) != originalExclude {
 		t.Fatalf("expected exclude file rollback to original content; got %q", string(gotExclude))
+	}
+}
+
+func TestInstallLocal_TeamRerunPreservesFullManagedState(t *testing.T) {
+	home := t.TempDir()
+	installRoot := t.TempDir()
+
+	if err := os.WriteFile(filepath.Join(installRoot, ".gitignore"), []byte(localManagedDirRelativePath+"\n"), stateFilePerm); err != nil {
+		t.Fatalf("seed .gitignore: %v", err)
+	}
+	agentsDir := filepath.Join(installRoot, localAgentsRelativePath)
+	if err := os.MkdirAll(agentsDir, stateDirPerm); err != nil {
+		t.Fatalf("create agents dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(agentsDir, "existing.agent.md"), []byte("existing"), stateFilePerm); err != nil {
+		t.Fatalf("seed existing agent: %v", err)
+	}
+
+	mcpPath := filepath.Join(installRoot, localMCPRelativePath)
+	if err := os.MkdirAll(filepath.Dir(mcpPath), stateDirPerm); err != nil {
+		t.Fatalf("create mcp parent dir: %v", err)
+	}
+	if err := writeJSONFile(mcpPath, map[string]any{
+		"servers": map[string]any{
+			mcpServerKey: map[string]any{
+				"command": localMCPCommand,
+			},
+		},
+	}); err != nil {
+		t.Fatalf("seed mcp config: %v", err)
+	}
+
+	stateDir := filepath.Join(home, ".local", "share", "ccsubagents")
+	if err := os.MkdirAll(stateDir, stateDirPerm); err != nil {
+		t.Fatalf("create state dir: %v", err)
+	}
+	m := &Manager{
+		now:     func() time.Time { return time.Unix(0, 0).UTC() },
+		homeDir: func() (string, error) { return home, nil },
+	}
+	if err := m.saveTrackedState(stateDir, trackedState{
+		Version: trackedSchemaVersion,
+		Local: []localInstall{
+			{
+				InstallRoot: installRoot,
+				Mode:        localInstallModeTeam,
+				BinaryOnly:  false,
+				Repo:        releaseRepo,
+				ReleaseID:   100,
+				ReleaseTag:  "v0.9.0",
+				InstalledAt: "2026-01-01T00:00:00Z",
+				Managed: managedState{
+					Files: []string{
+						filepath.Join(installRoot, localManagedDirRelativePath, assetArtifactMCP),
+						filepath.Join(installRoot, localManagedDirRelativePath, assetArtifactWeb),
+						filepath.Join(installRoot, localAgentsRelativePath, "existing.agent.md"),
+					},
+					Dirs: []string{
+						filepath.Join(installRoot, localManagedDirRelativePath),
+						filepath.Join(installRoot, localAgentsRelativePath),
+					},
+				},
+				JSONEdits: trackedJSONOpsFromEdits(nil, []mcpEdit{
+					{
+						File:    mcpPath,
+						Key:     mcpServerKey,
+						Touched: true,
+					},
+				}),
+				IgnoreEdits: []ignoreEdit{
+					{File: filepath.Join(installRoot, ".gitignore"), AddedLines: []string{localManagedDirRelativePath}},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("seed tracked state: %v", err)
+	}
+
+	agentsArchive := zipBytes(t, map[string]string{"agents/new.agent.md": "new"})
+	bundleArchive := zipBytes(t, map[string]string{
+		assetArtifactMCP: "mcp-binary",
+		assetArtifactWeb: "web-binary",
+	})
+
+	m = &Manager{
+		httpClient:            successReleaseHTTPClient(t, "v1.2.3", agentsArchive, bundleArchive),
+		now:                   func() time.Time { return time.Unix(0, 0).UTC() },
+		homeDir:               func() (string, error) { return home, nil },
+		workingDir:            func() (string, error) { return installRoot, nil },
+		skipAttestationsCheck: true,
+		promptIn:              strings.NewReader("2\n"),
+		promptOut:             io.Discard,
+		runCommand:            func(context.Context, string, ...string) ([]byte, error) { return []byte(installRoot + "\n"), nil },
+		installBinary: func(src, dst string) error {
+			data, err := os.ReadFile(src)
+			if err != nil {
+				return err
+			}
+			return os.WriteFile(dst, data, binaryFilePerm)
+		},
+	}
+
+	if err := m.installLocal(context.Background()); err != nil {
+		t.Fatalf("installLocal should succeed: %v", err)
+	}
+
+	state, err := m.loadTrackedState(stateDir)
+	if err != nil {
+		t.Fatalf("load tracked state: %v", err)
+	}
+	record, _ := state.localInstallForRoot(installRoot)
+	if record == nil {
+		t.Fatalf("expected tracked local install for %s", installRoot)
+	}
+	if record.BinaryOnly {
+		t.Fatalf("expected binaryOnly=false for existing tracked install")
+	}
+	if !containsString(record.Managed.Files, filepath.Join(installRoot, localAgentsRelativePath, "new.agent.md")) {
+		t.Fatalf("expected managed agent file to remain tracked, got %#v", record.Managed.Files)
+	}
+	if _, ok := record.JSONEdits.mcpEditForFile(mcpPath); !ok {
+		t.Fatalf("expected tracked mcp edit for %s", mcpPath)
 	}
 }
 
