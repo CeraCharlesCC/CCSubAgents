@@ -295,39 +295,9 @@ func (m *Manager) promptGlobalInstallTargets(ctx context.Context, home string, p
 func (m *Manager) Run(ctx context.Context, command Command, scope Scope) error {
 	switch scope {
 	case ScopeGlobal:
-		switch command {
-		case CommandInstall:
-			home, err := m.homeDir()
-			if err != nil {
-				return fmt.Errorf("determine home directory: %w", err)
-			}
-			paths := resolveInstallPaths(home)
-			targets, err := m.promptGlobalInstallTargets(ctx, home, paths)
-			if err != nil {
-				return err
-			}
-			m.globalInstallTargets = targets
-			return m.installOrUpdate(ctx, false)
-		case CommandUpdate:
-			m.globalInstallTargets = nil
-			return m.installOrUpdate(ctx, true)
-		case CommandUninstall:
-			m.globalInstallTargets = nil
-			return m.uninstall(ctx)
-		default:
-			return fmt.Errorf("unknown command %q (expected: install, update, uninstall)", command)
-		}
+		return m.runGlobal(ctx, command)
 	case ScopeLocal:
-		switch command {
-		case CommandInstall:
-			return m.installLocal(ctx)
-		case CommandUpdate:
-			return m.updateLocal(ctx)
-		case CommandUninstall:
-			return m.uninstallLocal(ctx)
-		default:
-			return fmt.Errorf("unknown command %q (expected: install, update, uninstall)", command)
-		}
+		return m.runLocal(ctx, command)
 	default:
 		return fmt.Errorf("unknown scope %q (expected: local, global)", scope)
 	}
@@ -537,62 +507,26 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 	}
 	m.reportDetail("tracked state path: %s", filepath.Join(stateDir, trackedFileName))
 
-	assets, err := mapRequiredAssets(release.Assets, installAssetNames)
+	tmpDir, downloaded, err := m.downloadRequiredAssets(ctx, stateDir, release, installAssetNames, "download-*")
 	if err != nil {
 		return err
 	}
-
-	tmpDir, err := os.MkdirTemp(stateDir, "download-*")
-	if err != nil {
-		return fmt.Errorf("create temp download dir: %w", err)
-	}
 	defer os.RemoveAll(tmpDir)
 
-	downloaded := map[string]string{}
-	for _, name := range installAssetNames {
-		asset := assets[name]
-		dest := filepath.Join(tmpDir, name)
-		if err := m.downloadFile(ctx, asset.BrowserDownloadURL, dest); err != nil {
-			return fmt.Errorf("download release asset %q: %w", name, err)
-		}
-		downloaded[name] = dest
-		if info, statErr := os.Stat(dest); statErr == nil {
-			m.reportDetail("downloaded %s (%d bytes)", name, info.Size())
-		}
-	}
-	m.reportStepOK("Downloaded release assets", release.TagName)
-
-	if m.skipAttestationsCheck {
-		m.reportStepOK("Verified attestations", "skipped (--skip-attestations-check)")
-		m.reportDetail("attestation verification skipped by flag")
-	} else {
-		if err := m.verifyDownloadedAssets(ctx, downloaded); err != nil {
-			var attestationErr *attestationVerificationError
-			if errors.As(err, &attestationErr) {
-				m.reportStepFail("Verified attestations")
-				m.reportMessageLine("Failed asset: %s", attestationErr.Asset)
-				return formatAttestationVerificationFailure(attestationErr, commandForAttestationSkip(isUpdate, ScopeGlobal))
-			}
-			return err
-		}
-		m.reportStepOK("Verified attestations", "")
+	if err := m.verifyAttestationsOrReport(ctx, downloaded, isUpdate, ScopeGlobal); err != nil {
+		return err
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 
-	bundleDir := filepath.Join(tmpDir, "local-artifact")
-	if err := os.MkdirAll(bundleDir, stateDirPerm); err != nil {
-		return fmt.Errorf("create local-artifact bundle extraction dir: %w", err)
-	}
-
-	bundleBinaries, err := extractBundleBinaries(downloaded[assetLocalArtifactZip], bundleDir, []string{assetArtifactMCP, assetArtifactWeb})
+	bundleBinaries, err := m.extractDownloadedBundle(tmpDir, downloaded)
 	if err != nil {
-		return fmt.Errorf("extract %s: %w", assetLocalArtifactZip, err)
+		return err
 	}
-	m.reportDetail("extracted bundle %s", assetLocalArtifactZip)
 
 	rollback := newInstallRollback()
+	mutations := newMutationTracker(rollback)
 	defer func() {
 		if retErr == nil {
 			return
@@ -603,23 +537,11 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 	}()
 
 	agentsDir := filepath.Join(home, agentsRelativePath)
-	createdDirs := []string{}
-	if created, err := ensureDirTracked(filepath.Dir(agentsDir)); err != nil {
+	if err := mutations.ensureDir(filepath.Dir(agentsDir)); err != nil {
 		return err
-	} else if created {
-		createdDirs = append(createdDirs, filepath.Dir(agentsDir))
-		rollback.trackCreatedDir(filepath.Dir(agentsDir))
 	}
-	if created, err := ensureDirTracked(agentsDir); err != nil {
+	if err := mutations.ensureDir(agentsDir); err != nil {
 		return err
-	} else if created {
-		createdDirs = append(createdDirs, agentsDir)
-		rollback.trackCreatedDir(agentsDir)
-	}
-
-	binaryPaths := []string{
-		filepath.Join(paths.binaryDir, assetArtifactMCP),
-		filepath.Join(paths.binaryDir, assetArtifactWeb),
 	}
 
 	if err := os.MkdirAll(paths.binaryDir, stateDirPerm); err != nil {
@@ -629,27 +551,9 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 		return fmt.Errorf("create binary install directory %s: %w", paths.binaryDir, err)
 	}
 
-	installer := m.installBinary
-	if installer == nil {
-		installer = installBinary
-	}
-
-	for _, binaryName := range []string{assetArtifactMCP, assetArtifactWeb} {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		src := bundleBinaries[binaryName]
-		dst := filepath.Join(paths.binaryDir, binaryName)
-		if err := rollback.captureFile(dst); err != nil {
-			return err
-		}
-		if err := installer(src, dst); err != nil {
-			if errors.Is(err, os.ErrPermission) {
-				return fmt.Errorf("install %s into %s: %w (requires privileges to write %s)", binaryName, paths.binaryDir, err, paths.binaryDir)
-			}
-			return fmt.Errorf("install %s into %s: %w", binaryName, paths.binaryDir, err)
-		}
-		m.reportDetail("installed binary: %s", binaryName)
+	binaryPaths, err := m.installExtractedBinaries(ctx, bundleBinaries, paths.binaryDir, mutations, paths.binaryDir)
+	if err != nil {
+		return err
 	}
 	m.reportStepOK("Installed binaries", fmt.Sprintf("→ %s", toHomeTildePath(home, paths.binaryDir)))
 
@@ -657,7 +561,7 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 		return err
 	}
 
-	extractedFiles, extractedDirs, err := extractAgentsArchiveWithHook(downloaded[assetAgentsZip], agentsDir, rollback.captureFile)
+	extractedFiles, extractedDirs, err := extractAgentsArchiveWithHook(downloaded[assetAgentsZip], agentsDir, mutations.snapshotFile)
 	if err != nil {
 		return fmt.Errorf("extract %s into %s: %w", assetAgentsZip, agentsDir, err)
 	}
@@ -665,28 +569,18 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 	m.reportDetail("extracted %d agent definitions", len(extractedFiles))
 
 	for _, target := range configTargets {
-		if created, err := ensureParentDir(target.settingsPath); err != nil {
+		if err := mutations.ensureParentDir(target.settingsPath); err != nil {
 			return err
-		} else if created {
-			createdDirs = append(createdDirs, filepath.Dir(target.settingsPath))
-			rollback.trackCreatedDir(filepath.Dir(target.settingsPath))
 		}
-		if err := rollback.captureFile(target.settingsPath); err != nil {
-			if !errors.Is(err, os.ErrNotExist) {
-				return err
-			}
+		if err := mutations.snapshotFile(target.settingsPath); err != nil {
+			return err
 		}
 
-		if created, err := ensureParentDir(target.mcpPath); err != nil {
+		if err := mutations.ensureParentDir(target.mcpPath); err != nil {
 			return err
-		} else if created {
-			createdDirs = append(createdDirs, filepath.Dir(target.mcpPath))
-			rollback.trackCreatedDir(filepath.Dir(target.mcpPath))
 		}
-		if err := rollback.captureFile(target.mcpPath); err != nil {
-			if !errors.Is(err, os.ErrNotExist) {
-				return err
-			}
+		if err := mutations.snapshotFile(target.mcpPath); err != nil {
+			return err
 		}
 	}
 
@@ -725,7 +619,7 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 		InstalledAt: m.now().UTC().Format(time.RFC3339),
 		Managed: managedState{
 			Files: uniqueSorted(append(append([]string{}, binaryPaths...), extractedFiles...)),
-			Dirs:  uniqueSorted(append(createdDirs, extractedDirs...)),
+			Dirs:  uniqueSorted(append(mutations.createdDirectories(), extractedDirs...)),
 		},
 		JSONEdits: trackedJSONOpsFromEdits(settingsEdits, mcpEdits),
 	}

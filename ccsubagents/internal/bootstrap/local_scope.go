@@ -291,59 +291,26 @@ func (m *Manager) installOrUpdateLocal(ctx context.Context, cfg localInstallConf
 	if !cfg.binaryOnly {
 		requiredAssets = append(requiredAssets, assetAgentsZip)
 	}
-	assets, err := mapRequiredAssets(release.Assets, requiredAssets)
+	tmpDir, downloaded, err := m.downloadRequiredAssets(ctx, cfg.stateDir, release, requiredAssets, "download-local-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmpDir)
+
+	if err := m.verifyAttestationsOrReport(ctx, downloaded, cfg.isUpdate, ScopeLocal); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	bundleBinaries, err := m.extractDownloadedBundle(tmpDir, downloaded)
 	if err != nil {
 		return err
 	}
 
-	tmpDir, err := os.MkdirTemp(cfg.stateDir, "download-local-*")
-	if err != nil {
-		return fmt.Errorf("create temp download dir: %w", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	downloaded := map[string]string{}
-	for _, name := range requiredAssets {
-		asset := assets[name]
-		dest := filepath.Join(tmpDir, name)
-		if err := m.downloadFile(ctx, asset.BrowserDownloadURL, dest); err != nil {
-			return fmt.Errorf("download release asset %q: %w", name, err)
-		}
-		downloaded[name] = dest
-		if info, statErr := os.Stat(dest); statErr == nil {
-			m.reportDetail("downloaded %s (%d bytes)", name, info.Size())
-		}
-	}
-	m.reportStepOK("Downloaded release assets", release.TagName)
-
-	if m.skipAttestationsCheck {
-		m.reportStepOK("Verified attestations", "skipped (--skip-attestations-check)")
-		m.reportDetail("attestation verification skipped by flag")
-	} else {
-		if err := m.verifyDownloadedAssets(ctx, downloaded); err != nil {
-			var attestationErr *attestationVerificationError
-			if errors.As(err, &attestationErr) {
-				m.reportStepFail("Verified attestations")
-				m.reportMessageLine("Failed asset: %s", attestationErr.Asset)
-				return formatAttestationVerificationFailure(attestationErr, commandForAttestationSkip(cfg.isUpdate, ScopeLocal))
-			}
-			return err
-		}
-		m.reportStepOK("Verified attestations", "")
-	}
-
-	bundleDir := filepath.Join(tmpDir, "local-artifact")
-	if err := os.MkdirAll(bundleDir, stateDirPerm); err != nil {
-		return fmt.Errorf("create local-artifact bundle extraction dir: %w", err)
-	}
-
-	bundleBinaries, err := extractBundleBinaries(downloaded[assetLocalArtifactZip], bundleDir, []string{assetArtifactMCP, assetArtifactWeb})
-	if err != nil {
-		return fmt.Errorf("extract %s: %w", assetLocalArtifactZip, err)
-	}
-	m.reportDetail("extracted bundle %s", assetLocalArtifactZip)
-
 	rollback := newInstallRollback()
+	mutations := newMutationTracker(rollback)
 	defer func() {
 		if retErr == nil {
 			return
@@ -354,36 +321,13 @@ func (m *Manager) installOrUpdateLocal(ctx context.Context, cfg localInstallConf
 	}()
 
 	managedDir := filepath.Join(cfg.location.installRoot, localManagedDirRelativePath)
-	createdDirs := []string{}
-	if created, err := ensureDirTracked(managedDir); err != nil {
+	if err := mutations.ensureDir(managedDir); err != nil {
 		return err
-	} else if created {
-		createdDirs = append(createdDirs, managedDir)
-		rollback.trackCreatedDir(managedDir)
 	}
 
-	binaryPaths := []string{
-		filepath.Join(managedDir, assetArtifactMCP),
-		filepath.Join(managedDir, assetArtifactWeb),
-	}
-	installer := m.installBinary
-	if installer == nil {
-		installer = installBinary
-	}
-
-	for _, binaryName := range []string{assetArtifactMCP, assetArtifactWeb} {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		src := bundleBinaries[binaryName]
-		dst := filepath.Join(managedDir, binaryName)
-		if err := rollback.captureFile(dst); err != nil {
-			return err
-		}
-		if err := installer(src, dst); err != nil {
-			return fmt.Errorf("install %s into %s: %w", binaryName, managedDir, err)
-		}
-		m.reportDetail("installed binary: %s", binaryName)
+	binaryPaths, err := m.installExtractedBinaries(ctx, bundleBinaries, managedDir, mutations, "")
+	if err != nil {
+		return err
 	}
 	m.reportStepOK("Installed local binaries", fmt.Sprintf("→ %s", filepath.ToSlash(managedDir)))
 
@@ -392,20 +336,14 @@ func (m *Manager) installOrUpdateLocal(ctx context.Context, cfg localInstallConf
 	mcpEdits := []mcpEdit{}
 	if !cfg.binaryOnly {
 		agentsDir := filepath.Join(cfg.location.installRoot, localAgentsRelativePath)
-		if created, err := ensureDirTracked(filepath.Dir(agentsDir)); err != nil {
+		if err := mutations.ensureDir(filepath.Dir(agentsDir)); err != nil {
 			return err
-		} else if created {
-			createdDirs = append(createdDirs, filepath.Dir(agentsDir))
-			rollback.trackCreatedDir(filepath.Dir(agentsDir))
 		}
-		if created, err := ensureDirTracked(agentsDir); err != nil {
+		if err := mutations.ensureDir(agentsDir); err != nil {
 			return err
-		} else if created {
-			createdDirs = append(createdDirs, agentsDir)
-			rollback.trackCreatedDir(agentsDir)
 		}
 
-		extractedFiles, extractedDirs, err = extractAgentsArchiveWithHook(downloaded[assetAgentsZip], agentsDir, rollback.captureFile)
+		extractedFiles, extractedDirs, err = extractAgentsArchiveWithHook(downloaded[assetAgentsZip], agentsDir, mutations.snapshotFile)
 		if err != nil {
 			return fmt.Errorf("extract %s into %s: %w", assetAgentsZip, agentsDir, err)
 		}
@@ -413,13 +351,10 @@ func (m *Manager) installOrUpdateLocal(ctx context.Context, cfg localInstallConf
 		m.reportDetail("extracted %d local agent definitions", len(extractedFiles))
 
 		mcpPath := filepath.Join(cfg.location.installRoot, localMCPRelativePath)
-		if created, err := ensureParentDir(mcpPath); err != nil {
+		if err := mutations.ensureParentDir(mcpPath); err != nil {
 			return err
-		} else if created {
-			createdDirs = append(createdDirs, filepath.Dir(mcpPath))
-			rollback.trackCreatedDir(filepath.Dir(mcpPath))
 		}
-		if err := rollback.captureFile(mcpPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := mutations.snapshotFile(mcpPath); err != nil {
 			return err
 		}
 
@@ -436,7 +371,7 @@ func (m *Manager) installOrUpdateLocal(ctx context.Context, cfg localInstallConf
 		m.reportDetail("updated workspace MCP config: %s", mcpPath)
 
 		if cfg.isUpdate && cfg.previous != nil {
-			if err := removeStaleAgentFilesWithHook(cfg.previous.Managed.Files, extractedFiles, agentsDir, rollback.captureFile); err != nil {
+			if err := removeStaleAgentFilesWithHook(cfg.previous.Managed.Files, extractedFiles, agentsDir, mutations.snapshotFile); err != nil {
 				return err
 			}
 			m.reportStepOK("Removed stale managed local agent files", "")
@@ -455,7 +390,7 @@ func (m *Manager) installOrUpdateLocal(ctx context.Context, cfg localInstallConf
 			return err
 		}
 		if ignoreFile != "" {
-			if err := rollback.captureFile(ignoreFile); err != nil {
+			if err := mutations.snapshotFile(ignoreFile); err != nil {
 				return err
 			}
 		}
@@ -483,7 +418,7 @@ func (m *Manager) installOrUpdateLocal(ctx context.Context, cfg localInstallConf
 		InstalledAt: m.now().UTC().Format(time.RFC3339),
 		Managed: managedState{
 			Files: uniqueSorted(append(append([]string{}, binaryPaths...), extractedFiles...)),
-			Dirs:  uniqueSorted(append(createdDirs, extractedDirs...)),
+			Dirs:  uniqueSorted(append(mutations.createdDirectories(), extractedDirs...)),
 		},
 		JSONEdits:   trackedJSONOpsFromEdits(nil, mcpEdits),
 		IgnoreEdits: ignoreEdits,
