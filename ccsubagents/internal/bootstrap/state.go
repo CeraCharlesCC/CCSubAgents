@@ -291,6 +291,8 @@ func (m *Manager) saveTrackedState(stateDir string, state trackedState) error {
 	if err != nil {
 		return fmt.Errorf("create tracked temp file: %w", err)
 	}
+	// Keep tracked state private. CreateTemp starts at owner-only permissions
+	// and we intentionally avoid widening them when replacing tracked.json.
 	tmpPath := tmp.Name()
 	defer os.Remove(tmpPath)
 
