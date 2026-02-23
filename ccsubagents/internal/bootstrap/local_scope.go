@@ -277,7 +277,15 @@ func (m *Manager) installOrUpdateLocal(ctx context.Context, cfg localInstallConf
 		return err
 	}
 
-	release, err := m.fetchLatestRelease(ctx)
+	var (
+		release releaseResponse
+		err     error
+	)
+	if cfg.isUpdate {
+		release, err = m.resolveReleaseForUpdate(ctx)
+	} else {
+		release, err = m.resolveReleaseForInstall(ctx)
+	}
 	if err != nil {
 		return err
 	}

@@ -9,6 +9,8 @@ import (
 )
 
 type executeManagerStub struct {
+	installVersion        string
+	pinned                bool
 	skipAttestationsCheck bool
 	verbose               bool
 	statusWriter          io.Writer
@@ -29,6 +31,14 @@ func (m *executeManagerStub) SetSkipAttestationsCheck(skip bool) {
 
 func (m *executeManagerStub) SetVerbose(verbose bool) {
 	m.verbose = verbose
+}
+
+func (m *executeManagerStub) SetInstallVersion(version string) {
+	m.installVersion = version
+}
+
+func (m *executeManagerStub) SetPinned(pinned bool) {
+	m.pinned = pinned
 }
 
 func (m *executeManagerStub) SetStatusWriter(writer io.Writer) {
@@ -65,6 +75,8 @@ func TestExecute_PropagatesStatusWriterAndPromptIO(t *testing.T) {
 		Command: CommandUpdate,
 		Scope:   ScopeGlobal,
 		Options: ExecuteOptions{
+			InstallVersion:        "v1.2.3",
+			Pinned:                true,
 			SkipAttestationsCheck: true,
 			Verbose:               true,
 			StatusWriter:          &statusOut,
@@ -78,6 +90,12 @@ func TestExecute_PropagatesStatusWriterAndPromptIO(t *testing.T) {
 
 	if !stub.skipAttestationsCheck {
 		t.Fatalf("expected skip attestation option to propagate")
+	}
+	if stub.installVersion != "v1.2.3" {
+		t.Fatalf("expected install version to propagate, got %q", stub.installVersion)
+	}
+	if !stub.pinned {
+		t.Fatalf("expected pinned option to propagate")
 	}
 	if !stub.verbose {
 		t.Fatalf("expected verbose option to propagate")
