@@ -21,6 +21,7 @@ const (
 	releaseRepo                   = "CeraCharlesCC/CCSubAgents"
 	releaseWorkflowPath           = ".github/workflows/manual-release.yml"
 	releaseLatestURL              = "https://api.github.com/repos/" + releaseRepo + "/releases/latest"
+	releaseTagsURLPrefix          = "https://api.github.com/repos/" + releaseRepo + "/releases/tags/"
 	assetAgentsZip                = "agents.zip"
 	assetLocalArtifactZip         = "local-artifact.zip"
 	assetArtifactMCP              = "local-artifact-mcp"
@@ -450,6 +451,9 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	defer func() {
+		m.pendingPinWrite = nil
+	}()
 
 	home, err := m.homeDir()
 	if err != nil {
@@ -490,7 +494,12 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 		return err
 	}
 
-	release, err := m.fetchLatestRelease(ctx)
+	var release releaseResponse
+	if isUpdate {
+		release, err = m.resolveReleaseForUpdate(ctx)
+	} else {
+		release, err = m.resolveReleaseForInstall(ctx)
+	}
 	if err != nil {
 		return err
 	}
@@ -639,6 +648,10 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 			}
 			m.reportStepOK("Removed stale managed agent files", "")
 		}
+	}
+
+	if err := m.persistPendingPinWrite(mutations); err != nil {
+		return err
 	}
 
 	if err := m.saveTrackedState(stateDir, state); err != nil {

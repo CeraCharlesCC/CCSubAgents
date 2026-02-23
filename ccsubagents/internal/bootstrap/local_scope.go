@@ -276,8 +276,25 @@ func (m *Manager) installOrUpdateLocal(ctx context.Context, cfg localInstallConf
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	defer func() {
+		m.pendingPinWrite = nil
+	}()
 
-	release, err := m.fetchLatestRelease(ctx)
+	previousSettingsRoot := m.installSettingsRoot
+	m.installSettingsRoot = cfg.location.installRoot
+	defer func() {
+		m.installSettingsRoot = previousSettingsRoot
+	}()
+
+	var (
+		release releaseResponse
+		err     error
+	)
+	if cfg.isUpdate {
+		release, err = m.resolveReleaseForUpdate(ctx)
+	} else {
+		release, err = m.resolveReleaseForInstall(ctx)
+	}
 	if err != nil {
 		return err
 	}
@@ -422,6 +439,10 @@ func (m *Manager) installOrUpdateLocal(ctx context.Context, cfg localInstallConf
 		},
 		JSONEdits:   trackedJSONOpsFromEdits(nil, mcpEdits),
 		IgnoreEdits: ignoreEdits,
+	}
+
+	if err := m.persistPendingPinWrite(mutations); err != nil {
+		return err
 	}
 
 	cfg.state.Version = trackedSchemaVersion

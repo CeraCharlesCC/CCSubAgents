@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -26,6 +27,24 @@ type releaseAsset struct {
 type attestationVerificationError struct {
 	Asset string
 	Err   error
+}
+
+var errReleaseNotFound = errors.New("release not found")
+
+type releaseNotFoundError struct {
+	Tag string
+}
+
+func (e *releaseNotFoundError) Error() string {
+	tag := strings.TrimSpace(e.Tag)
+	if tag == "" {
+		return "release not found"
+	}
+	return fmt.Sprintf("release %s not found", tag)
+}
+
+func (e *releaseNotFoundError) Unwrap() error {
+	return errReleaseNotFound
 }
 
 func (e *attestationVerificationError) Error() string {
@@ -60,7 +79,7 @@ func mapRequiredAssets(assets []releaseAsset, names []string) (map[string]releas
 	for _, name := range names {
 		asset, ok := byName[name]
 		if !ok {
-			return nil, fmt.Errorf("latest release is missing required asset %q", name)
+			return nil, fmt.Errorf("release is missing required asset %q", name)
 		}
 		if strings.TrimSpace(asset.BrowserDownloadURL) == "" {
 			return nil, fmt.Errorf("release asset %q has no download URL", name)
@@ -99,6 +118,49 @@ func (m *Manager) fetchLatestRelease(ctx context.Context) (releaseResponse, erro
 	if strings.TrimSpace(decoded.TagName) == "" {
 		return releaseResponse{}, errors.New("latest release response is missing tag_name")
 	}
+	return decoded, nil
+}
+
+func (m *Manager) fetchReleaseByTag(ctx context.Context, tag string) (releaseResponse, error) {
+	normalizedTag := normalizeVersionTag(tag)
+	if normalizedTag == "" {
+		return releaseResponse{}, errors.New("release tag is required")
+	}
+
+	requestURL := releaseTagsURLPrefix + url.PathEscape(normalizedTag)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
+	if err != nil {
+		return releaseResponse{}, fmt.Errorf("create release tag request: %w", err)
+	}
+	req.Header.Set("Accept", httpsHeaderAccept)
+	req.Header.Set("User-Agent", httpsHeaderUserAgent)
+	if token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); token != "" {
+		req.Header.Set(httpsHeaderAuthorization, httpsHeaderGithubTokenPref+token)
+	}
+
+	resp, err := m.httpClient.Do(req)
+	if err != nil {
+		return releaseResponse{}, fmt.Errorf("request release tag %s: %w", normalizedTag, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return releaseResponse{}, &releaseNotFoundError{Tag: normalizedTag}
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return releaseResponse{}, fmt.Errorf("release tag request failed for %s: status=%d body=%s", normalizedTag, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var decoded releaseResponse
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+		return releaseResponse{}, fmt.Errorf("decode release tag response for %s: %w", normalizedTag, err)
+	}
+	if strings.TrimSpace(decoded.TagName) == "" {
+		return releaseResponse{}, fmt.Errorf("release tag response for %s is missing tag_name", normalizedTag)
+	}
+
 	return decoded, nil
 }
 

@@ -18,6 +18,8 @@ func main() {
 type cliArgs struct {
 	commandRaw            string
 	scopeRaw              string
+	versionRaw            string
+	pinned                bool
 	skipAttestationsCheck bool
 	verbose               bool
 	showUsage             bool
@@ -54,6 +56,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		Command: command,
 		Scope:   scope,
 		Options: bootstrap.ExecuteOptions{
+			InstallVersion:        parsed.versionRaw,
+			Pinned:                parsed.pinned,
 			SkipAttestationsCheck: parsed.skipAttestationsCheck,
 			Verbose:               parsed.verbose,
 			StatusWriter:          stdout,
@@ -75,6 +79,8 @@ func parseCLIArgs(args []string) (cliArgs, error) {
 	skipAttestationsCheck := fs.Bool("skip-attestations-check", false, "skip attestation verification")
 	verbose := fs.Bool("verbose", false, "show detailed status output")
 	scope := fs.String("scope", "", "scope for install lifecycle (local or global)")
+	version := fs.String("version", "", "release version to install (for example v1.2.3)")
+	pinned := fs.Bool("pinned", false, "pin the specified --version in settings.json")
 
 	if err := fs.Parse(normalizeGlobalOptionOrder(args)); err != nil {
 		return cliArgs{}, err
@@ -84,14 +90,37 @@ func parseCLIArgs(args []string) (cliArgs, error) {
 		return cliArgs{showUsage: true, skipAttestationsCheck: *skipAttestationsCheck, verbose: *verbose}, nil
 	}
 
+	visited := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) {
+		visited[f.Name] = true
+	})
+	if visited["scope"] && *scope == "" {
+		return cliArgs{}, fmt.Errorf("--scope requires a value")
+	}
+	if visited["version"] && *version == "" {
+		return cliArgs{}, fmt.Errorf("--version requires a value")
+	}
+
 	positionals := fs.Args()
 	if len(positionals) != 1 {
 		return cliArgs{}, fmt.Errorf("expected exactly 1 command argument (install, update, or uninstall)")
 	}
 
+	commandRaw := positionals[0]
+	versionRaw := strings.TrimSpace(*version)
+	normalizedVersion := bootstrap.NormalizeInstallVersionTag(versionRaw)
+	if *pinned && normalizedVersion == "" {
+		return cliArgs{}, bootstrap.ErrPinnedRequiresVersion
+	}
+	if commandRaw != "install" && (versionRaw != "" || *pinned) {
+		return cliArgs{}, fmt.Errorf("--version and --pinned can only be used with install")
+	}
+
 	return cliArgs{
-		commandRaw:            positionals[0],
+		commandRaw:            commandRaw,
 		scopeRaw:              *scope,
+		versionRaw:            versionRaw,
+		pinned:                *pinned,
 		skipAttestationsCheck: *skipAttestationsCheck,
 		verbose:               *verbose,
 	}, nil
@@ -111,9 +140,9 @@ func normalizeGlobalOptionOrder(args []string) []string {
 		arg := args[idx]
 		name, hasInlineValue, isOption := parseOptionName(arg)
 		if isOption && isGlobalOptionName(name) {
-			// Handle --scope specially so a missing value does not consume
+			// Handle options with values specially so a missing value does not consume
 			// subsequent options during flag parsing.
-			if name == "scope" && !hasInlineValue {
+			if (name == "scope" || name == "version") && !hasInlineValue {
 				if idx+1 < len(args) {
 					// Shell quoting is resolved before os.Args is built, so quoted
 					// values (for example --scope="my scope") arrive as one token.
@@ -122,10 +151,10 @@ func normalizeGlobalOptionOrder(args []string) []string {
 						globalOptions = append(globalOptions, args[idx+1])
 						skipNext = true
 					} else {
-						globalOptions = append(globalOptions, "--scope=")
+						globalOptions = append(globalOptions, "--"+name+"=")
 					}
 				} else {
-					globalOptions = append(globalOptions, "--scope=")
+					globalOptions = append(globalOptions, "--"+name+"=")
 				}
 				continue
 			}
@@ -155,7 +184,7 @@ func parseOptionName(arg string) (string, bool, bool) {
 
 func isGlobalOptionName(name string) bool {
 	switch name {
-	case "help", "h", "skip-attestations-check", "scope":
+	case "help", "h", "skip-attestations-check", "scope", "version", "pinned":
 		return true
 	case "verbose":
 		return true
@@ -174,6 +203,8 @@ Commands:
 
 Options:
   --scope=local|global         Installation scope (default: install→local, update/uninstall→global)
+  --version=<tag>              Install a specific release tag (install only)
+  --pinned                     Save --version as pinned-version in settings.json (install only)
   --skip-attestations-check    Skip release attestation verification
   --verbose                    Show detailed output
   --help, -h                   Show this usage text
@@ -181,6 +212,8 @@ Options:
 Examples:
   ccsubagents install
   ccsubagents install --scope=global
+  ccsubagents install --version=v1.2.3
+  ccsubagents install --version=v1.2.3 --pinned
   ccsubagents update
   ccsubagents uninstall
   ccsubagents install --scope=global --verbose

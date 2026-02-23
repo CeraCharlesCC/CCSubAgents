@@ -10,6 +10,8 @@ type executeManager interface {
 	SetVerbose(bool)
 	SetStatusWriter(io.Writer)
 	SetInstallPromptIO(io.Reader, io.Writer)
+	SetInstallVersion(string)
+	SetPinned(bool)
 	Run(context.Context, Command, Scope) error
 }
 
@@ -24,6 +26,8 @@ type ExecuteRequest struct {
 }
 
 type ExecuteOptions struct {
+	InstallVersion        string
+	Pinned                bool
 	SkipAttestationsCheck bool
 	Verbose               bool
 	StatusWriter          io.Writer
@@ -33,6 +37,8 @@ type ExecuteOptions struct {
 
 func Execute(ctx context.Context, request ExecuteRequest) error {
 	manager := newExecuteManager()
+	manager.SetInstallVersion(request.Options.InstallVersion)
+	manager.SetPinned(request.Options.Pinned)
 	manager.SetSkipAttestationsCheck(request.Options.SkipAttestationsCheck)
 	manager.SetVerbose(request.Options.Verbose)
 

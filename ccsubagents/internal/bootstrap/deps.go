@@ -25,6 +25,10 @@ type Manager struct {
 	statusOut             io.Writer
 	promptIn              io.Reader
 	promptOut             io.Writer
+	installVersionRaw     string
+	pinRequested          bool
+	installSettingsRoot   string
+	pendingPinWrite       *pendingPinWrite
 	skipAttestationsCheck bool
 	verbose               bool
 	globalInstallTargets  []installConfigTarget
@@ -61,6 +65,14 @@ func (m *Manager) SetVerbose(verbose bool) {
 func (m *Manager) SetInstallPromptIO(input io.Reader, output io.Writer) {
 	m.promptIn = input
 	m.promptOut = output
+}
+
+func (m *Manager) SetInstallVersion(version string) {
+	m.installVersionRaw = version
+}
+
+func (m *Manager) SetPinned(pinned bool) {
+	m.pinRequested = pinned
 }
 
 func (m *Manager) statusf(format string, args ...any) {
