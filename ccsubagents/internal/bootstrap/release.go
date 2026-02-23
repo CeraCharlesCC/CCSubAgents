@@ -127,8 +127,8 @@ func (m *Manager) fetchReleaseByTag(ctx context.Context, tag string) (releaseRes
 		return releaseResponse{}, errors.New("release tag is required")
 	}
 
-	url := releaseTagsURLPrefix + url.PathEscape(normalizedTag)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	requestURL := releaseTagsURLPrefix + url.PathEscape(normalizedTag)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
 		return releaseResponse{}, fmt.Errorf("create release tag request: %w", err)
 	}

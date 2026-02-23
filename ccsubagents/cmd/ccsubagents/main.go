@@ -90,6 +90,17 @@ func parseCLIArgs(args []string) (cliArgs, error) {
 		return cliArgs{showUsage: true, skipAttestationsCheck: *skipAttestationsCheck, verbose: *verbose}, nil
 	}
 
+	visited := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) {
+		visited[f.Name] = true
+	})
+	if visited["scope"] && *scope == "" {
+		return cliArgs{}, fmt.Errorf("--scope requires a value")
+	}
+	if visited["version"] && *version == "" {
+		return cliArgs{}, fmt.Errorf("--version requires a value")
+	}
+
 	positionals := fs.Args()
 	if len(positionals) != 1 {
 		return cliArgs{}, fmt.Errorf("expected exactly 1 command argument (install, update, or uninstall)")
@@ -192,8 +203,8 @@ Commands:
 
 Options:
   --scope=local|global         Installation scope (default: install→local, update/uninstall→global)
-	--version=<tag>              Install a specific release tag (install only)
-	--pinned                     Save --version as pinned-version in settings.json (install only)
+  --version=<tag>              Install a specific release tag (install only)
+  --pinned                     Save --version as pinned-version in settings.json (install only)
   --skip-attestations-check    Skip release attestation verification
   --verbose                    Show detailed output
   --help, -h                   Show this usage text
@@ -201,8 +212,8 @@ Options:
 Examples:
   ccsubagents install
   ccsubagents install --scope=global
-	ccsubagents install --version=v1.2.3
-	ccsubagents install --version=v1.2.3 --pinned
+  ccsubagents install --version=v1.2.3
+  ccsubagents install --version=v1.2.3 --pinned
   ccsubagents update
   ccsubagents uninstall
   ccsubagents install --scope=global --verbose

@@ -75,14 +75,24 @@ func TestParseCLIArgs(t *testing.T) {
 			want: cliArgs{commandRaw: "install", scopeRaw: "my scope"},
 		},
 		{
-			name: "scope missing value before another flag",
-			args: []string{"install", "--scope", "--skip-attestations-check"},
-			want: cliArgs{commandRaw: "install", skipAttestationsCheck: true},
+			name:    "scope missing value before another flag",
+			args:    []string{"install", "--scope", "--skip-attestations-check"},
+			wantErr: "--scope requires a value",
 		},
 		{
-			name: "scope missing trailing value",
-			args: []string{"install", "--scope"},
-			want: cliArgs{commandRaw: "install"},
+			name:    "scope missing trailing value",
+			args:    []string{"install", "--scope"},
+			wantErr: "--scope requires a value",
+		},
+		{
+			name:    "version missing value before another flag",
+			args:    []string{"install", "--version", "--skip-attestations-check"},
+			wantErr: "--version requires a value",
+		},
+		{
+			name:    "version missing trailing value",
+			args:    []string{"install", "--version"},
+			wantErr: "--version requires a value",
 		},
 		{
 			name: "help and skip attestations in mixed order",

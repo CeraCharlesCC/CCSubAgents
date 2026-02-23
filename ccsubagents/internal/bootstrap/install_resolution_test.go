@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -215,6 +216,30 @@ func TestResolveReleaseForInstall_PinRequestedWritesPinnedVersionLocally(t *test
 	}
 	if got := root["pinned-version"]; got != "v1.2.3" {
 		t.Fatalf("expected local pinned-version v1.2.3, got %#v", got)
+	}
+}
+
+func TestResolveReleaseForInstall_PinRequestedWithoutVersionReturnsEarly(t *testing.T) {
+	home := t.TempDir()
+	cwd := t.TempDir()
+
+	requestCount := 0
+	m := &Manager{
+		httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			requestCount++
+			return nil, fmt.Errorf("unexpected request URL: %s", req.URL.String())
+		})},
+		homeDir:    func() (string, error) { return home, nil },
+		workingDir: func() (string, error) { return cwd, nil },
+	}
+	m.pinRequested = true
+
+	_, err := m.resolveReleaseForInstall(context.Background())
+	if !errors.Is(err, ErrPinnedRequiresVersion) {
+		t.Fatalf("expected ErrPinnedRequiresVersion, got %v", err)
+	}
+	if requestCount != 0 {
+		t.Fatalf("expected no network requests, got %d", requestCount)
 	}
 }
 
