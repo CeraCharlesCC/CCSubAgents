@@ -43,9 +43,6 @@ func (m *Manager) resolveReleaseForInstall(ctx context.Context) (releaseResponse
 	if !m.pinRequested {
 		return release, nil
 	}
-	if pinnedTag != "" && pinnedTag != effectiveTag {
-		return releaseResponse{}, fmt.Errorf("cannot change pinned-version from %s to %s via CLI; edit settings.json to change/remove pinned-version", pinnedTag, effectiveTag)
-	}
 
 	pinPath, pinScope, err := choosePinWritePath(cwd, home)
 	if err != nil {
