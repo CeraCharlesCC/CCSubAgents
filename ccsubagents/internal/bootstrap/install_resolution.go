@@ -41,7 +41,7 @@ func (m *Manager) resolveReleaseForInstall(ctx context.Context) (releaseResponse
 		return release, nil
 	}
 	if effectiveTag == "" {
-		return releaseResponse{}, errors.New("--pinned requires --version")
+		return releaseResponse{}, ErrPinnedRequiresVersion
 	}
 	if pinnedTag != "" && pinnedTag != effectiveTag {
 		return releaseResponse{}, fmt.Errorf("cannot change pinned-version from %s to %s via CLI; edit settings.json to change/remove pinned-version", pinnedTag, effectiveTag)

@@ -97,8 +97,9 @@ func parseCLIArgs(args []string) (cliArgs, error) {
 
 	commandRaw := positionals[0]
 	versionRaw := strings.TrimSpace(*version)
-	if *pinned && bootstrap.NormalizeInstallVersionTag(versionRaw) == "" {
-		return cliArgs{}, fmt.Errorf("--pinned requires --version")
+	normalizedVersion := bootstrap.NormalizeInstallVersionTag(versionRaw)
+	if *pinned && normalizedVersion == "" {
+		return cliArgs{}, bootstrap.ErrPinnedRequiresVersion
 	}
 	if commandRaw != "install" && (versionRaw != "" || *pinned) {
 		return cliArgs{}, fmt.Errorf("--version and --pinned can only be used with install")

@@ -61,3 +61,22 @@ func TestFetchReleaseByTag_NotFoundReturnsTypedError(t *testing.T) {
 		t.Fatalf("expected missing tag v9.9.9, got %q", notFoundErr.Tag)
 	}
 }
+
+func TestFetchReleaseByTag_EscapesTagPathSegment(t *testing.T) {
+	var requestedURL string
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requestedURL = req.URL.String()
+		return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader(`{"message":"not found"}`)), Header: make(http.Header)}, nil
+	})}
+
+	m := &Manager{httpClient: client}
+	_, err := m.fetchReleaseByTag(context.Background(), "v1/2.3")
+	if err == nil {
+		t.Fatalf("expected not-found error")
+	}
+
+	wantURL := releaseTagsURLPrefix + "v1%2F2.3"
+	if requestedURL != wantURL {
+		t.Fatalf("expected request to %q, got %q", wantURL, requestedURL)
+	}
+}
