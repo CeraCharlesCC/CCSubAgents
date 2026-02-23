@@ -27,6 +27,8 @@ type Manager struct {
 	promptOut             io.Writer
 	installVersionRaw     string
 	pinRequested          bool
+	installSettingsRoot   string
+	pendingPinWrite       *pendingPinWrite
 	skipAttestationsCheck bool
 	verbose               bool
 	globalInstallTargets  []installConfigTarget

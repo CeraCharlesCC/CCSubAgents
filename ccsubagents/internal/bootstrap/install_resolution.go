@@ -6,14 +6,22 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
+
+type pendingPinWrite struct {
+	path       string
+	scope      settingsScope
+	versionTag string
+}
 
 func (m *Manager) resolveReleaseForInstall(ctx context.Context) (releaseResponse, error) {
 	if err := ctx.Err(); err != nil {
 		return releaseResponse{}, err
 	}
+	m.pendingPinWrite = nil
 
-	home, cwd, settings, err := m.resolveInstallSettingsContext()
+	home, settingsRoot, settings, err := m.resolveInstallSettingsContext()
 	if err != nil {
 		return releaseResponse{}, err
 	}
@@ -44,14 +52,15 @@ func (m *Manager) resolveReleaseForInstall(ctx context.Context) (releaseResponse
 		return release, nil
 	}
 
-	pinPath, pinScope, err := choosePinWritePath(cwd, home)
+	pinPath, pinScope, err := choosePinWritePath(settingsRoot, home)
 	if err != nil {
 		return releaseResponse{}, fmt.Errorf("determine pin settings path: %w", err)
 	}
-	if err := writePinnedVersion(pinPath, effectiveTag); err != nil {
-		return releaseResponse{}, err
+	m.pendingPinWrite = &pendingPinWrite{
+		path:       pinPath,
+		scope:      pinScope,
+		versionTag: effectiveTag,
 	}
-	m.reportDetail("saved pinned-version %s to %s settings (%s)", effectiveTag, pinScope, pinPath)
 
 	return release, nil
 }
@@ -60,6 +69,7 @@ func (m *Manager) resolveReleaseForUpdate(ctx context.Context) (releaseResponse,
 	if err := ctx.Err(); err != nil {
 		return releaseResponse{}, err
 	}
+	m.pendingPinWrite = nil
 
 	_, _, settings, err := m.resolveInstallSettingsContext()
 	if err != nil {
@@ -96,7 +106,7 @@ func (m *Manager) fetchReleaseForVersion(ctx context.Context, tag string) (relea
 	return releaseResponse{}, err
 }
 
-func (m *Manager) resolveInstallSettingsContext() (home, cwd string, settings installSettings, err error) {
+func (m *Manager) resolveInstallSettingsContext() (home, settingsRoot string, settings installSettings, err error) {
 	homeDir := m.homeDir
 	if homeDir == nil {
 		homeDir = os.UserHomeDir
@@ -106,20 +116,46 @@ func (m *Manager) resolveInstallSettingsContext() (home, cwd string, settings in
 		return "", "", installSettings{}, fmt.Errorf("determine home directory: %w", err)
 	}
 
-	workingDir := m.workingDir
-	if workingDir == nil {
-		workingDir = os.Getwd
+	settingsRoot = strings.TrimSpace(m.installSettingsRoot)
+	if settingsRoot == "" {
+		workingDir := m.workingDir
+		if workingDir == nil {
+			workingDir = os.Getwd
+		}
+		settingsRoot, err = workingDir()
+		if err != nil {
+			return "", "", installSettings{}, fmt.Errorf("determine current working directory: %w", err)
+		}
 	}
-	cwd, err = workingDir()
-	if err != nil {
-		return "", "", installSettings{}, fmt.Errorf("determine current working directory: %w", err)
-	}
-	cwd = filepath.Clean(cwd)
+	settingsRoot = filepath.Clean(settingsRoot)
 
-	settings, err = loadMergedInstallSettings(home, cwd)
+	settings, err = loadMergedInstallSettings(home, settingsRoot)
 	if err != nil {
 		return "", "", installSettings{}, fmt.Errorf("load install settings: %w", err)
 	}
 
-	return home, cwd, settings, nil
+	return home, settingsRoot, settings, nil
+}
+
+func (m *Manager) persistPendingPinWrite(mutations *mutationTracker) error {
+	if m.pendingPinWrite == nil {
+		return nil
+	}
+
+	pending := *m.pendingPinWrite
+	if mutations != nil {
+		if err := mutations.ensureParentDir(pending.path); err != nil {
+			return err
+		}
+		if err := mutations.snapshotFile(pending.path); err != nil {
+			return err
+		}
+	}
+
+	if err := writePinnedVersion(pending.path, pending.versionTag); err != nil {
+		return err
+	}
+	m.reportDetail("saved pinned-version %s to %s settings (%s)", pending.versionTag, pending.scope, pending.path)
+	m.pendingPinWrite = nil
+	return nil
 }

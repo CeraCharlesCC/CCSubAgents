@@ -451,6 +451,9 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	defer func() {
+		m.pendingPinWrite = nil
+	}()
 
 	home, err := m.homeDir()
 	if err != nil {
@@ -645,6 +648,10 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 			}
 			m.reportStepOK("Removed stale managed agent files", "")
 		}
+	}
+
+	if err := m.persistPendingPinWrite(mutations); err != nil {
+		return err
 	}
 
 	if err := m.saveTrackedState(stateDir, state); err != nil {

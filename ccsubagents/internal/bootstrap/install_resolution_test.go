@@ -184,7 +184,7 @@ func TestResolveReleaseForInstall_NotFoundWarnsAndAborts(t *testing.T) {
 	}
 }
 
-func TestResolveReleaseForInstall_PinRequestedWritesPinnedVersionLocally(t *testing.T) {
+func TestResolveReleaseForInstall_PinRequestedDefersPinnedVersionWrite(t *testing.T) {
 	home := t.TempDir()
 	cwd := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(cwd, "ccsubagents"), stateDirPerm); err != nil {
@@ -210,12 +210,55 @@ func TestResolveReleaseForInstall_PinRequestedWritesPinnedVersionLocally(t *test
 	}
 
 	_, localPath := resolveSettingsPaths(home, cwd)
-	root, err := readJSONFile(localPath)
-	if err != nil {
-		t.Fatalf("read local settings file: %v", err)
+	if _, err := os.Stat(localPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected no settings write during release resolution, got stat err=%v", err)
 	}
-	if got := root["pinned-version"]; got != "v1.2.3" {
-		t.Fatalf("expected local pinned-version v1.2.3, got %#v", got)
+	if m.pendingPinWrite == nil {
+		t.Fatalf("expected pending pin write to be staged")
+	}
+	if filepath.Clean(m.pendingPinWrite.path) != filepath.Clean(localPath) {
+		t.Fatalf("expected pending pin path %q, got %q", localPath, m.pendingPinWrite.path)
+	}
+	if m.pendingPinWrite.versionTag != "v1.2.3" {
+		t.Fatalf("expected pending version v1.2.3, got %q", m.pendingPinWrite.versionTag)
+	}
+}
+
+func TestInstallOrUpdate_PinRequestedFailedInstallDoesNotPersistPinnedVersion(t *testing.T) {
+	home := t.TempDir()
+	cwd := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cwd, "ccsubagents"), stateDirPerm); err != nil {
+		t.Fatalf("create local ccsubagents directory: %v", err)
+	}
+
+	m := &Manager{
+		httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.String() != releaseTagsURLPrefix+"v1.2.3" {
+				return nil, fmt.Errorf("unexpected request URL: %s", req.URL.String())
+			}
+			body := `{"id":502,"tag_name":"v1.2.3","assets":[]}`
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+		})},
+		homeDir:    func() (string, error) { return home, nil },
+		workingDir: func() (string, error) { return cwd, nil },
+	}
+	m.installVersionRaw = "1.2.3"
+	m.pinRequested = true
+
+	err := m.installOrUpdate(context.Background(), false)
+	if err == nil {
+		t.Fatalf("expected install failure due missing assets")
+	}
+	if !strings.Contains(err.Error(), "missing required asset") {
+		t.Fatalf("expected missing-asset error, got %v", err)
+	}
+
+	globalPath, localPath := resolveSettingsPaths(home, cwd)
+	if _, err := os.Stat(localPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected local settings to remain untouched after failed install, got stat err=%v", err)
+	}
+	if _, err := os.Stat(globalPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected global settings to remain untouched after failed install, got stat err=%v", err)
 	}
 }
 
@@ -326,6 +369,44 @@ func TestInstallOrUpdateLocal_UpdateBlockedWhenPinnedVersionSet(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "update is blocked") {
 		t.Fatalf("expected local update-block error, got %v", err)
+	}
+	if requestCount != 0 {
+		t.Fatalf("expected no network requests, got %d", requestCount)
+	}
+}
+
+func TestInstallOrUpdateLocal_UpdateUsesSelectedInstallRootForPinResolution(t *testing.T) {
+	home := t.TempDir()
+	repoRoot := t.TempDir()
+	subdir := filepath.Join(repoRoot, "nested")
+	if err := os.MkdirAll(subdir, stateDirPerm); err != nil {
+		t.Fatalf("create nested working directory: %v", err)
+	}
+
+	_, localPath := resolveSettingsPaths(home, repoRoot)
+	writeSettingsFixture(t, localPath, `{"pinned-version":"v1.2.3"}`)
+
+	requestCount := 0
+	m := &Manager{
+		httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			requestCount++
+			return nil, fmt.Errorf("unexpected request URL: %s", req.URL.String())
+		})},
+		homeDir:    func() (string, error) { return home, nil },
+		workingDir: func() (string, error) { return subdir, nil },
+	}
+
+	err := m.installOrUpdateLocal(context.Background(), localInstallConfig{
+		isUpdate: true,
+		location: localScopeLocation{installRoot: repoRoot, repoRoot: repoRoot, inGitRepo: true},
+		stateDir: t.TempDir(),
+		state:    &trackedState{Version: trackedSchemaVersion},
+	})
+	if err == nil {
+		t.Fatalf("expected local update-block error")
+	}
+	if !strings.Contains(err.Error(), "update is blocked") {
+		t.Fatalf("expected update-block error, got %v", err)
 	}
 	if requestCount != 0 {
 		t.Fatalf("expected no network requests, got %d", requestCount)
