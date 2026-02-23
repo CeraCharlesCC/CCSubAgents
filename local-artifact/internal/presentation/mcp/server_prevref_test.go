@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -80,6 +81,38 @@ func TestServerSaveResolveListAndGetPrevRefVersioning(t *testing.T) {
 	}
 	if items[0].Ref != secondOut.Ref || items[0].PrevRef != firstOut.Ref {
 		t.Fatalf("unexpected listed artifact: %+v", items[0])
+	}
+}
+
+func TestServerSaveTextRejectsEmptyOrWhitespaceText(t *testing.T) {
+	ctx := context.Background()
+	s := New(t.TempDir())
+
+	tests := []struct {
+		name string
+		text string
+	}{
+		{name: "empty", text: ""},
+		{name: "whitespace", text: "  \n\t"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			respAny, rpcErr := s.toolSaveText(ctx, mustRawJSON(t, map[string]any{
+				"name": "plan/task-empty",
+				"text": tc.text,
+			}))
+			if rpcErr != nil {
+				t.Fatalf("save text rpc error: %+v", rpcErr)
+			}
+			resp := respAny.(toolResult)
+			if !resp.IsError {
+				t.Fatalf("expected tool error for %s text", tc.name)
+			}
+			if !strings.Contains(firstContentText(resp), "invalid input") || !strings.Contains(firstContentText(resp), "text is required") {
+				t.Fatalf("unexpected error content: %+v", resp.Content)
+			}
+		})
 	}
 }
 

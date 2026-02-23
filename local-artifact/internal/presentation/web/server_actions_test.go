@@ -394,6 +394,40 @@ func TestAPISaveSupportsTextAndBlob(t *testing.T) {
 	}
 }
 
+func TestAPISaveRejectsEmptyOrWhitespaceText(t *testing.T) {
+	s := New(t.TempDir())
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "empty",
+			body: `{"name":"api/empty","text":""}`,
+		},
+		{
+			name: "whitespace",
+			body: `{"name":"api/whitespace","text":"  \n\t"}`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/artifacts?subspace=global", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			rr := httptest.NewRecorder()
+			s.handleAPIArtifacts(rr, req)
+
+			if rr.Code != http.StatusBadRequest {
+				t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+			}
+			if !strings.Contains(rr.Body.String(), "text is required") {
+				t.Fatalf("expected text-required error, got body=%s", rr.Body.String())
+			}
+		})
+	}
+}
+
 func TestAPISaveJSONBodyLimitAllowsMaxBinaryUpload(t *testing.T) {
 	encodedPayloadBytes := int64(base64.StdEncoding.EncodedLen(int(maxInsertUploadBytes)))
 	requiredLimit := encodedPayloadBytes + maxInsertUploadOverheadBytes

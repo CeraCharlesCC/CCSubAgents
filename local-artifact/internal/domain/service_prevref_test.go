@@ -201,6 +201,27 @@ func TestServiceSaveText_RefGenerationErrorIsSurfaced(t *testing.T) {
 	}
 }
 
+func TestServiceSaveText_RejectsEmptyOrWhitespaceText(t *testing.T) {
+	repo := newMemoryRepo()
+	svc := NewService(repo)
+
+	_, err := svc.SaveText(context.Background(), SaveTextInput{Name: "plan/empty-text", Text: ""})
+	if err == nil {
+		t.Fatal("expected empty text to fail")
+	}
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected invalid input for empty text, got %v", err)
+	}
+
+	_, err = svc.SaveText(context.Background(), SaveTextInput{Name: "plan/whitespace-text", Text: "   \n\t"})
+	if err == nil {
+		t.Fatal("expected whitespace-only text to fail")
+	}
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected invalid input for whitespace-only text, got %v", err)
+	}
+}
+
 func TestServiceSaveText_ExpectedPrevRefMatchSucceeds(t *testing.T) {
 	repo := newMemoryRepo()
 	svc := NewService(repo)

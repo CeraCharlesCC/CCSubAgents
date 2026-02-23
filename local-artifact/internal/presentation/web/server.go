@@ -203,9 +203,6 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 	message := strings.TrimSpace(r.URL.Query().Get("msg"))
 	errorMsg := strings.TrimSpace(r.URL.Query().Get("err"))
-	if subspace == "" && len(subspaces) == 0 && message == "" && errorMsg == "" {
-		message = "No subspaces discovered yet."
-	}
 
 	renderIndex(w, r, pageData{
 		Subspaces:   subspaces,

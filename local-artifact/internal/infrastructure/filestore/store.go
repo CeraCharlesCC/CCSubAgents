@@ -192,19 +192,31 @@ func (s *Store) List(ctx context.Context, prefix string, limit int) ([]domain.Ar
 	if limit <= 0 {
 		limit = 200
 	}
-	if len(names) > limit {
-		names = names[:limit]
-	}
 
-	out := make([]domain.Artifact, 0, len(names))
+	out := make([]domain.Artifact, 0, min(limit, len(names)))
 	dirtyIndex := false
 	for _, name := range names {
+		if len(out) >= limit {
+			break
+		}
+
 		ref := idx.Names[name]
 		if strings.TrimSpace(ref) == "" {
 			delete(idx.Names, name)
 			dirtyIndex = true
 			continue
 		}
+
+		exists, err := s.artifactExistsLocked(ref)
+		if err != nil {
+			continue
+		}
+		if !exists {
+			delete(idx.Names, name)
+			dirtyIndex = true
+			continue
+		}
+
 		metaPath := filepath.Join(s.root, "meta", ref+".json")
 		metaBytes, err := os.ReadFile(metaPath)
 		if err != nil {
@@ -410,10 +422,13 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	// Best-effort fsync directory to reduce corruption risk (linux/mac). Ignore errors.
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	// Best-effort fsync directory after rename so the directory entry update is durable.
 	if d, err := os.Open(dir); err == nil {
 		_ = d.Sync()
 		_ = d.Close()
 	}
-	return os.Rename(tmpName, path)
+	return nil
 }

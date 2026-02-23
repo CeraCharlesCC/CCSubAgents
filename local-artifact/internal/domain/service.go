@@ -33,6 +33,9 @@ func (s *Service) SaveText(ctx context.Context, in SaveTextInput) (Artifact, err
 	if err != nil {
 		return Artifact{}, err
 	}
+	if strings.TrimSpace(in.Text) == "" {
+		return Artifact{}, fmt.Errorf("%w: text is required", ErrInvalidInput)
+	}
 	mime := strings.TrimSpace(in.MimeType)
 	if mime == "" {
 		mime = "text/plain; charset=utf-8"
