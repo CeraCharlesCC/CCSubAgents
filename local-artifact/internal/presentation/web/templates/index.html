@@ -499,6 +499,11 @@
       background: var(--card);
       overflow: auto;
       max-height: min(53vh, 600px);
+      transition: opacity 120ms ease;
+    }
+
+    .viewer-content.loading>* {
+      opacity: 0.55;
     }
 
     .viewer-content pre {
@@ -911,6 +916,17 @@
         return input.value || '';
       }
 
+      function viewerHasRenderableContent() {
+        if (!viewerContent) {
+          return false;
+        }
+        const firstElement = viewerContent.firstElementChild;
+        if (!firstElement) {
+          return false;
+        }
+        return !firstElement.classList.contains('placeholder');
+      }
+
       function updateViewerBySelection() {
         if (!viewerMeta || !viewerContent) {
           return;
@@ -919,6 +935,7 @@
         const activeRows = sortedSelection();
         if (activeRows.length === 0) {
           previewRequestID += 1;
+          viewerContent.classList.remove('loading');
           setViewerOpen(false);
           setViewerDetails(null, '');
           viewerMeta.textContent = 'Select one artifact to preview.';
@@ -927,6 +944,7 @@
         }
         if (activeRows.length > 1) {
           previewRequestID += 1;
+          viewerContent.classList.remove('loading');
           setViewerOpen(false);
           setViewerDetails(null, '');
           viewerMeta.textContent = 'Select a single artifact to preview.';
@@ -937,6 +955,7 @@
         const row = rows[activeRows[0]];
         if (!row) {
           previewRequestID += 1;
+          viewerContent.classList.remove('loading');
           setViewerOpen(false);
           setViewerDetails(null, '');
           viewerMeta.textContent = 'Select one artifact to preview.';
@@ -949,6 +968,7 @@
         const ref = row.dataset.ref || '';
         const name = row.dataset.name || '';
         if (ref === '') {
+          viewerContent.classList.remove('loading');
           viewerMeta.textContent = 'Preview unavailable';
           showViewerPlaceholder('Missing ref for selected artifact.', true);
           return;
@@ -960,7 +980,10 @@
         const requestID = previewRequestID + 1;
         previewRequestID = requestID;
         viewerMeta.textContent = (name || ref) + ' | loading...';
-        showViewerPlaceholder('Loading preview...', false);
+        viewerContent.classList.add('loading');
+        if (!viewerHasRenderableContent()) {
+          showViewerPlaceholder('Loading preview...', false);
+        }
 
         fetch('/api/artifact-content?' + query.toString())
           .then(function (response) {
@@ -991,6 +1014,7 @@
             if (!result || requestID !== previewRequestID) {
               return;
             }
+            viewerContent.classList.remove('loading');
             const mimeType = normalizeMimeType(result.rawMimeType);
             setViewerDetails(row, result.rawMimeType);
             viewerMeta.textContent = (name || ref) + ' | ' + result.rawMimeType;
@@ -1032,6 +1056,7 @@
             if (requestID !== previewRequestID) {
               return;
             }
+            viewerContent.classList.remove('loading');
             setViewerDetails(row, row.dataset.mime || '');
             viewerMeta.textContent = 'Preview error';
             showViewerPlaceholder(error && error.message ? error.message : 'failed to load preview', true);
@@ -1110,6 +1135,18 @@
       }
 
       rows.forEach(function (row) {
+        row.addEventListener('mousedown', function (event) {
+          if (event.shiftKey) {
+            event.preventDefault();
+          }
+        });
+
+        row.addEventListener('selectstart', function (event) {
+          if (event.shiftKey) {
+            event.preventDefault();
+          }
+        });
+
         row.addEventListener('click', function (event) {
           const idx = Number(row.dataset.index);
           if (Number.isNaN(idx)) {
