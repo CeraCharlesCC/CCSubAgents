@@ -542,6 +542,45 @@ func TestResolveInstallPaths_Defaults(t *testing.T) {
 	if paths.insiders.mcpPath != filepath.Join(home, mcpConfigInsidersRelativePath) {
 		t.Fatalf("expected default insiders mcp path under home, got %q", paths.insiders.mcpPath)
 	}
+
+	var wantDesktopStable, wantDesktopInsiders configPaths
+	switch runtime.GOOS {
+	case "windows":
+		roaming := filepath.Join(home, "AppData", "Roaming")
+		wantDesktopStable = configPaths{
+			settingsPath: filepath.Join(roaming, "Code", "User", "settings.json"),
+			mcpPath:      filepath.Join(roaming, "Code", "User", "mcp.json"),
+		}
+		wantDesktopInsiders = configPaths{
+			settingsPath: filepath.Join(roaming, "Code - Insiders", "User", "settings.json"),
+			mcpPath:      filepath.Join(roaming, "Code - Insiders", "User", "mcp.json"),
+		}
+	case "darwin":
+		wantDesktopStable = configPaths{
+			settingsPath: filepath.Join(home, "Library", "Application Support", "Code", "User", "settings.json"),
+			mcpPath:      filepath.Join(home, "Library", "Application Support", "Code", "User", "mcp.json"),
+		}
+		wantDesktopInsiders = configPaths{
+			settingsPath: filepath.Join(home, "Library", "Application Support", "Code - Insiders", "User", "settings.json"),
+			mcpPath:      filepath.Join(home, "Library", "Application Support", "Code - Insiders", "User", "mcp.json"),
+		}
+	default:
+		wantDesktopStable = configPaths{
+			settingsPath: filepath.Join(home, ".config", "Code", "User", "settings.json"),
+			mcpPath:      filepath.Join(home, ".config", "Code", "User", "mcp.json"),
+		}
+		wantDesktopInsiders = configPaths{
+			settingsPath: filepath.Join(home, ".config", "Code - Insiders", "User", "settings.json"),
+			mcpPath:      filepath.Join(home, ".config", "Code - Insiders", "User", "mcp.json"),
+		}
+	}
+
+	if paths.desktopStable != wantDesktopStable {
+		t.Fatalf("unexpected default desktop stable paths: got %#v want %#v", paths.desktopStable, wantDesktopStable)
+	}
+	if paths.desktopInsiders != wantDesktopInsiders {
+		t.Fatalf("unexpected default desktop insiders paths: got %#v want %#v", paths.desktopInsiders, wantDesktopInsiders)
+	}
 }
 
 func TestResolveInstallPaths_EnvOverrides(t *testing.T) {
@@ -565,6 +604,48 @@ func TestResolveInstallPaths_EnvOverrides(t *testing.T) {
 	}
 	if paths.insiders.mcpPath != filepath.Join(string(os.PathSeparator), "tmp", "custom-mcp.json") {
 		t.Fatalf("expected absolute insiders mcp path override, got %q", paths.insiders.mcpPath)
+	}
+	if paths.desktopStable.settingsPath != filepath.Join(home, "custom", "settings.json") {
+		t.Fatalf("expected home-relative desktop stable settings path, got %q", paths.desktopStable.settingsPath)
+	}
+	if paths.desktopStable.mcpPath != filepath.Join(string(os.PathSeparator), "tmp", "custom-mcp.json") {
+		t.Fatalf("expected absolute desktop stable mcp path override, got %q", paths.desktopStable.mcpPath)
+	}
+	if paths.desktopInsiders.settingsPath != filepath.Join(home, "custom", "settings.json") {
+		t.Fatalf("expected home-relative desktop insiders settings path, got %q", paths.desktopInsiders.settingsPath)
+	}
+	if paths.desktopInsiders.mcpPath != filepath.Join(string(os.PathSeparator), "tmp", "custom-mcp.json") {
+		t.Fatalf("expected absolute desktop insiders mcp path override, got %q", paths.desktopInsiders.mcpPath)
+	}
+}
+
+func TestResolveInstallPathsForOS_DesktopDefaults(t *testing.T) {
+	home := filepath.Join(string(os.PathSeparator), "home", "user")
+
+	linux := resolveInstallPathsForOS(home, "linux", "")
+	if linux.desktopStable.settingsPath != filepath.Join(home, ".config", "Code", "User", "settings.json") {
+		t.Fatalf("unexpected linux desktop stable settings path: %q", linux.desktopStable.settingsPath)
+	}
+	if linux.desktopInsiders.mcpPath != filepath.Join(home, ".config", "Code - Insiders", "User", "mcp.json") {
+		t.Fatalf("unexpected linux desktop insiders mcp path: %q", linux.desktopInsiders.mcpPath)
+	}
+
+	darwin := resolveInstallPathsForOS(home, "darwin", "")
+	if darwin.desktopStable.settingsPath != filepath.Join(home, "Library", "Application Support", "Code", "User", "settings.json") {
+		t.Fatalf("unexpected macOS desktop stable settings path: %q", darwin.desktopStable.settingsPath)
+	}
+	if darwin.desktopInsiders.mcpPath != filepath.Join(home, "Library", "Application Support", "Code - Insiders", "User", "mcp.json") {
+		t.Fatalf("unexpected macOS desktop insiders mcp path: %q", darwin.desktopInsiders.mcpPath)
+	}
+
+	windowsHome := filepath.Join("C:\\Users", "user")
+	appData := filepath.Join(windowsHome, "AppData", "Roaming")
+	windows := resolveInstallPathsForOS(windowsHome, "windows", appData)
+	if windows.desktopStable.settingsPath != filepath.Join(appData, "Code", "User", "settings.json") {
+		t.Fatalf("unexpected windows desktop stable settings path: %q", windows.desktopStable.settingsPath)
+	}
+	if windows.desktopInsiders.mcpPath != filepath.Join(appData, "Code - Insiders", "User", "mcp.json") {
+		t.Fatalf("unexpected windows desktop insiders mcp path: %q", windows.desktopInsiders.mcpPath)
 	}
 }
 
@@ -679,6 +760,14 @@ func TestRun_GlobalInstallPromptsForTargetSelection(t *testing.T) {
 func TestPromptGlobalInstallTargets_UsesPrettyPromptCopy(t *testing.T) {
 	home := t.TempDir()
 	paths := installPaths{
+		desktopStable: configPaths{
+			settingsPath: filepath.Join(home, ".config", "Code", "User", "settings.json"),
+			mcpPath:      filepath.Join(home, ".config", "Code", "User", "mcp.json"),
+		},
+		desktopInsiders: configPaths{
+			settingsPath: filepath.Join(home, ".config", "Code - Insiders", "User", "settings.json"),
+			mcpPath:      filepath.Join(home, ".config", "Code - Insiders", "User", "mcp.json"),
+		},
 		stable: configPaths{
 			settingsPath: filepath.Join(home, ".vscode-server", "data", "Machine", "settings.json"),
 			mcpPath:      filepath.Join(home, ".vscode-server", "data", "User", "mcp.json"),
@@ -691,7 +780,7 @@ func TestPromptGlobalInstallTargets_UsesPrettyPromptCopy(t *testing.T) {
 
 	var promptOut bytes.Buffer
 	m := NewManager()
-	m.SetInstallPromptIO(strings.NewReader("1,2\n"), &promptOut)
+	m.SetInstallPromptIO(strings.NewReader("1,4\n"), &promptOut)
 
 	targets, err := m.promptGlobalInstallTargets(context.Background(), home, paths)
 	if err != nil {
@@ -705,27 +794,31 @@ func TestPromptGlobalInstallTargets_UsesPrettyPromptCopy(t *testing.T) {
 	for _, target := range targets {
 		gotTargets[target.settingsPath+"\n"+target.mcpPath] = true
 	}
-	if !gotTargets[paths.insiders.settingsPath+"\n"+paths.insiders.mcpPath] {
-		t.Fatalf("expected insiders target from provided paths, got %#v", targets)
+	if !gotTargets[paths.desktopInsiders.settingsPath+"\n"+paths.desktopInsiders.mcpPath] {
+		t.Fatalf("expected desktop insiders target from provided paths, got %#v", targets)
 	}
 	if !gotTargets[paths.stable.settingsPath+"\n"+paths.stable.mcpPath] {
-		t.Fatalf("expected stable target from provided paths, got %#v", targets)
+		t.Fatalf("expected server stable target from provided paths, got %#v", targets)
 	}
 
 	got := promptOut.String()
-	stableRoot := toHomeTildePath(home, filepath.Join(home, ".vscode-server"))
-	insidersSettings := toHomeTildePath(home, paths.insiders.settingsPath)
-	insidersMCP := toHomeTildePath(home, paths.insiders.mcpPath)
+	serverStableRoot := toHomeTildePath(home, filepath.Join(home, ".vscode-server"))
+	desktopInsidersRoot := toHomeTildePath(home, filepath.Join(home, ".config", "Code - Insiders"))
+	serverInsidersSettings := toHomeTildePath(home, paths.insiders.settingsPath)
+	serverInsidersMCP := toHomeTildePath(home, paths.insiders.mcpPath)
 
 	for _, want := range []string{
 		"Where should ccsubagents be installed?",
+		"VS Code Desktop — Insiders",
+		"VS Code Desktop — Stable",
 		"VS Code Server — Insiders",
 		"VS Code Server — Stable",
-		"[3] Custom path(s)",
+		"[5] Custom path(s)",
 		"Choice (comma-separated, e.g. 1,2):",
-		stableRoot,
-		insidersSettings,
-		insidersMCP,
+		serverStableRoot,
+		desktopInsidersRoot,
+		serverInsidersSettings,
+		serverInsidersMCP,
 		"settings:",
 		"mcp:",
 	} {

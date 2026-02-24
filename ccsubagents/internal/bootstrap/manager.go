@@ -44,6 +44,7 @@ const (
 	localAgentsRelativePath       = ".github/agents"
 	localMCPRelativePath          = ".vscode/mcp.json"
 	localMCPCommand               = "${workspaceFolder}/.ccsubagents/local-artifact-mcp"
+	localMCPCommandWindows        = "${workspaceFolder}/.ccsubagents/local-artifact-mcp.exe"
 	trackedSchemaVersion          = 2
 	installCommand                = "install"
 	updateCommand                 = "update"
@@ -64,6 +65,31 @@ const (
 	installDestinationInsiders installDestination = "insiders"
 	installDestinationBoth     installDestination = "both"
 )
+
+func executableNameForGOOS(baseName, goos string) string {
+	if strings.EqualFold(strings.TrimSpace(goos), "windows") {
+		return baseName + ".exe"
+	}
+	return baseName
+}
+
+func bundleArchiveBinaryName(baseName, goos, goarch string) string {
+	return executableNameForGOOS(fmt.Sprintf("%s-%s-%s", baseName, goos, goarch), goos)
+}
+
+func localMCPCommandForGOOS(goos string) string {
+	if strings.EqualFold(strings.TrimSpace(goos), "windows") {
+		return localMCPCommandWindows
+	}
+	return localMCPCommand
+}
+
+func configPathForGOOS(home, path, goos string) string {
+	if strings.EqualFold(strings.TrimSpace(goos), "windows") {
+		return filepath.Clean(path)
+	}
+	return toHomeTildePath(home, path)
+}
 
 func (m *Manager) promptInstallDestination(ctx context.Context) (installDestination, error) {
 	input := m.promptIn
@@ -194,20 +220,30 @@ func (m *Manager) promptGlobalInstallTargets(ctx context.Context, home string, p
 			return nil, err
 		}
 
-		insidersDisplay := describeGlobalInstallTargetPath(home, installConfigTarget{
+		desktopInsidersDisplay := describeGlobalInstallTargetPath(home, installConfigTarget{
+			settingsPath: paths.desktopInsiders.settingsPath,
+			mcpPath:      paths.desktopInsiders.mcpPath,
+		})
+		desktopStableDisplay := describeGlobalInstallTargetPath(home, installConfigTarget{
+			settingsPath: paths.desktopStable.settingsPath,
+			mcpPath:      paths.desktopStable.mcpPath,
+		})
+		serverInsidersDisplay := describeGlobalInstallTargetPath(home, installConfigTarget{
 			settingsPath: paths.insiders.settingsPath,
 			mcpPath:      paths.insiders.mcpPath,
 		})
-		stableDisplay := describeGlobalInstallTargetPath(home, installConfigTarget{
+		serverStableDisplay := describeGlobalInstallTargetPath(home, installConfigTarget{
 			settingsPath: paths.stable.settingsPath,
 			mcpPath:      paths.stable.mcpPath,
 		})
 
 		var prompt bytes.Buffer
 		prompt.WriteString("Where should ccsubagents be installed?\n\n")
-		fmt.Fprintf(&prompt, "[1] VS Code Server — Insiders   (%s)\n", insidersDisplay)
-		fmt.Fprintf(&prompt, "[2] VS Code Server — Stable     (%s)\n", stableDisplay)
-		prompt.WriteString("[3] Custom path(s)\n")
+		fmt.Fprintf(&prompt, "[1] VS Code Desktop — Insiders (%s)\n", desktopInsidersDisplay)
+		fmt.Fprintf(&prompt, "[2] VS Code Desktop — Stable   (%s)\n", desktopStableDisplay)
+		fmt.Fprintf(&prompt, "[3] VS Code Server — Insiders  (%s)\n", serverInsidersDisplay)
+		fmt.Fprintf(&prompt, "[4] VS Code Server — Stable    (%s)\n", serverStableDisplay)
+		prompt.WriteString("[5] Custom path(s)\n")
 		prompt.WriteString("\n")
 		prompt.WriteString("Choice (comma-separated, e.g. 1,2): ")
 
@@ -225,7 +261,7 @@ func (m *Manager) promptGlobalInstallTargets(ctx context.Context, home string, p
 		valid := true
 		for _, choice := range choices {
 			switch choice {
-			case "1", "2", "3":
+			case "1", "2", "3", "4", "5":
 				selected[choice] = struct{}{}
 			default:
 				valid = false
@@ -236,7 +272,7 @@ func (m *Manager) promptGlobalInstallTargets(ctx context.Context, home string, p
 			if errors.Is(err, io.EOF) {
 				return nil, errors.New("global install target selection canceled")
 			}
-			if _, writeErr := io.WriteString(output, "Invalid selection. Enter comma-separated values using 1, 2, and/or 3.\n\n"); writeErr != nil {
+			if _, writeErr := io.WriteString(output, "Invalid selection. Enter comma-separated values using 1, 2, 3, 4, and/or 5.\n\n"); writeErr != nil {
 				return nil, fmt.Errorf("write install target prompt: %w", writeErr)
 			}
 			continue
@@ -244,12 +280,18 @@ func (m *Manager) promptGlobalInstallTargets(ctx context.Context, home string, p
 
 		targets := make([]installConfigTarget, 0, len(selected)+1)
 		if _, ok := selected["1"]; ok {
-			targets = append(targets, installConfigTarget{settingsPath: paths.insiders.settingsPath, mcpPath: paths.insiders.mcpPath})
+			targets = append(targets, installConfigTarget{settingsPath: paths.desktopInsiders.settingsPath, mcpPath: paths.desktopInsiders.mcpPath})
 		}
 		if _, ok := selected["2"]; ok {
-			targets = append(targets, installConfigTarget{settingsPath: paths.stable.settingsPath, mcpPath: paths.stable.mcpPath})
+			targets = append(targets, installConfigTarget{settingsPath: paths.desktopStable.settingsPath, mcpPath: paths.desktopStable.mcpPath})
 		}
 		if _, ok := selected["3"]; ok {
+			targets = append(targets, installConfigTarget{settingsPath: paths.insiders.settingsPath, mcpPath: paths.insiders.mcpPath})
+		}
+		if _, ok := selected["4"]; ok {
+			targets = append(targets, installConfigTarget{settingsPath: paths.stable.settingsPath, mcpPath: paths.stable.mcpPath})
+		}
+		if _, ok := selected["5"]; ok {
 			if _, err := io.WriteString(output, "Enter custom target path(s), comma-separated: "); err != nil {
 				return nil, fmt.Errorf("write custom target prompt: %w", err)
 			}
@@ -459,7 +501,7 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 	if err != nil {
 		return fmt.Errorf("determine home directory: %w", err)
 	}
-	paths := resolveInstallPaths(home)
+	paths := resolveInstallPathsForOS(home, m.currentGOOS(), m.getenvOrDefault("APPDATA"))
 
 	stateDir := filepath.Join(home, ".local", "share", "ccsubagents")
 	if err := os.MkdirAll(stateDir, stateDirPerm); err != nil {
@@ -593,8 +635,12 @@ func (m *Manager) installOrUpdate(ctx context.Context, isUpdate bool) (retErr er
 		}
 	}
 
-	settingsAgentPath := toHomeTildePath(home, agentsDir)
-	mcpCommandPath := toHomeTildePath(home, filepath.Join(paths.binaryDir, assetArtifactMCP))
+	settingsAgentPath := configPathForGOOS(home, agentsDir, m.currentGOOS())
+	mcpCommandPath := configPathForGOOS(
+		home,
+		filepath.Join(paths.binaryDir, executableNameForGOOS(assetArtifactMCP, m.currentGOOS())),
+		m.currentGOOS(),
+	)
 
 	if err := ctx.Err(); err != nil {
 		return err
@@ -673,7 +719,7 @@ func (m *Manager) uninstall(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("determine home directory: %w", err)
 	}
-	paths := resolveInstallPaths(home)
+	paths := resolveInstallPathsForOS(home, m.currentGOOS(), m.getenvOrDefault("APPDATA"))
 
 	stateDir := filepath.Join(home, ".local", "share", "ccsubagents")
 	state, err := m.loadTrackedState(stateDir)
@@ -697,6 +743,10 @@ func (m *Manager) uninstall(ctx context.Context) error {
 		filepath.Dir(paths.stable.mcpPath),
 		filepath.Dir(paths.insiders.settingsPath),
 		filepath.Dir(paths.insiders.mcpPath),
+		filepath.Dir(paths.desktopStable.settingsPath),
+		filepath.Dir(paths.desktopStable.mcpPath),
+		filepath.Dir(paths.desktopInsiders.settingsPath),
+		filepath.Dir(paths.desktopInsiders.mcpPath),
 	}
 	for _, edit := range state.JSONEdits.allSettingsEdits() {
 		if strings.TrimSpace(edit.File) == "" {
@@ -712,8 +762,8 @@ func (m *Manager) uninstall(ctx context.Context) error {
 	}
 	allowedConfigParentDirs = uniqueSorted(allowedConfigParentDirs)
 	allowedBinaries := []string{
-		filepath.Join(paths.binaryDir, assetArtifactMCP),
-		filepath.Join(paths.binaryDir, assetArtifactWeb),
+		filepath.Join(paths.binaryDir, executableNameForGOOS(assetArtifactMCP, m.currentGOOS())),
+		filepath.Join(paths.binaryDir, executableNameForGOOS(assetArtifactWeb, m.currentGOOS())),
 	}
 
 	for _, path := range state.Managed.Files {

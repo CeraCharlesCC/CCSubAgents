@@ -8,6 +8,47 @@ import (
 	"path/filepath"
 )
 
+type bundleBinarySpec struct {
+	logicalName string
+	archiveName string
+	installName string
+}
+
+func (m *Manager) bundleBinarySpecs() ([]bundleBinarySpec, error) {
+	goos := m.currentGOOS()
+	goarch := m.currentGOARCH()
+
+	switch goos {
+	case "linux":
+		if goarch != "amd64" && goarch != "arm64" {
+			return nil, fmt.Errorf("unsupported platform %s/%s (supported linux arches: amd64, arm64)", goos, goarch)
+		}
+	case "windows":
+		if goarch != "amd64" {
+			return nil, fmt.Errorf("unsupported platform %s/%s (supported windows arches: amd64)", goos, goarch)
+		}
+	case "darwin":
+		if goarch != "amd64" && goarch != "arm64" {
+			return nil, fmt.Errorf("unsupported platform %s/%s (supported macOS arches: amd64, arm64)", goos, goarch)
+		}
+	default:
+		return nil, fmt.Errorf("unsupported platform %s/%s (supported OSes: linux, windows, darwin)", goos, goarch)
+	}
+
+	return []bundleBinarySpec{
+		{
+			logicalName: assetArtifactMCP,
+			archiveName: bundleArchiveBinaryName(assetArtifactMCP, goos, goarch),
+			installName: executableNameForGOOS(assetArtifactMCP, goos),
+		},
+		{
+			logicalName: assetArtifactWeb,
+			archiveName: bundleArchiveBinaryName(assetArtifactWeb, goos, goarch),
+			installName: executableNameForGOOS(assetArtifactWeb, goos),
+		},
+	}, nil
+}
+
 func (m *Manager) downloadRequiredAssets(ctx context.Context, stateDir string, release releaseResponse, requiredAssetNames []string, tempPrefix string) (string, map[string]string, error) {
 	assets, err := mapRequiredAssets(release.Assets, requiredAssetNames)
 	if err != nil {
@@ -69,42 +110,75 @@ func (m *Manager) extractDownloadedBundle(tmpDir string, downloaded map[string]s
 		return nil, fmt.Errorf("create local-artifact bundle extraction dir: %w", err)
 	}
 
-	bundleBinaries, err := extractBundleBinaries(bundleZipPath, bundleDir, []string{assetArtifactMCP, assetArtifactWeb})
+	specs, err := m.bundleBinarySpecs()
 	if err != nil {
-		return nil, fmt.Errorf("extract %s: %w", assetLocalArtifactZip, err)
+		return nil, err
+	}
+
+	archiveNames := make([]string, 0, len(specs))
+	for _, spec := range specs {
+		archiveNames = append(archiveNames, spec.archiveName)
+	}
+	bundleBinaries, err := extractBundleBinaries(bundleZipPath, bundleDir, archiveNames)
+	legacyLayout := false
+	if err != nil {
+		legacyBinaries, legacyErr := extractBundleBinaries(bundleZipPath, bundleDir, []string{assetArtifactMCP, assetArtifactWeb})
+		if legacyErr != nil {
+			return nil, fmt.Errorf("extract %s: %w", assetLocalArtifactZip, err)
+		}
+		bundleBinaries = legacyBinaries
+		legacyLayout = true
+	}
+
+	binariesByLogical := make(map[string]string, len(specs))
+	for _, spec := range specs {
+		name := spec.archiveName
+		if legacyLayout {
+			name = spec.logicalName
+		}
+		path := bundleBinaries[name]
+		if path == "" {
+			return nil, fmt.Errorf("bundle is missing expected binary %q", name)
+		}
+		binariesByLogical[spec.logicalName] = path
 	}
 	m.reportDetail("extracted bundle %s", assetLocalArtifactZip)
-	return bundleBinaries, nil
+	return binariesByLogical, nil
 }
 
 func (m *Manager) installExtractedBinaries(ctx context.Context, bundleBinaries map[string]string, destinationDir string, mutations *mutationTracker, permissionHintDir string) ([]string, error) {
-	binaryPaths := []string{
-		filepath.Join(destinationDir, assetArtifactMCP),
-		filepath.Join(destinationDir, assetArtifactWeb),
+	specs, err := m.bundleBinarySpecs()
+	if err != nil {
+		return nil, err
 	}
+	binaryPaths := make([]string, 0, len(specs))
 
 	installer := m.installBinary
 	if installer == nil {
 		installer = installBinary
 	}
 
-	for _, binaryName := range []string{assetArtifactMCP, assetArtifactWeb} {
+	for _, spec := range specs {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 
-		src := bundleBinaries[binaryName]
-		dst := filepath.Join(destinationDir, binaryName)
+		src := bundleBinaries[spec.logicalName]
+		if src == "" {
+			return nil, fmt.Errorf("missing extracted binary %q", spec.logicalName)
+		}
+		dst := filepath.Join(destinationDir, spec.installName)
+		binaryPaths = append(binaryPaths, dst)
 		if err := mutations.snapshotFile(dst); err != nil {
 			return nil, err
 		}
 		if err := installer(src, dst); err != nil {
 			if permissionHintDir != "" && errors.Is(err, os.ErrPermission) {
-				return nil, fmt.Errorf("install %s into %s: %w (requires privileges to write %s)", binaryName, destinationDir, err, permissionHintDir)
+				return nil, fmt.Errorf("install %s into %s: %w (requires privileges to write %s)", spec.installName, destinationDir, err, permissionHintDir)
 			}
-			return nil, fmt.Errorf("install %s into %s: %w", binaryName, destinationDir, err)
+			return nil, fmt.Errorf("install %s into %s: %w", spec.installName, destinationDir, err)
 		}
-		m.reportDetail("installed binary: %s", binaryName)
+		m.reportDetail("installed binary: %s", spec.installName)
 	}
 
 	return binaryPaths, nil

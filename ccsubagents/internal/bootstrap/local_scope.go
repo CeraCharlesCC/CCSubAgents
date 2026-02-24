@@ -83,7 +83,7 @@ func (m *Manager) installLocal(ctx context.Context) error {
 		if previous != nil {
 			binaryOnly = previous.BinaryOnly
 		} else {
-			detected, err := detectExistingTeamLocalSetup(location.installRoot, location.repoRoot)
+			detected, err := detectExistingTeamLocalSetup(location.installRoot, location.repoRoot, localMCPCommandForGOOS(m.currentGOOS()))
 			if err != nil {
 				return err
 			}
@@ -194,8 +194,8 @@ func (m *Manager) uninstallLocal(ctx context.Context) error {
 	agentsDir := filepath.Join(location.installRoot, localAgentsRelativePath)
 	mcpPath := filepath.Join(location.installRoot, localMCPRelativePath)
 	allowedBinaries := []string{
-		filepath.Join(managedDir, assetArtifactMCP),
-		filepath.Join(managedDir, assetArtifactWeb),
+		filepath.Join(managedDir, executableNameForGOOS(assetArtifactMCP, m.currentGOOS())),
+		filepath.Join(managedDir, executableNameForGOOS(assetArtifactWeb, m.currentGOOS())),
 	}
 
 	for _, path := range record.Managed.Files {
@@ -379,7 +379,7 @@ func (m *Manager) installOrUpdateLocal(ctx context.Context, cfg localInstallConf
 		if cfg.previous != nil {
 			previousState = &trackedState{JSONEdits: cfg.previous.JSONEdits}
 		}
-		mcpEdit, err := applyMCPEdit(mcpPath, localMCPCommand, previousState)
+		mcpEdit, err := applyMCPEdit(mcpPath, localMCPCommandForGOOS(m.currentGOOS()), previousState)
 		if err != nil {
 			return err
 		}
@@ -882,7 +882,7 @@ func writeFileAtomic(path string, data []byte, perm fs.FileMode) error {
 	return nil
 }
 
-func detectExistingTeamLocalSetup(installRoot, repoRoot string) (bool, error) {
+func detectExistingTeamLocalSetup(installRoot, repoRoot, expectedMCPCommand string) (bool, error) {
 	ignorePath, lines, err := resolveLocalIgnoreTarget(installRoot, repoRoot, localInstallModeTeam)
 	if err != nil {
 		return false, err
@@ -907,7 +907,7 @@ func detectExistingTeamLocalSetup(installRoot, repoRoot string) (bool, error) {
 		return false, nil
 	}
 
-	mcpHasLocalCommand, err := localMCPCommandConfigured(filepath.Join(installRoot, localMCPRelativePath))
+	mcpHasLocalCommand, err := localMCPCommandConfigured(filepath.Join(installRoot, localMCPRelativePath), expectedMCPCommand)
 	if err != nil {
 		return false, err
 	}
@@ -962,7 +962,7 @@ func managedAgentFilesExist(agentsDir string) (bool, error) {
 	return found, nil
 }
 
-func localMCPCommandConfigured(path string) (bool, error) {
+func localMCPCommandConfigured(path, expectedCommand string) (bool, error) {
 	root, err := readJSONFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -988,7 +988,7 @@ func localMCPCommandConfigured(path string) (bool, error) {
 		return false, nil
 	}
 	command, _ := server["command"].(string)
-	return strings.TrimSpace(command) == localMCPCommand, nil
+	return strings.TrimSpace(command) == strings.TrimSpace(expectedCommand), nil
 }
 
 func (m *Manager) reportGlobalPathWarning(home string) {
@@ -1001,6 +1001,13 @@ func (m *Manager) reportGlobalPathWarning(home string) {
 		if filepath.Clean(strings.TrimSpace(entry)) == expected {
 			return
 		}
+	}
+	if strings.EqualFold(m.currentGOOS(), "windows") {
+		m.reportWarning(
+			fmt.Sprintf("%s is not in PATH", filepath.Clean(expected)),
+			"Add it to your user PATH environment variable.",
+		)
+		return
 	}
 	m.reportWarning(
 		fmt.Sprintf("%s is not in PATH", toHomeTildePath(home, expected)),
