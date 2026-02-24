@@ -136,3 +136,88 @@ func TestInstallExtractedBinaries_PermissionErrorIncludesPrivilegeHint(t *testin
 		t.Fatalf("expected wrapped install context in error, got %v", err)
 	}
 }
+
+func TestExtractDownloadedBundle_UsesPlatformSpecificBundleNames(t *testing.T) {
+	stateDir := t.TempDir()
+	tmpDir := t.TempDir()
+	bundlePath := filepath.Join(stateDir, assetLocalArtifactZip)
+
+	if err := os.WriteFile(bundlePath, zipBytes(t, map[string]string{
+		bundleArchiveBinaryName(assetArtifactMCP, "linux", "amd64"): "mcp-linux-amd64",
+		bundleArchiveBinaryName(assetArtifactWeb, "linux", "amd64"): "web-linux-amd64",
+	}), stateFilePerm); err != nil {
+		t.Fatalf("write bundle archive: %v", err)
+	}
+
+	m := &Manager{goos: "linux", goarch: "amd64"}
+	binaries, err := m.extractDownloadedBundle(tmpDir, map[string]string{assetLocalArtifactZip: bundlePath})
+	if err != nil {
+		t.Fatalf("extractDownloadedBundle returned error: %v", err)
+	}
+
+	mcpPath := binaries[assetArtifactMCP]
+	webPath := binaries[assetArtifactWeb]
+	if mcpPath == "" || webPath == "" {
+		t.Fatalf("expected extracted binary paths for mcp and web, got %#v", binaries)
+	}
+
+	mcpBytes, err := os.ReadFile(mcpPath)
+	if err != nil {
+		t.Fatalf("read extracted mcp binary: %v", err)
+	}
+	if string(mcpBytes) != "mcp-linux-amd64" {
+		t.Fatalf("unexpected extracted mcp binary content: %q", string(mcpBytes))
+	}
+
+	webBytes, err := os.ReadFile(webPath)
+	if err != nil {
+		t.Fatalf("read extracted web binary: %v", err)
+	}
+	if string(webBytes) != "web-linux-amd64" {
+		t.Fatalf("unexpected extracted web binary content: %q", string(webBytes))
+	}
+}
+
+func TestInstallExtractedBinaries_UsesExeNamesOnWindows(t *testing.T) {
+	destinationDir := t.TempDir()
+	bundleDir := t.TempDir()
+
+	mcpSrc := filepath.Join(bundleDir, "src-mcp")
+	webSrc := filepath.Join(bundleDir, "src-web")
+	if err := os.WriteFile(mcpSrc, []byte("mcp"), stateFilePerm); err != nil {
+		t.Fatalf("write mcp source: %v", err)
+	}
+	if err := os.WriteFile(webSrc, []byte("web"), stateFilePerm); err != nil {
+		t.Fatalf("write web source: %v", err)
+	}
+
+	m := &Manager{
+		goos:   "windows",
+		goarch: "amd64",
+		installBinary: func(src, dst string) error {
+			data, err := os.ReadFile(src)
+			if err != nil {
+				return err
+			}
+			return os.WriteFile(dst, data, binaryFilePerm)
+		},
+	}
+
+	mutations := newMutationTracker(newInstallRollback())
+	paths, err := m.installExtractedBinaries(context.Background(), map[string]string{
+		assetArtifactMCP: mcpSrc,
+		assetArtifactWeb: webSrc,
+	}, destinationDir, mutations, destinationDir)
+	if err != nil {
+		t.Fatalf("installExtractedBinaries returned error: %v", err)
+	}
+	if len(paths) != 2 {
+		t.Fatalf("expected 2 installed binary paths, got %d", len(paths))
+	}
+	if filepath.Base(paths[0]) != assetArtifactMCP+".exe" && filepath.Base(paths[1]) != assetArtifactMCP+".exe" {
+		t.Fatalf("expected mcp .exe binary path, got %#v", paths)
+	}
+	if filepath.Base(paths[0]) != assetArtifactWeb+".exe" && filepath.Base(paths[1]) != assetArtifactWeb+".exe" {
+		t.Fatalf("expected web .exe binary path, got %#v", paths)
+	}
+}

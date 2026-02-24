@@ -26,7 +26,7 @@ func (m *Manager) runGlobalInstall(ctx context.Context) error {
 		return fmt.Errorf("determine home directory: %w", err)
 	}
 
-	paths := resolveInstallPaths(home)
+	paths := resolveInstallPathsForOS(home, m.currentGOOS(), m.getenvOrDefault("APPDATA"))
 	targets, err := m.promptGlobalInstallTargets(ctx, home, paths)
 	if err != nil {
 		return err

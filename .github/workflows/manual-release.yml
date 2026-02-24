@@ -30,16 +30,35 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: local-artifact/go.mod
+          go-version-file: ccsubagents/go.mod
 
       - name: Build release artifacts
         run: |
           set -euo pipefail
           mkdir -p dist
-          (cd ccsubagents && go build -o "$GITHUB_WORKSPACE/dist/ccsubagents" ./cmd/ccsubagents)
-          (cd local-artifact && go build -o "$GITHUB_WORKSPACE/dist/local-artifact-mcp" ./cmd/local-artifact-mcp)
-          (cd local-artifact && go build -o "$GITHUB_WORKSPACE/dist/local-artifact-web" ./cmd/local-artifact-web)
-          (cd dist && zip -j local-artifact.zip local-artifact-mcp local-artifact-web)
+
+          targets=(
+            "linux amd64"
+            "linux arm64"
+            "windows amd64"
+            "darwin amd64"
+            "darwin arm64"
+          )
+
+          for target in "${targets[@]}"; do
+            read -r goos goarch <<<"${target}"
+            ext=""
+            if [ "${goos}" = "windows" ]; then
+              ext=".exe"
+            fi
+
+            suffix="${goos}-${goarch}"
+            (cd ccsubagents && CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" go build -o "$GITHUB_WORKSPACE/dist/ccsubagents-${suffix}${ext}" ./cmd/ccsubagents)
+            (cd local-artifact && CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" go build -o "$GITHUB_WORKSPACE/dist/local-artifact-mcp-${suffix}${ext}" ./cmd/local-artifact-mcp)
+            (cd local-artifact && CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" go build -o "$GITHUB_WORKSPACE/dist/local-artifact-web-${suffix}${ext}" ./cmd/local-artifact-web)
+          done
+
+          (cd dist && zip -j local-artifact.zip local-artifact-mcp-* local-artifact-web-*)
           (cd definition/.github/agents && zip -r "$GITHUB_WORKSPACE/dist/agents.zip" .)
 
       - name: Attest agents.zip
@@ -52,10 +71,30 @@ jobs:
         with:
           subject-path: dist/local-artifact.zip
 
-      - name: Attest ccsubagents
+      - name: Attest ccsubagents-linux-amd64
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: dist/ccsubagents
+          subject-path: dist/ccsubagents-linux-amd64
+
+      - name: Attest ccsubagents-linux-arm64
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/ccsubagents-linux-arm64
+
+      - name: Attest ccsubagents-windows-amd64.exe
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/ccsubagents-windows-amd64.exe
+
+      - name: Attest ccsubagents-darwin-amd64
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/ccsubagents-darwin-amd64
+
+      - name: Attest ccsubagents-darwin-arm64
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/ccsubagents-darwin-arm64
 
       - name: Publish release
         env:
@@ -65,7 +104,11 @@ jobs:
           gh release create "$RELEASE_TAG" \
             dist/agents.zip \
             dist/local-artifact.zip \
-            dist/ccsubagents \
+            dist/ccsubagents-linux-amd64 \
+            dist/ccsubagents-linux-arm64 \
+            dist/ccsubagents-windows-amd64.exe \
+            dist/ccsubagents-darwin-amd64 \
+            dist/ccsubagents-darwin-arm64 \
             --target main \
             --title "$RELEASE_TAG" \
             --notes "Manual release from main"

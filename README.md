@@ -35,7 +35,7 @@ go build -o ccsubagents ./cmd/ccsubagents
 
 ### Use the prebuilt binary
 
-1. Download the latest `ccsubagents` binary from this repository's Releases page.
+1. Download the matching `ccsubagents-<os>-<arch>` binary from this repository's Releases page.
 2. Mark it executable and run install:
 
 ```bash
@@ -51,14 +51,26 @@ chmod +x ./ccsubagents
   - `update` → `global`
   - `uninstall` → `global`
 - For `install --scope=global`, you can target:
-  - `.vscode-server-insiders`
-  - `.vscode-server`
+  - VS Code Desktop (Insiders)
+  - VS Code Desktop (Stable)
+  - VS Code Server (Insiders)
+  - VS Code Server (Stable)
   - custom path(s)
 - For custom path target(s), `<path>` means each path you enter at the prompt (for example, `~/my-project`).
 - Each custom path resolves as:
   - `<path>/data/Machine/settings.json`
   - `<path>/data/User/mcp.json`
   - example: `~/my-project/data/Machine/settings.json` and `~/my-project/data/User/mcp.json`
+
+Global install default locations by platform:
+- Linux desktop stable: `~/.config/Code/User/settings.json` and `~/.config/Code/User/mcp.json`
+- Linux desktop insiders: `~/.config/Code - Insiders/User/settings.json` and `~/.config/Code - Insiders/User/mcp.json`
+- macOS desktop stable: `~/Library/Application Support/Code/User/settings.json` and `~/Library/Application Support/Code/User/mcp.json`
+- macOS desktop insiders: `~/Library/Application Support/Code - Insiders/User/settings.json` and `~/Library/Application Support/Code - Insiders/User/mcp.json`
+- Windows desktop stable: `%APPDATA%\Code\User\settings.json` and `%APPDATA%\Code\User\mcp.json`
+- Windows desktop insiders: `%APPDATA%\Code - Insiders\User\settings.json` and `%APPDATA%\Code - Insiders\User\mcp.json`
+- VS Code Server stable: `~/.vscode-server/data/Machine/settings.json` and `~/.vscode-server/data/User/mcp.json` (Windows server uses `%USERPROFILE%`)
+- VS Code Server insiders: `~/.vscode-server-insiders/data/Machine/settings.json` and `~/.vscode-server-insiders/data/User/mcp.json` (Windows server uses `%USERPROFILE%`)
 
 Examples:
 

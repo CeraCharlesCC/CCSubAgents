@@ -4,7 +4,7 @@ on:
   pull_request:
 
 jobs:
-  local-artifact:
+  local-artifact-test:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -21,13 +21,7 @@ jobs:
       - name: Test module
         run: go test ./...
 
-      - name: Build local-artifact-mcp
-        run: go build -o /tmp/local-artifact-mcp ./cmd/local-artifact-mcp
-
-      - name: Build local-artifact-web
-        run: go build -o /tmp/local-artifact-web ./cmd/local-artifact-web
-
-  ccsubagents:
+  ccsubagents-test:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -44,5 +38,77 @@ jobs:
       - name: Test module
         run: go test ./...
 
-      - name: Build ccsubagents
-        run: go build -o /tmp/ccsubagents ./cmd/ccsubagents
+  local-artifact-build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            ext: ""
+          - goos: linux
+            goarch: arm64
+            ext: ""
+          - goos: windows
+            goarch: amd64
+            ext: .exe
+          - goos: darwin
+            goarch: amd64
+            ext: ""
+          - goos: darwin
+            goarch: arm64
+            ext: ""
+    defaults:
+      run:
+        working-directory: local-artifact
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: local-artifact/go.mod
+
+      - name: Build local-artifact-mcp (${{ matrix.goos }}/${{ matrix.goarch }})
+        run: CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -o /tmp/local-artifact-mcp-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} ./cmd/local-artifact-mcp
+
+      - name: Build local-artifact-web (${{ matrix.goos }}/${{ matrix.goarch }})
+        run: CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -o /tmp/local-artifact-web-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} ./cmd/local-artifact-web
+
+  ccsubagents-build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            ext: ""
+          - goos: linux
+            goarch: arm64
+            ext: ""
+          - goos: windows
+            goarch: amd64
+            ext: .exe
+          - goos: darwin
+            goarch: amd64
+            ext: ""
+          - goos: darwin
+            goarch: arm64
+            ext: ""
+    defaults:
+      run:
+        working-directory: ccsubagents
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: ccsubagents/go.mod
+
+      - name: Build ccsubagents (${{ matrix.goos }}/${{ matrix.goarch }})
+        run: CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -o /tmp/ccsubagents-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} ./cmd/ccsubagents
