@@ -1,4 +1,4 @@
-package bootstrap
+package installer
 
 import (
 	"bytes"
@@ -11,9 +11,54 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/files"
 )
 
-type Manager struct {
+const (
+	stateDirPerm   = files.DefaultStateDirPerm
+	stateFilePerm  = files.DefaultStateFilePerm
+	binaryFilePerm = files.DefaultBinaryFilePerm
+
+	assetAgentsZip        = "agents.zip"
+	assetLocalArtifactZip = "local-artifact.zip"
+	assetArtifactMCP      = "local-artifact-mcp"
+	assetArtifactWeb      = "local-artifact-web"
+
+	binaryInstallDirDefaultRel    = ".local/bin"
+	binaryInstallDirEnv           = "LOCAL_ARTIFACT_BIN_DIR"
+	settingsStableRelativePath    = ".vscode-server/data/Machine/settings.json"
+	settingsInsidersRelativePath  = ".vscode-server-insiders/data/Machine/settings.json"
+	settingsPathEnv               = "LOCAL_ARTIFACT_SETTINGS_PATH"
+	mcpConfigStableRelativePath   = ".vscode-server/data/User/mcp.json"
+	mcpConfigInsidersRelativePath = ".vscode-server-insiders/data/User/mcp.json"
+	mcpConfigPathEnv              = "LOCAL_ARTIFACT_MCP_PATH"
+)
+
+var installAssetNames = []string{assetAgentsZip, assetLocalArtifactZip}
+
+type Command string
+
+type Scope string
+
+const (
+	CommandInstall   Command = "install"
+	CommandUpdate    Command = "update"
+	CommandUninstall Command = "uninstall"
+
+	ScopeLocal  Scope = "local"
+	ScopeGlobal Scope = "global"
+)
+
+type installDestination string
+
+const (
+	installDestinationStable   installDestination = "stable"
+	installDestinationInsiders installDestination = "insiders"
+	installDestinationBoth     installDestination = "both"
+)
+
+type Runner struct {
 	httpClient            *http.Client
 	now                   func() time.Time
 	homeDir               func() (string, error)
@@ -35,53 +80,6 @@ type Manager struct {
 	installDestination    installDestination
 }
 
-func NewManager() *Manager {
-	return &Manager{
-		httpClient:    &http.Client{Timeout: 30 * time.Second},
-		now:           time.Now,
-		homeDir:       os.UserHomeDir,
-		workingDir:    os.Getwd,
-		lookPath:      exec.LookPath,
-		runCommand:    runCommand,
-		getenv:        os.Getenv,
-		installBinary: installBinary,
-		promptIn:      os.Stdin,
-		promptOut:     os.Stdout,
-	}
-}
-
-func (m *Manager) SetStatusWriter(writer io.Writer) {
-	m.statusOut = writer
-}
-
-func (m *Manager) SetSkipAttestationsCheck(skip bool) {
-	m.skipAttestationsCheck = skip
-}
-
-func (m *Manager) SetVerbose(verbose bool) {
-	m.verbose = verbose
-}
-
-func (m *Manager) SetInstallPromptIO(input io.Reader, output io.Writer) {
-	m.promptIn = input
-	m.promptOut = output
-}
-
-func (m *Manager) SetInstallVersion(version string) {
-	m.installVersionRaw = version
-}
-
-func (m *Manager) SetPinned(pinned bool) {
-	m.pinRequested = pinned
-}
-
-func (m *Manager) statusf(format string, args ...any) {
-	if m.statusOut == nil {
-		return
-	}
-	_, _ = fmt.Fprintf(m.statusOut, format, args...)
-}
-
 type installPaths struct {
 	binaryDir string
 	stable    configPaths
@@ -96,6 +94,60 @@ type configPaths struct {
 type installConfigTarget struct {
 	settingsPath string
 	mcpPath      string
+}
+
+func NewRunner() *Runner {
+	return &Runner{
+		httpClient:    &http.Client{Timeout: 30 * time.Second},
+		now:           time.Now,
+		homeDir:       os.UserHomeDir,
+		workingDir:    os.Getwd,
+		lookPath:      exec.LookPath,
+		runCommand:    runCommand,
+		getenv:        os.Getenv,
+		installBinary: func(src, dst string) error { return files.InstallBinary(src, dst, binaryFilePerm) },
+		promptIn:      os.Stdin,
+		promptOut:     os.Stdout,
+	}
+}
+
+func (r *Runner) SetStatusWriter(writer io.Writer) {
+	r.statusOut = writer
+}
+
+func (r *Runner) SetSkipAttestationsCheck(skip bool) {
+	r.skipAttestationsCheck = skip
+}
+
+func (r *Runner) SetVerbose(verbose bool) {
+	r.verbose = verbose
+}
+
+func (r *Runner) SetInstallPromptIO(input io.Reader, output io.Writer) {
+	r.promptIn = input
+	r.promptOut = output
+}
+
+func (r *Runner) SetInstallVersion(version string) {
+	r.installVersionRaw = version
+}
+
+func (r *Runner) SetPinned(pinned bool) {
+	r.pinRequested = pinned
+}
+
+func runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		if stderr.Len() > 0 {
+			return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+		}
+		return nil, err
+	}
+	return out, nil
 }
 
 func resolveInstallPaths(home string) installPaths {
@@ -162,18 +214,4 @@ func toHomeTildePath(home, path string) string {
 	}
 
 	return filepath.ToSlash(cleanPath)
-}
-
-func runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		if stderr.Len() > 0 {
-			return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
-		}
-		return nil, err
-	}
-	return out, nil
 }

@@ -1,4 +1,4 @@
-package bootstrap
+package config
 
 import (
 	"bytes"
@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-type installSettings struct {
+type InstallSettings struct {
 	AutostartWebUI bool
 	PinnedVersion  string
 }
@@ -22,20 +22,20 @@ type settingsPatch struct {
 	PinnedVersionRaw  string
 }
 
-type settingsScope string
+type SettingsScope string
 
 const (
-	settingsScopeGlobal settingsScope = "global"
-	settingsScopeLocal  settingsScope = "local"
+	SettingsScopeGlobal SettingsScope = "global"
+	SettingsScopeLocal  SettingsScope = "local"
 )
 
-func resolveSettingsPaths(home, cwd string) (string, string) {
+func ResolveSettingsPaths(home, cwd string) (string, string) {
 	globalPath := filepath.Join(home, ".local", "share", "ccsubagents", "settings.json")
 	localPath := filepath.Join(cwd, "ccsubagents", "settings.json")
 	return globalPath, localPath
 }
 
-func normalizeVersionTag(raw string) string {
+func NormalizeVersionTag(raw string) string {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
 		return ""
@@ -56,7 +56,7 @@ func normalizeVersionTag(raw string) string {
 }
 
 func NormalizeInstallVersionTag(raw string) string {
-	return normalizeVersionTag(raw)
+	return NormalizeVersionTag(raw)
 }
 
 func readSettingsPatch(path string) (settingsPatch, error) {
@@ -98,15 +98,15 @@ func readSettingsPatch(path string) (settingsPatch, error) {
 			if err := json.Unmarshal(raw, &pinned); err != nil {
 				return settingsPatch{}, fmt.Errorf("key pinned-version must be a string or null")
 			}
-			patch.PinnedVersionRaw = normalizeVersionTag(pinned)
+			patch.PinnedVersionRaw = NormalizeVersionTag(pinned)
 		}
 	}
 
 	return patch, nil
 }
 
-func mergeSettings(globalPatch, localPatch settingsPatch) installSettings {
-	settings := installSettings{}
+func mergeSettings(globalPatch, localPatch settingsPatch) InstallSettings {
+	settings := InstallSettings{}
 	applyPatch := func(patch settingsPatch) {
 		if patch.HasAutostartWebUI {
 			settings.AutostartWebUI = patch.AutostartWebUI
@@ -121,29 +121,29 @@ func mergeSettings(globalPatch, localPatch settingsPatch) installSettings {
 	return settings
 }
 
-func loadMergedInstallSettings(home, cwd string) (installSettings, error) {
-	globalPath, localPath := resolveSettingsPaths(home, cwd)
+func LoadMergedInstallSettings(home, cwd string) (InstallSettings, error) {
+	globalPath, localPath := ResolveSettingsPaths(home, cwd)
 
 	globalPatch, err := readSettingsPatch(globalPath)
 	if err != nil {
-		return installSettings{}, fmt.Errorf("read settings file %s: %w", globalPath, err)
+		return InstallSettings{}, fmt.Errorf("read settings file %s: %w", globalPath, err)
 	}
 
 	localPatch, err := readSettingsPatch(localPath)
 	if err != nil {
-		return installSettings{}, fmt.Errorf("read settings file %s: %w", localPath, err)
+		return InstallSettings{}, fmt.Errorf("read settings file %s: %w", localPath, err)
 	}
 
 	return mergeSettings(globalPatch, localPatch), nil
 }
 
-func choosePinWritePath(cwd, home string) (string, settingsScope, error) {
-	globalPath, localPath := resolveSettingsPaths(home, cwd)
+func ChoosePinWritePath(cwd, home string) (string, SettingsScope, error) {
+	globalPath, localPath := ResolveSettingsPaths(home, cwd)
 	localDir := filepath.Dir(localPath)
 	info, err := os.Stat(localDir)
 	if err == nil {
 		if info.IsDir() {
-			return localPath, settingsScopeLocal, nil
+			return localPath, SettingsScopeLocal, nil
 		}
 		return "", "", fmt.Errorf("local settings parent exists but is not a directory: %s", localDir)
 	}
@@ -151,11 +151,11 @@ func choosePinWritePath(cwd, home string) (string, settingsScope, error) {
 		return "", "", fmt.Errorf("check local settings directory %s: %w", localDir, err)
 	}
 
-	return globalPath, settingsScopeGlobal, nil
+	return globalPath, SettingsScopeGlobal, nil
 }
 
-func writePinnedVersion(path, versionTag string) error {
-	normalized := normalizeVersionTag(versionTag)
+func WritePinnedVersion(path, versionTag string, dirPerm, filePerm os.FileMode) error {
+	normalized := NormalizeVersionTag(versionTag)
 	if normalized == "" {
 		return errors.New("pinned version cannot be empty")
 	}
@@ -165,12 +165,12 @@ func writePinnedVersion(path, versionTag string) error {
 		return fmt.Errorf("read settings file %s: %w", path, err)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(path), stateDirPerm); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), dirPerm); err != nil {
 		return fmt.Errorf("create settings directory for %s: %w", path, err)
 	}
 
 	root["pinned-version"] = normalized
-	if err := writeJSONFile(path, root); err != nil {
+	if err := writeJSONFile(path, root, filePerm); err != nil {
 		return fmt.Errorf("write settings file %s: %w", path, err)
 	}
 

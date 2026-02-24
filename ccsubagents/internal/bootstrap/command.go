@@ -3,19 +3,27 @@ package bootstrap
 import (
 	"fmt"
 	"strings"
+
+	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/installer"
 )
 
-type Command string
+type Command = installer.Command
 
-type Scope string
+type Scope = installer.Scope
 
 const (
-	CommandInstall   Command = installCommand
-	CommandUpdate    Command = updateCommand
-	CommandUninstall Command = uninstallCommand
+	CommandInstall   Command = installer.CommandInstall
+	CommandUpdate    Command = installer.CommandUpdate
+	CommandUninstall Command = installer.CommandUninstall
 
-	ScopeLocal  Scope = "local"
-	ScopeGlobal Scope = "global"
+	ScopeLocal  Scope = installer.ScopeLocal
+	ScopeGlobal Scope = installer.ScopeGlobal
+)
+
+const (
+	installCommand   = "install"
+	updateCommand    = "update"
+	uninstallCommand = "uninstall"
 )
 
 func ParseCommand(raw string) (Command, error) {

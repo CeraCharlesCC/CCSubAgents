@@ -1,4 +1,4 @@
-package bootstrap
+package installer
 
 import (
 	"bytes"
@@ -247,7 +247,7 @@ func TestInstallLocal_TeamRerunPreservesFullManagedState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load tracked state: %v", err)
 	}
-	record, _ := state.localInstallForRoot(installRoot)
+	record, _ := state.LocalInstallForRoot(installRoot)
 	if record == nil {
 		t.Fatalf("expected tracked local install for %s", installRoot)
 	}
@@ -257,7 +257,7 @@ func TestInstallLocal_TeamRerunPreservesFullManagedState(t *testing.T) {
 	if !containsString(record.Managed.Files, filepath.Join(installRoot, localAgentsRelativePath, "new.agent.md")) {
 		t.Fatalf("expected managed agent file to remain tracked, got %#v", record.Managed.Files)
 	}
-	if _, ok := record.JSONEdits.mcpEditForFile(mcpPath); !ok {
+	if _, ok := record.JSONEdits.MCPEditForFile(mcpPath); !ok {
 		t.Fatalf("expected tracked mcp edit for %s", mcpPath)
 	}
 }

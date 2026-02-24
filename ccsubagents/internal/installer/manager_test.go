@@ -1,4 +1,4 @@
-package bootstrap
+package installer
 
 import (
 	"archive/zip"
@@ -788,11 +788,11 @@ func TestInstallOrUpdate_TracksBothDestinationTargets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load tracked state: %v", err)
 	}
-	if len(state.JSONEdits.allSettingsEdits()) != 2 {
-		t.Fatalf("expected 2 tracked settings edits, got %d", len(state.JSONEdits.allSettingsEdits()))
+	if len(state.JSONEdits.AllSettingsEdits()) != 2 {
+		t.Fatalf("expected 2 tracked settings edits, got %d", len(state.JSONEdits.AllSettingsEdits()))
 	}
-	if len(state.JSONEdits.allMCPEdits()) != 2 {
-		t.Fatalf("expected 2 tracked mcp edits, got %d", len(state.JSONEdits.allMCPEdits()))
+	if len(state.JSONEdits.AllMCPEdits()) != 2 {
+		t.Fatalf("expected 2 tracked mcp edits, got %d", len(state.JSONEdits.AllMCPEdits()))
 	}
 
 	paths := resolveInstallPaths(home)

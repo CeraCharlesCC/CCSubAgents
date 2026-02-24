@@ -1,4 +1,4 @@
-package bootstrap
+package files
 
 import (
 	"archive/zip"
@@ -11,35 +11,24 @@ import (
 	"strings"
 )
 
-func ensureDirTracked(path string) (bool, error) {
-	info, err := os.Stat(path)
-	if err == nil {
-		if !info.IsDir() {
-			return false, fmt.Errorf("path exists but is not a directory: %s", path)
-		}
-		return false, nil
-	}
-	if !errors.Is(err, os.ErrNotExist) {
-		return false, fmt.Errorf("stat %s: %w", path, err)
-	}
-	if err := os.MkdirAll(path, stateDirPerm); err != nil {
-		return false, fmt.Errorf("create directory %s: %w", path, err)
-	}
-	return true, nil
-}
+const (
+	DefaultStateDirPerm   = 0o755
+	DefaultStateFilePerm  = 0o644
+	DefaultBinaryFilePerm = 0o755
+)
 
-func installBinary(srcPath, dstPath string) error {
+func InstallBinary(srcPath, dstPath string, perm os.FileMode) error {
 	data, err := os.ReadFile(srcPath)
 	if err != nil {
 		return fmt.Errorf("read source binary %s: %w", srcPath, err)
 	}
-	if err := os.WriteFile(dstPath, data, binaryFilePerm); err != nil {
+	if err := os.WriteFile(dstPath, data, perm); err != nil {
 		return err
 	}
 	return nil
 }
 
-func extractBundleBinaries(zipPath, destDir string, names []string) (map[string]string, error) {
+func ExtractBundleBinaries(zipPath, destDir string, names []string, perm os.FileMode) (map[string]string, error) {
 	r, err := zip.OpenReader(zipPath)
 	if err != nil {
 		return nil, fmt.Errorf("open archive: %w", err)
@@ -88,7 +77,7 @@ func extractBundleBinaries(zipPath, destDir string, names []string) (map[string]
 		}
 
 		destPath := filepath.Join(destDir, baseName)
-		if err := os.WriteFile(destPath, content, binaryFilePerm); err != nil {
+		if err := os.WriteFile(destPath, content, perm); err != nil {
 			return nil, fmt.Errorf("write extracted bundle file %s: %w", destPath, err)
 		}
 		extracted[baseName] = destPath
@@ -108,7 +97,7 @@ func extractBundleBinaries(zipPath, destDir string, names []string) (map[string]
 	return extracted, nil
 }
 
-func extractAgentsArchiveWithHook(zipPath, destDir string, beforeWrite func(string) error) (filesOut []string, dirsOut []string, retErr error) {
+func ExtractAgentsArchiveWithHook(zipPath, destDir string, beforeWrite func(string) error, stateDirPerm, stateFilePerm os.FileMode) (filesOut []string, dirsOut []string, retErr error) {
 	r, err := zip.OpenReader(zipPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open archive: %w", err)
@@ -154,7 +143,7 @@ func extractAgentsArchiveWithHook(zipPath, destDir string, beforeWrite func(stri
 
 		destPath := filepath.Join(destDir, clean)
 		destPath = filepath.Clean(destPath)
-		if !isPathWithinDir(destPath, destDir) {
+		if !IsPathWithinDir(destPath, destDir) {
 			return nil, nil, fmt.Errorf("archive path escapes destination: %s", file.Name)
 		}
 
@@ -200,7 +189,7 @@ func extractAgentsArchiveWithHook(zipPath, destDir string, beforeWrite func(stri
 		files = append(files, destPath)
 	}
 
-	return uniqueSorted(files), uniqueSorted(dirs), nil
+	return UniqueSorted(files), UniqueSorted(dirs), nil
 }
 
 func shouldStripAgentsPrefix(files []*zip.File) (bool, error) {
@@ -226,7 +215,7 @@ func shouldStripAgentsPrefix(files []*zip.File) (bool, error) {
 	return seen, nil
 }
 
-func removeStaleAgentFilesWithHook(oldFiles, newFiles []string, agentsDir string, beforeRemove func(string) error) error {
+func RemoveStaleAgentFilesWithHook(oldFiles, newFiles []string, agentsDir string, beforeRemove func(string) error) error {
 	newSet := map[string]struct{}{}
 	for _, path := range newFiles {
 		newSet[filepath.Clean(path)] = struct{}{}
@@ -234,7 +223,7 @@ func removeStaleAgentFilesWithHook(oldFiles, newFiles []string, agentsDir string
 
 	for _, path := range oldFiles {
 		clean := filepath.Clean(path)
-		if !isPathWithinDir(clean, agentsDir) {
+		if !IsPathWithinDir(clean, agentsDir) {
 			continue
 		}
 		if _, keep := newSet[clean]; keep {

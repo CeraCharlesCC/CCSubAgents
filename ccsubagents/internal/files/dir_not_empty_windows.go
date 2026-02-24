@@ -1,13 +1,13 @@
 //go:build windows
 
-package bootstrap
+package files
 
 import (
 	"errors"
 	"syscall"
 )
 
-func isDirNotEmptyError(err error) bool {
+func IsDirNotEmptyError(err error) bool {
 	if err == nil {
 		return false
 	}
