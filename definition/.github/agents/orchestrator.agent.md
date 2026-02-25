@@ -6,10 +6,10 @@ target: vscode
 user-invokable: true   # for current stable 
 user-invocable: true   # insiders + upcoming; see https://github.com/microsoft/vscode/issues/296845
 disable-model-invocation: true
+agents: ["plan", "implementation", "review-alpha", "review-beta"]
 tools:
   [
-    'agent/askQuestions', 
-    'agent/runSubagent',
+    'agent',
     'read/readFile', 
     'execute/runInTerminal', 
     'execute/getTerminalOutput', 
