@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/versiontag"
 )
 
 const (
@@ -25,6 +27,7 @@ const (
 	HeaderAuthorization   = "Authorization"
 	HeaderGithubTokenPref = "Bearer "
 	AttestationOIDCIssuer = "https://token.actions.githubusercontent.com"
+	maxErrorBodyBytes     = 4096
 )
 
 type Response struct {
@@ -108,26 +111,6 @@ func NewClient() *Client {
 	}
 }
 
-func NormalizeVersionTag(raw string) string {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return ""
-	}
-	if strings.EqualFold(trimmed, "none") {
-		return ""
-	}
-	if strings.EqualFold(trimmed, "null") {
-		return ""
-	}
-	if strings.HasPrefix(trimmed, "v") {
-		return trimmed
-	}
-	if strings.HasPrefix(trimmed, "V") {
-		return "v" + strings.TrimPrefix(trimmed, "V")
-	}
-	return "v" + trimmed
-}
-
 func MapRequiredAssets(assets []Asset, names []string) (map[string]Asset, error) {
 	byName := make(map[string]Asset, len(assets))
 	for _, asset := range assets {
@@ -161,15 +144,40 @@ func (c *Client) getenv(key string) string {
 	return os.Getenv(key)
 }
 
-func (c *Client) FetchLatest(ctx context.Context) (Response, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ReleasesURL, nil)
-	if err != nil {
-		return Response{}, fmt.Errorf("create releases request: %w", err)
+func (c *Client) applyCommonHeaders(req *http.Request, acceptJSON bool) {
+	if req == nil {
+		return
 	}
-	req.Header.Set("Accept", HeaderAccept)
+	if acceptJSON {
+		req.Header.Set("Accept", HeaderAccept)
+	}
 	req.Header.Set("User-Agent", HeaderUserAgent)
 	if token := strings.TrimSpace(c.getenv("GITHUB_TOKEN")); token != "" {
 		req.Header.Set(HeaderAuthorization, HeaderGithubTokenPref+token)
+	}
+}
+
+func (c *Client) newRequest(ctx context.Context, method, requestURL string, acceptJSON bool) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, requestURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	c.applyCommonHeaders(req, acceptJSON)
+	return req, nil
+}
+
+func (c *Client) readErrorSnippet(resp *http.Response) string {
+	if resp == nil || resp.Body == nil {
+		return ""
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
+	return strings.TrimSpace(string(body))
+}
+
+func (c *Client) FetchLatest(ctx context.Context) (Response, error) {
+	req, err := c.newRequest(ctx, http.MethodGet, ReleasesURL, true)
+	if err != nil {
+		return Response{}, fmt.Errorf("create releases request: %w", err)
 	}
 
 	resp, err := c.httpClient().Do(req)
@@ -179,8 +187,7 @@ func (c *Client) FetchLatest(ctx context.Context) (Response, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return Response{}, fmt.Errorf("releases request failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return Response{}, fmt.Errorf("request releases failed: status=%d body=%s", resp.StatusCode, c.readErrorSnippet(resp))
 	}
 
 	var decoded []listResponse
@@ -213,7 +220,7 @@ func (c *Client) FetchLatest(ctx context.Context) (Response, error) {
 }
 
 func (c *Client) FetchByTag(ctx context.Context, tag string) (Response, error) {
-	normalizedTag := NormalizeVersionTag(tag)
+	normalizedTag := versiontag.Normalize(tag)
 	if normalizedTag == "" {
 		return Response{}, errors.New("release tag is required")
 	}
@@ -232,14 +239,9 @@ func (c *Client) FetchByExactTag(ctx context.Context, tag string) (Response, err
 
 func (c *Client) fetchByExactTag(ctx context.Context, tag string) (Response, error) {
 	requestURL := TagsURLPrefix + url.PathEscape(tag)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
+	req, err := c.newRequest(ctx, http.MethodGet, requestURL, true)
 	if err != nil {
 		return Response{}, fmt.Errorf("create release tag request: %w", err)
-	}
-	req.Header.Set("Accept", HeaderAccept)
-	req.Header.Set("User-Agent", HeaderUserAgent)
-	if token := strings.TrimSpace(c.getenv("GITHUB_TOKEN")); token != "" {
-		req.Header.Set(HeaderAuthorization, HeaderGithubTokenPref+token)
 	}
 
 	resp, err := c.httpClient().Do(req)
@@ -253,8 +255,7 @@ func (c *Client) fetchByExactTag(ctx context.Context, tag string) (Response, err
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return Response{}, fmt.Errorf("release tag request failed for %s: status=%d body=%s", tag, resp.StatusCode, strings.TrimSpace(string(body)))
+		return Response{}, fmt.Errorf("request release tag %s failed: status=%d body=%s", tag, resp.StatusCode, c.readErrorSnippet(resp))
 	}
 
 	var decoded Response
@@ -269,13 +270,9 @@ func (c *Client) fetchByExactTag(ctx context.Context, tag string) (Response, err
 }
 
 func (c *Client) DownloadFile(ctx context.Context, url, destPath string, perm os.FileMode) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := c.newRequest(ctx, http.MethodGet, url, false)
 	if err != nil {
 		return fmt.Errorf("create download request: %w", err)
-	}
-	req.Header.Set("User-Agent", HeaderUserAgent)
-	if token := strings.TrimSpace(c.getenv("GITHUB_TOKEN")); token != "" {
-		req.Header.Set(HeaderAuthorization, HeaderGithubTokenPref+token)
 	}
 
 	resp, err := c.httpClient().Do(req)
@@ -285,8 +282,7 @@ func (c *Client) DownloadFile(ctx context.Context, url, destPath string, perm os
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("download failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return fmt.Errorf("download request failed: status=%d body=%s", resp.StatusCode, c.readErrorSnippet(resp))
 	}
 
 	f, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, perm)

@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/versiontag"
 )
 
 type InstallSettings struct {
@@ -41,23 +43,7 @@ func ResolveSettingsPaths(home, cwd string) (string, string) {
 }
 
 func NormalizeVersionTag(raw string) string {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return ""
-	}
-	if strings.EqualFold(trimmed, "none") {
-		return ""
-	}
-	if strings.EqualFold(trimmed, "null") {
-		return ""
-	}
-	if strings.HasPrefix(trimmed, "v") {
-		return trimmed
-	}
-	if strings.HasPrefix(trimmed, "V") {
-		return "v" + strings.TrimPrefix(trimmed, "V")
-	}
-	return "v" + trimmed
+	return versiontag.Normalize(raw)
 }
 
 func NormalizeInstallVersionTag(raw string) string {

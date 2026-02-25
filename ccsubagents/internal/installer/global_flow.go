@@ -15,6 +15,7 @@ import (
 	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/files"
 	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/release"
 	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/state"
+	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/versiontag"
 )
 
 type pendingPinWrite struct {
@@ -307,7 +308,7 @@ func (r *Runner) fetchCompanionReleaseForMissingAssets(ctx context.Context, rel 
 		return release.Response{}, nil
 	}
 
-	mainTag := release.NormalizeVersionTag(rel.TagName)
+	mainTag := versiontag.Normalize(rel.TagName)
 	if mainTag == "" {
 		return release.Response{}, nil
 	}
