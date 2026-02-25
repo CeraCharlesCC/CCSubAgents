@@ -10,13 +10,16 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/files"
+	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/release"
 )
 
 func TestDownloadRequiredAssets_RemovesTempDirOnDownloadError(t *testing.T) {
 	stateDir := t.TempDir()
 
 	requestCount := 0
-	m := &Manager{
+	m := &Runner{
 		httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			requestCount++
 			return &http.Response{
@@ -27,9 +30,9 @@ func TestDownloadRequiredAssets_RemovesTempDirOnDownloadError(t *testing.T) {
 		})},
 	}
 
-	release := releaseResponse{
+	release := release.Response{
 		TagName: "v1.2.3",
-		Assets: []releaseAsset{
+		Assets: []release.Asset{
 			{Name: assetAgentsZip, BrowserDownloadURL: "https://example.invalid/assets/" + assetAgentsZip},
 			{Name: assetLocalArtifactZip, BrowserDownloadURL: "https://example.invalid/assets/" + assetLocalArtifactZip},
 		},
@@ -69,7 +72,7 @@ func TestDownloadRequiredAssets_RemovesTempDirOnDownloadError(t *testing.T) {
 
 func TestVerifyAttestationsOrReport_AttestationFailureAddsSkipGuidance(t *testing.T) {
 	var status bytes.Buffer
-	m := &Manager{
+	m := &Runner{
 		statusOut: &status,
 		lookPath: func(string) (string, error) {
 			return "/usr/bin/gh", nil
@@ -115,13 +118,13 @@ func TestInstallExtractedBinaries_PermissionErrorIncludesPrivilegeHint(t *testin
 		assetArtifactWeb: filepath.Join(bundleDir, assetArtifactWeb),
 	}
 
-	m := &Manager{
+	m := &Runner{
 		installBinary: func(string, string) error {
 			return os.ErrPermission
 		},
 	}
 
-	mutations := newMutationTracker(newInstallRollback())
+	mutations := files.NewMutationTracker(files.NewRollback(), stateDirPerm)
 	_, err := m.installExtractedBinaries(context.Background(), bundleBinaries, destinationDir, mutations, destinationDir)
 	if err == nil {
 		t.Fatalf("expected installExtractedBinaries to fail")

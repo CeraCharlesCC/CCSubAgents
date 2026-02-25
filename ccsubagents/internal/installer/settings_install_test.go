@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/config"
 )
 
 func writeSettingsFixture(t *testing.T, path, content string) {
@@ -21,12 +23,12 @@ func writeSettingsFixture(t *testing.T, path, content string) {
 func TestLoadMergedInstallSettings_LocalOverridesGlobalAutostart(t *testing.T) {
 	home := t.TempDir()
 	cwd := t.TempDir()
-	globalPath, localPath := resolveSettingsPaths(home, cwd)
+	globalPath, localPath := config.ResolveSettingsPaths(home, cwd)
 
 	writeSettingsFixture(t, globalPath, `{"autostart-webui": true, "pinned-version": "v1.2.3"}`)
 	writeSettingsFixture(t, localPath, `{"autostart-webui": false}`)
 
-	settings, err := loadMergedInstallSettings(home, cwd)
+	settings, err := config.LoadMergedInstallSettings(home, cwd)
 	if err != nil {
 		t.Fatalf("load merged settings: %v", err)
 	}
@@ -42,12 +44,12 @@ func TestLoadMergedInstallSettings_LocalClearsGlobalPinnedVersion(t *testing.T) 
 	t.Run("null clears pin", func(t *testing.T) {
 		home := t.TempDir()
 		cwd := t.TempDir()
-		globalPath, localPath := resolveSettingsPaths(home, cwd)
+		globalPath, localPath := config.ResolveSettingsPaths(home, cwd)
 
 		writeSettingsFixture(t, globalPath, `{"pinned-version": "v1.2.3"}`)
 		writeSettingsFixture(t, localPath, `{"pinned-version": null}`)
 
-		settings, err := loadMergedInstallSettings(home, cwd)
+		settings, err := config.LoadMergedInstallSettings(home, cwd)
 		if err != nil {
 			t.Fatalf("load merged settings: %v", err)
 		}
@@ -59,12 +61,12 @@ func TestLoadMergedInstallSettings_LocalClearsGlobalPinnedVersion(t *testing.T) 
 	t.Run("string none clears pin", func(t *testing.T) {
 		home := t.TempDir()
 		cwd := t.TempDir()
-		globalPath, localPath := resolveSettingsPaths(home, cwd)
+		globalPath, localPath := config.ResolveSettingsPaths(home, cwd)
 
 		writeSettingsFixture(t, globalPath, `{"pinned-version": "v1.2.3"}`)
 		writeSettingsFixture(t, localPath, `{"pinned-version": "none"}`)
 
-		settings, err := loadMergedInstallSettings(home, cwd)
+		settings, err := config.LoadMergedInstallSettings(home, cwd)
 		if err != nil {
 			t.Fatalf("load merged settings: %v", err)
 		}
@@ -77,10 +79,10 @@ func TestLoadMergedInstallSettings_LocalClearsGlobalPinnedVersion(t *testing.T) 
 func TestLoadMergedInstallSettings_TypeErrors(t *testing.T) {
 	home := t.TempDir()
 	cwd := t.TempDir()
-	globalPath, _ := resolveSettingsPaths(home, cwd)
+	globalPath, _ := config.ResolveSettingsPaths(home, cwd)
 	writeSettingsFixture(t, globalPath, `{"pinned-version": 123}`)
 
-	_, err := loadMergedInstallSettings(home, cwd)
+	_, err := config.LoadMergedInstallSettings(home, cwd)
 	if err == nil {
 		t.Fatalf("expected type error for non-string pinned-version")
 	}
@@ -93,7 +95,7 @@ func TestLoadMergedInstallSettings_MissingFilesAreEmpty(t *testing.T) {
 	home := t.TempDir()
 	cwd := t.TempDir()
 
-	settings, err := loadMergedInstallSettings(home, cwd)
+	settings, err := config.LoadMergedInstallSettings(home, cwd)
 	if err != nil {
 		t.Fatalf("expected missing settings files to be treated as empty, got %v", err)
 	}
@@ -112,15 +114,15 @@ func TestChoosePinWritePath_PrefersLocalWhenDirectoryExists(t *testing.T) {
 		t.Fatalf("create local ccsubagents directory: %v", err)
 	}
 
-	path, scope, err := choosePinWritePath(cwd, home)
+	path, scope, err := config.ChoosePinWritePath(cwd, home)
 	if err != nil {
 		t.Fatalf("choose pin write path: %v", err)
 	}
-	_, localPath := resolveSettingsPaths(home, cwd)
+	_, localPath := config.ResolveSettingsPaths(home, cwd)
 	if path != localPath {
 		t.Fatalf("expected local write path %q, got %q", localPath, path)
 	}
-	if scope != settingsScopeLocal {
+	if scope != config.SettingsScopeLocal {
 		t.Fatalf("expected local scope, got %q", scope)
 	}
 }
@@ -129,15 +131,15 @@ func TestChoosePinWritePath_FallsBackToGlobal(t *testing.T) {
 	home := t.TempDir()
 	cwd := t.TempDir()
 
-	path, scope, err := choosePinWritePath(cwd, home)
+	path, scope, err := config.ChoosePinWritePath(cwd, home)
 	if err != nil {
 		t.Fatalf("choose pin write path: %v", err)
 	}
-	globalPath, _ := resolveSettingsPaths(home, cwd)
+	globalPath, _ := config.ResolveSettingsPaths(home, cwd)
 	if path != globalPath {
 		t.Fatalf("expected global write path %q, got %q", globalPath, path)
 	}
-	if scope != settingsScopeGlobal {
+	if scope != config.SettingsScopeGlobal {
 		t.Fatalf("expected global scope, got %q", scope)
 	}
 }
@@ -147,7 +149,7 @@ func TestWritePinnedVersion_PreservesUnknownKeys(t *testing.T) {
 	settingsPath := filepath.Join(dir, "settings.json")
 	writeSettingsFixture(t, settingsPath, `{"autostart-webui": true, "custom": {"nested": 1}}`)
 
-	if err := writePinnedVersion(settingsPath, "1.2.3"); err != nil {
+	if err := config.WritePinnedVersion(settingsPath, "1.2.3", stateDirPerm, stateFilePerm); err != nil {
 		t.Fatalf("write pinned version: %v", err)
 	}
 

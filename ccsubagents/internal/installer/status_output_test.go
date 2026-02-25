@@ -12,6 +12,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/release"
+	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/state"
 )
 
 func assertStatusContainsInOrder(t *testing.T, status string, wants []string) {
@@ -32,7 +35,7 @@ func successReleaseHTTPClient(t *testing.T, releaseTag string, agentsArchive, bu
 	return &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		status := http.StatusOK
 		switch req.URL.String() {
-		case releaseLatestURL:
+		case release.LatestURL:
 			body := fmt.Sprintf(`{"id":101,"tag_name":%q,"assets":[{"name":%q,"browser_download_url":"https://example.invalid/assets/%s"},{"name":%q,"browser_download_url":"https://example.invalid/assets/%s"}]}`,
 				releaseTag,
 				assetAgentsZip, assetAgentsZip,
@@ -49,8 +52,8 @@ func successReleaseHTTPClient(t *testing.T, releaseTag string, agentsArchive, bu
 	})}
 }
 
-func statusTestManager(home string, client *http.Client, statusOut io.Writer) *Manager {
-	return &Manager{
+func statusTestManager(home string, client *http.Client, statusOut io.Writer) *Runner {
+	return &Runner{
 		httpClient: client,
 		now:        func() time.Time { return time.Unix(0, 0).UTC() },
 		homeDir:    func() (string, error) { return home, nil },
@@ -102,7 +105,7 @@ func TestInstallOrUpdate_ReportsInstallProgress(t *testing.T) {
 
 func TestInstallOrUpdate_ReportsUpdateCleanupProgress(t *testing.T) {
 	home := t.TempDir()
-	agentsDir := filepath.Join(home, agentsRelativePath)
+	agentsDir := filepath.Join(home, ".local", "share", "ccsubagents", "agents")
 	if err := os.MkdirAll(agentsDir, stateDirPerm); err != nil {
 		t.Fatalf("create agents dir: %v", err)
 	}
@@ -121,17 +124,17 @@ func TestInstallOrUpdate_ReportsUpdateCleanupProgress(t *testing.T) {
 	if err := os.MkdirAll(stateDir, stateDirPerm); err != nil {
 		t.Fatalf("create state dir: %v", err)
 	}
-	previous := trackedState{
-		Version:     trackedSchemaVersion,
-		Repo:        releaseRepo,
+	previous := state.TrackedState{
+		Version:     state.TrackedSchemaVersion,
+		Repo:        release.Repo,
 		ReleaseID:   100,
 		ReleaseTag:  "v1.9.9",
 		InstalledAt: "2026-01-01T00:00:00Z",
-		Managed: managedState{
+		Managed: state.ManagedState{
 			Files: []string{staleFile},
 		},
 	}
-	if err := m.saveTrackedState(stateDir, previous); err != nil {
+	if err := state.SaveTrackedState(stateDir, previous); err != nil {
 		t.Fatalf("seed tracked state: %v", err)
 	}
 
@@ -186,7 +189,7 @@ func TestInstallOrUpdate_ReportsAlreadyLatestNoopForUpdate(t *testing.T) {
 	requestCount := 0
 	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		requestCount++
-		if req.URL.String() != releaseLatestURL {
+		if req.URL.String() != release.LatestURL {
 			return nil, fmt.Errorf("unexpected request URL: %s", req.URL.String())
 		}
 		body := `{"id":101,"tag_name":"v2.0.0","assets":[]}`
@@ -200,9 +203,9 @@ func TestInstallOrUpdate_ReportsAlreadyLatestNoopForUpdate(t *testing.T) {
 	if err := os.MkdirAll(stateDir, stateDirPerm); err != nil {
 		t.Fatalf("create state dir: %v", err)
 	}
-	if err := m.saveTrackedState(stateDir, trackedState{
-		Version:     trackedSchemaVersion,
-		Repo:        releaseRepo,
+	if err := state.SaveTrackedState(stateDir, state.TrackedState{
+		Version:     state.TrackedSchemaVersion,
+		Repo:        release.Repo,
 		ReleaseID:   100,
 		ReleaseTag:  "v2.0.0",
 		InstalledAt: "2026-01-01T00:00:00Z",
@@ -351,7 +354,7 @@ func TestUninstall_ReportsNoopWhenNoTrackedState(t *testing.T) {
 
 func TestUninstall_ReportsProgressOnTrackedState(t *testing.T) {
 	home := t.TempDir()
-	agentsDir := filepath.Join(home, agentsRelativePath)
+	agentsDir := filepath.Join(home, ".local", "share", "ccsubagents", "agents")
 	if err := os.MkdirAll(agentsDir, stateDirPerm); err != nil {
 		t.Fatalf("create agents dir: %v", err)
 	}
@@ -367,18 +370,18 @@ func TestUninstall_ReportsProgressOnTrackedState(t *testing.T) {
 	if err := os.MkdirAll(stateDir, stateDirPerm); err != nil {
 		t.Fatalf("create state dir: %v", err)
 	}
-	state := trackedState{
-		Version:     trackedSchemaVersion,
-		Repo:        releaseRepo,
+	tracked := state.TrackedState{
+		Version:     state.TrackedSchemaVersion,
+		Repo:        release.Repo,
 		ReleaseID:   42,
 		ReleaseTag:  "v1.0.0",
 		InstalledAt: "2026-01-01T00:00:00Z",
-		Managed: managedState{
+		Managed: state.ManagedState{
 			Files: []string{agentFile},
 			Dirs:  []string{agentsDir},
 		},
 	}
-	if err := m.saveTrackedState(stateDir, state); err != nil {
+	if err := state.SaveTrackedState(stateDir, tracked); err != nil {
 		t.Fatalf("seed tracked state: %v", err)
 	}
 

@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/release"
+	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/state"
 )
 
 func TestSaveTrackedState_UsesPrivatePermissions(t *testing.T) {
@@ -13,18 +16,17 @@ func TestSaveTrackedState_UsesPrivatePermissions(t *testing.T) {
 	}
 
 	stateDir := t.TempDir()
-	trackedPath := filepath.Join(stateDir, trackedFileName)
+	trackedPath := filepath.Join(stateDir, state.TrackedFileName)
 	if err := os.WriteFile(trackedPath, []byte("{\"version\":1}\n"), stateFilePerm); err != nil {
 		t.Fatalf("seed tracked state: %v", err)
 	}
 
-	m := &Manager{}
-	state := trackedState{
-		Version:    trackedSchemaVersion,
-		Repo:       releaseRepo,
+	tracked := state.TrackedState{
+		Version:    state.TrackedSchemaVersion,
+		Repo:       release.Repo,
 		ReleaseTag: "v-test",
 	}
-	if err := m.saveTrackedState(stateDir, state); err != nil {
+	if err := state.SaveTrackedState(stateDir, tracked); err != nil {
 		t.Fatalf("save tracked state: %v", err)
 	}
 

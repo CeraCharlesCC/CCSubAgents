@@ -10,6 +10,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/config"
+	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/release"
+	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/state"
 )
 
 func TestInstallOrUpdateLocal_RollbackRestoresIgnoreFile_OnPostIgnoreFailure(t *testing.T) {
@@ -27,7 +31,7 @@ func TestInstallOrUpdateLocal_RollbackRestoresIgnoreFile_OnPostIgnoreFailure(t *
 	if err := os.MkdirAll(stateDir, stateDirPerm); err != nil {
 		t.Fatalf("create state dir: %v", err)
 	}
-	if err := os.Mkdir(filepath.Join(stateDir, trackedFileName), stateDirPerm); err != nil {
+	if err := os.Mkdir(filepath.Join(stateDir, state.TrackedFileName), stateDirPerm); err != nil {
 		t.Fatalf("create tracked-state collision dir: %v", err)
 	}
 
@@ -37,7 +41,7 @@ func TestInstallOrUpdateLocal_RollbackRestoresIgnoreFile_OnPostIgnoreFailure(t *
 		"local-artifact-web": "web-binary",
 	})
 
-	m := &Manager{
+	m := &Runner{
 		httpClient: successReleaseHTTPClient(t, "v1.2.3", agentsArchive, bundleArchive),
 		now:        func() time.Time { return time.Unix(0, 0).UTC() },
 		lookPath:   func(string) (string, error) { return "/usr/bin/gh", nil },
@@ -58,9 +62,9 @@ func TestInstallOrUpdateLocal_RollbackRestoresIgnoreFile_OnPostIgnoreFailure(t *
 			repoRoot:    installRoot,
 			inGitRepo:   true,
 		},
-		mode:     localInstallModePersonal,
+		mode:     state.LocalInstallModePersonal,
 		stateDir: stateDir,
-		state:    &trackedState{Version: trackedSchemaVersion},
+		state:    &state.TrackedState{Version: state.TrackedSchemaVersion},
 	})
 	if err == nil {
 		t.Fatalf("expected install failure after ignore edits")
@@ -92,7 +96,7 @@ func TestInstallOrUpdateLocal_AttestationFailureUpdateReportsActionableGuidance(
 	})
 
 	var out bytes.Buffer
-	m := &Manager{
+	m := &Runner{
 		httpClient: successReleaseHTTPClient(t, "v1.2.3", agentsArchive, bundleArchive),
 		now:        func() time.Time { return time.Unix(0, 0).UTC() },
 		lookPath:   func(string) (string, error) { return "/usr/bin/gh", nil },
@@ -108,9 +112,9 @@ func TestInstallOrUpdateLocal_AttestationFailureUpdateReportsActionableGuidance(
 			installRoot: installRoot,
 			repoRoot:    installRoot,
 		},
-		mode:     localInstallModePersonal,
+		mode:     state.LocalInstallModePersonal,
 		stateDir: stateDir,
-		state:    &trackedState{Version: trackedSchemaVersion},
+		state:    &state.TrackedState{Version: state.TrackedSchemaVersion},
 	})
 	if err == nil {
 		t.Fatalf("expected attestation verification error")
@@ -144,10 +148,10 @@ func TestInstallLocal_TeamRerunPreservesFullManagedState(t *testing.T) {
 	home := t.TempDir()
 	installRoot := t.TempDir()
 
-	if err := os.WriteFile(filepath.Join(installRoot, ".gitignore"), []byte(localManagedDirRelativePath+"\n"), stateFilePerm); err != nil {
+	if err := os.WriteFile(filepath.Join(installRoot, ".gitignore"), []byte(config.LocalManagedDirRelativePath+"\n"), stateFilePerm); err != nil {
 		t.Fatalf("seed .gitignore: %v", err)
 	}
-	agentsDir := filepath.Join(installRoot, localAgentsRelativePath)
+	agentsDir := filepath.Join(installRoot, config.LocalAgentsRelativePath)
 	if err := os.MkdirAll(agentsDir, stateDirPerm); err != nil {
 		t.Fatalf("create agents dir: %v", err)
 	}
@@ -155,14 +159,14 @@ func TestInstallLocal_TeamRerunPreservesFullManagedState(t *testing.T) {
 		t.Fatalf("seed existing agent: %v", err)
 	}
 
-	mcpPath := filepath.Join(installRoot, localMCPRelativePath)
+	mcpPath := filepath.Join(installRoot, config.LocalMCPRelativePath)
 	if err := os.MkdirAll(filepath.Dir(mcpPath), stateDirPerm); err != nil {
 		t.Fatalf("create mcp parent dir: %v", err)
 	}
-	if err := writeJSONFile(mcpPath, map[string]any{
+	if err := writeJSONMap(mcpPath, map[string]any{
 		"servers": map[string]any{
-			mcpServerKey: map[string]any{
-				"command": localMCPCommand,
+			config.MCPServerKey: map[string]any{
+				"command": config.LocalMCPCommand,
 			},
 		},
 	}); err != nil {
@@ -173,41 +177,41 @@ func TestInstallLocal_TeamRerunPreservesFullManagedState(t *testing.T) {
 	if err := os.MkdirAll(stateDir, stateDirPerm); err != nil {
 		t.Fatalf("create state dir: %v", err)
 	}
-	m := &Manager{
+	m := &Runner{
 		now:     func() time.Time { return time.Unix(0, 0).UTC() },
 		homeDir: func() (string, error) { return home, nil },
 	}
-	if err := m.saveTrackedState(stateDir, trackedState{
-		Version: trackedSchemaVersion,
-		Local: []localInstall{
+	if err := state.SaveTrackedState(stateDir, state.TrackedState{
+		Version: state.TrackedSchemaVersion,
+		Local: []state.LocalInstall{
 			{
 				InstallRoot: installRoot,
-				Mode:        localInstallModeTeam,
+				Mode:        state.LocalInstallModeTeam,
 				BinaryOnly:  false,
-				Repo:        releaseRepo,
+				Repo:        release.Repo,
 				ReleaseID:   100,
 				ReleaseTag:  "v0.9.0",
 				InstalledAt: "2026-01-01T00:00:00Z",
-				Managed: managedState{
+				Managed: state.ManagedState{
 					Files: []string{
-						filepath.Join(installRoot, localManagedDirRelativePath, assetArtifactMCP),
-						filepath.Join(installRoot, localManagedDirRelativePath, assetArtifactWeb),
-						filepath.Join(installRoot, localAgentsRelativePath, "existing.agent.md"),
+						filepath.Join(installRoot, config.LocalManagedDirRelativePath, assetArtifactMCP),
+						filepath.Join(installRoot, config.LocalManagedDirRelativePath, assetArtifactWeb),
+						filepath.Join(installRoot, config.LocalAgentsRelativePath, "existing.agent.md"),
 					},
 					Dirs: []string{
-						filepath.Join(installRoot, localManagedDirRelativePath),
-						filepath.Join(installRoot, localAgentsRelativePath),
+						filepath.Join(installRoot, config.LocalManagedDirRelativePath),
+						filepath.Join(installRoot, config.LocalAgentsRelativePath),
 					},
 				},
-				JSONEdits: trackedJSONOpsFromEdits(nil, []mcpEdit{
+				JSONEdits: state.TrackedJSONOpsFromEdits(nil, []state.MCPEdit{
 					{
 						File:    mcpPath,
-						Key:     mcpServerKey,
+						Key:     config.MCPServerKey,
 						Touched: true,
 					},
 				}),
-				IgnoreEdits: []ignoreEdit{
-					{File: filepath.Join(installRoot, ".gitignore"), AddedLines: []string{localManagedDirRelativePath}},
+				IgnoreEdits: []state.IgnoreEdit{
+					{File: filepath.Join(installRoot, ".gitignore"), AddedLines: []string{config.LocalManagedDirRelativePath}},
 				},
 			},
 		},
@@ -221,7 +225,7 @@ func TestInstallLocal_TeamRerunPreservesFullManagedState(t *testing.T) {
 		assetArtifactWeb: "web-binary",
 	})
 
-	m = &Manager{
+	m = &Runner{
 		httpClient:            successReleaseHTTPClient(t, "v1.2.3", agentsArchive, bundleArchive),
 		now:                   func() time.Time { return time.Unix(0, 0).UTC() },
 		homeDir:               func() (string, error) { return home, nil },
@@ -243,18 +247,18 @@ func TestInstallLocal_TeamRerunPreservesFullManagedState(t *testing.T) {
 		t.Fatalf("installLocal should succeed: %v", err)
 	}
 
-	state, err := m.loadTrackedState(stateDir)
+	tracked, err := state.LoadTrackedState(stateDir)
 	if err != nil {
 		t.Fatalf("load tracked state: %v", err)
 	}
-	record, _ := state.LocalInstallForRoot(installRoot)
+	record, _ := tracked.LocalInstallForRoot(installRoot)
 	if record == nil {
 		t.Fatalf("expected tracked local install for %s", installRoot)
 	}
 	if record.BinaryOnly {
 		t.Fatalf("expected binaryOnly=false for existing tracked install")
 	}
-	if !containsString(record.Managed.Files, filepath.Join(installRoot, localAgentsRelativePath, "new.agent.md")) {
+	if !containsString(record.Managed.Files, filepath.Join(installRoot, config.LocalAgentsRelativePath, "new.agent.md")) {
 		t.Fatalf("expected managed agent file to remain tracked, got %#v", record.Managed.Files)
 	}
 	if _, ok := record.JSONEdits.MCPEditForFile(mcpPath); !ok {
@@ -269,9 +273,9 @@ func TestApplyLocalIgnoreRules_PersonalUsesGitInfoExclude(t *testing.T) {
 		t.Fatalf("create exclude dir: %v", err)
 	}
 
-	edits, err := applyLocalIgnoreRules(installRoot, installRoot, localInstallModePersonal)
+	edits, err := config.ApplyLocalIgnoreRules(installRoot, installRoot, state.LocalInstallModePersonal, stateDirPerm, stateFilePerm)
 	if err != nil {
-		t.Fatalf("applyLocalIgnoreRules returned error: %v", err)
+		t.Fatalf("config.ApplyLocalIgnoreRules returned error: %v", err)
 	}
 	if len(edits) != 1 {
 		t.Fatalf("expected exactly 1 ignore edit, got %d", len(edits))
@@ -287,7 +291,7 @@ func TestApplyLocalIgnoreRules_PersonalUsesGitInfoExclude(t *testing.T) {
 		t.Fatalf("read exclude file: %v", err)
 	}
 	got := string(b)
-	for _, want := range []string{localManagedDirRelativePath, filepath.ToSlash(filepath.Join(localAgentsRelativePath, "*.agent.md"))} {
+	for _, want := range []string{config.LocalManagedDirRelativePath, filepath.ToSlash(filepath.Join(config.LocalAgentsRelativePath, "*.agent.md"))} {
 		if !strings.Contains(got, want+"\n") {
 			t.Fatalf("expected %q in exclude file, got %q", want, got)
 		}
@@ -300,9 +304,9 @@ func TestApplyLocalIgnoreRules_PersonalUsesGitInfoExclude(t *testing.T) {
 
 func TestApplyLocalIgnoreRules_TeamUsesGitignore(t *testing.T) {
 	installRoot := t.TempDir()
-	edits, err := applyLocalIgnoreRules(installRoot, installRoot, localInstallModeTeam)
+	edits, err := config.ApplyLocalIgnoreRules(installRoot, installRoot, state.LocalInstallModeTeam, stateDirPerm, stateFilePerm)
 	if err != nil {
-		t.Fatalf("applyLocalIgnoreRules returned error: %v", err)
+		t.Fatalf("config.ApplyLocalIgnoreRules returned error: %v", err)
 	}
 	if len(edits) != 1 {
 		t.Fatalf("expected exactly 1 ignore edit, got %d", len(edits))
@@ -318,8 +322,8 @@ func TestApplyLocalIgnoreRules_TeamUsesGitignore(t *testing.T) {
 		t.Fatalf("read .gitignore: %v", err)
 	}
 	got := string(b)
-	if !strings.Contains(got, localManagedDirRelativePath+"\n") {
-		t.Fatalf("expected %q in .gitignore, got %q", localManagedDirRelativePath, got)
+	if !strings.Contains(got, config.LocalManagedDirRelativePath+"\n") {
+		t.Fatalf("expected %q in .gitignore, got %q", config.LocalManagedDirRelativePath, got)
 	}
 
 	if _, err := os.Stat(filepath.Join(installRoot, ".git", "info", "exclude")); err == nil {
@@ -342,9 +346,9 @@ func TestApplyLocalIgnoreRules_PersonalUsesGitdirPointerExcludePath(t *testing.T
 		t.Fatalf("write .git pointer file: %v", err)
 	}
 
-	edits, err := applyLocalIgnoreRules(installRoot, repoRoot, localInstallModePersonal)
+	edits, err := config.ApplyLocalIgnoreRules(installRoot, repoRoot, state.LocalInstallModePersonal, stateDirPerm, stateFilePerm)
 	if err != nil {
-		t.Fatalf("applyLocalIgnoreRules returned error: %v", err)
+		t.Fatalf("config.ApplyLocalIgnoreRules returned error: %v", err)
 	}
 	if len(edits) != 1 {
 		t.Fatalf("expected exactly 1 ignore edit, got %d", len(edits))
@@ -377,9 +381,9 @@ func TestApplyLocalIgnoreRules_TeamUsesRepoRootGitignoreForSubdirInstall(t *test
 		t.Fatalf("create install root: %v", err)
 	}
 
-	edits, err := applyLocalIgnoreRules(installRoot, repoRoot, localInstallModeTeam)
+	edits, err := config.ApplyLocalIgnoreRules(installRoot, repoRoot, state.LocalInstallModeTeam, stateDirPerm, stateFilePerm)
 	if err != nil {
-		t.Fatalf("applyLocalIgnoreRules returned error: %v", err)
+		t.Fatalf("config.ApplyLocalIgnoreRules returned error: %v", err)
 	}
 	if len(edits) != 1 {
 		t.Fatalf("expected exactly 1 ignore edit, got %d", len(edits))
@@ -416,7 +420,7 @@ func TestReportGlobalPathWarning_WarnsWhenLocalBinMissing(t *testing.T) {
 	var out bytes.Buffer
 	home := filepath.Join(string(os.PathSeparator), "home", "user")
 
-	m := &Manager{
+	m := &Runner{
 		statusOut: &out,
 		getenv: func(key string) string {
 			if key == "PATH" {
@@ -441,7 +445,7 @@ func TestReportGlobalPathWarning_NoWarningWhenLocalBinPresent(t *testing.T) {
 	home := filepath.Join(string(os.PathSeparator), "home", "user")
 	expected := filepath.Join(home, binaryInstallDirDefaultRel)
 
-	m := &Manager{
+	m := &Runner{
 		statusOut: &out,
 		getenv: func(key string) string {
 			if key == "PATH" {

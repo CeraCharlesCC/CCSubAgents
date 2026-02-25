@@ -11,6 +11,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/config"
+	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/release"
+	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/state"
 )
 
 func TestResolveReleaseForInstall_UsesTagEndpointWhenVersionRequested(t *testing.T) {
@@ -21,11 +25,11 @@ func TestResolveReleaseForInstall_UsesTagEndpointWhenVersionRequested(t *testing
 	tagRequests := 0
 	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		switch req.URL.String() {
-		case releaseLatestURL:
+		case release.LatestURL:
 			latestRequests++
 			body := `{"id":300,"tag_name":"v-latest","assets":[]}`
 			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
-		case releaseTagsURLPrefix + "v1.2.3":
+		case release.TagsURLPrefix + "v1.2.3":
 			tagRequests++
 			body := `{"id":301,"tag_name":"v1.2.3","assets":[]}`
 			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
@@ -34,7 +38,7 @@ func TestResolveReleaseForInstall_UsesTagEndpointWhenVersionRequested(t *testing
 		}
 	})}
 
-	m := &Manager{
+	m := &Runner{
 		httpClient: client,
 		homeDir:    func() (string, error) { return home, nil },
 		workingDir: func() (string, error) { return cwd, nil },
@@ -56,11 +60,11 @@ func TestResolveReleaseForInstall_UsesTagEndpointWhenVersionRequested(t *testing
 func TestResolveReleaseForInstall_BlockedWhenPinnedAndVersionMissing(t *testing.T) {
 	home := t.TempDir()
 	cwd := t.TempDir()
-	globalPath, _ := resolveSettingsPaths(home, cwd)
+	globalPath, _ := config.ResolveSettingsPaths(home, cwd)
 	writeSettingsFixture(t, globalPath, `{"pinned-version":"v1.2.3"}`)
 
 	requestCount := 0
-	m := &Manager{
+	m := &Runner{
 		httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			requestCount++
 			return nil, fmt.Errorf("unexpected request URL: %s", req.URL.String())
@@ -84,11 +88,11 @@ func TestResolveReleaseForInstall_BlockedWhenPinnedAndVersionMissing(t *testing.
 func TestResolveReleaseForInstall_BlockedWhenPinnedAndVersionMismatch(t *testing.T) {
 	home := t.TempDir()
 	cwd := t.TempDir()
-	globalPath, _ := resolveSettingsPaths(home, cwd)
+	globalPath, _ := config.ResolveSettingsPaths(home, cwd)
 	writeSettingsFixture(t, globalPath, `{"pinned-version":"v1.2.3"}`)
 
 	requestCount := 0
-	m := &Manager{
+	m := &Runner{
 		httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			requestCount++
 			return nil, fmt.Errorf("unexpected request URL: %s", req.URL.String())
@@ -113,19 +117,19 @@ func TestResolveReleaseForInstall_BlockedWhenPinnedAndVersionMismatch(t *testing
 func TestResolveReleaseForInstall_AllowsMatchingPinnedVersion(t *testing.T) {
 	home := t.TempDir()
 	cwd := t.TempDir()
-	globalPath, _ := resolveSettingsPaths(home, cwd)
+	globalPath, _ := config.ResolveSettingsPaths(home, cwd)
 	writeSettingsFixture(t, globalPath, `{"pinned-version":"v1.2.3"}`)
 
 	tagRequests := 0
 	latestRequests := 0
-	m := &Manager{
+	m := &Runner{
 		httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			switch req.URL.String() {
-			case releaseTagsURLPrefix + "v1.2.3":
+			case release.TagsURLPrefix + "v1.2.3":
 				tagRequests++
 				body := `{"id":401,"tag_name":"v1.2.3","assets":[]}`
 				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
-			case releaseLatestURL:
+			case release.LatestURL:
 				latestRequests++
 				body := `{"id":402,"tag_name":"v-latest","assets":[]}`
 				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
@@ -155,9 +159,9 @@ func TestResolveReleaseForInstall_NotFoundWarnsAndAborts(t *testing.T) {
 	cwd := t.TempDir()
 
 	var status bytes.Buffer
-	m := &Manager{
+	m := &Runner{
 		httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			if req.URL.String() != releaseTagsURLPrefix+"v9.9.9" {
+			if req.URL.String() != release.TagsURLPrefix+"v9.9.9" {
 				return nil, fmt.Errorf("unexpected request URL: %s", req.URL.String())
 			}
 			return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader(`{"message":"not found"}`)), Header: make(http.Header)}, nil
@@ -191,9 +195,9 @@ func TestResolveReleaseForInstall_PinRequestedDefersPinnedVersionWrite(t *testin
 		t.Fatalf("create local ccsubagents directory: %v", err)
 	}
 
-	m := &Manager{
+	m := &Runner{
 		httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			if req.URL.String() != releaseTagsURLPrefix+"v1.2.3" {
+			if req.URL.String() != release.TagsURLPrefix+"v1.2.3" {
 				return nil, fmt.Errorf("unexpected request URL: %s", req.URL.String())
 			}
 			body := `{"id":501,"tag_name":"v1.2.3","assets":[]}`
@@ -209,7 +213,7 @@ func TestResolveReleaseForInstall_PinRequestedDefersPinnedVersionWrite(t *testin
 		t.Fatalf("resolveReleaseForInstall returned error: %v", err)
 	}
 
-	_, localPath := resolveSettingsPaths(home, cwd)
+	_, localPath := config.ResolveSettingsPaths(home, cwd)
 	if _, err := os.Stat(localPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected no settings write during release resolution, got stat err=%v", err)
 	}
@@ -231,9 +235,9 @@ func TestInstallOrUpdate_PinRequestedFailedInstallDoesNotPersistPinnedVersion(t 
 		t.Fatalf("create local ccsubagents directory: %v", err)
 	}
 
-	m := &Manager{
+	m := &Runner{
 		httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			if req.URL.String() != releaseTagsURLPrefix+"v1.2.3" {
+			if req.URL.String() != release.TagsURLPrefix+"v1.2.3" {
 				return nil, fmt.Errorf("unexpected request URL: %s", req.URL.String())
 			}
 			body := `{"id":502,"tag_name":"v1.2.3","assets":[]}`
@@ -253,7 +257,7 @@ func TestInstallOrUpdate_PinRequestedFailedInstallDoesNotPersistPinnedVersion(t 
 		t.Fatalf("expected missing-asset error, got %v", err)
 	}
 
-	globalPath, localPath := resolveSettingsPaths(home, cwd)
+	globalPath, localPath := config.ResolveSettingsPaths(home, cwd)
 	if _, err := os.Stat(localPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected local settings to remain untouched after failed install, got stat err=%v", err)
 	}
@@ -267,7 +271,7 @@ func TestResolveReleaseForInstall_PinRequestedWithoutVersionReturnsEarly(t *test
 	cwd := t.TempDir()
 
 	requestCount := 0
-	m := &Manager{
+	m := &Runner{
 		httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			requestCount++
 			return nil, fmt.Errorf("unexpected request URL: %s", req.URL.String())
@@ -289,11 +293,11 @@ func TestResolveReleaseForInstall_PinRequestedWithoutVersionReturnsEarly(t *test
 func TestResolveReleaseForUpdate_BlockedWhenPinnedVersionSet(t *testing.T) {
 	home := t.TempDir()
 	cwd := t.TempDir()
-	globalPath, _ := resolveSettingsPaths(home, cwd)
+	globalPath, _ := config.ResolveSettingsPaths(home, cwd)
 	writeSettingsFixture(t, globalPath, `{"pinned-version":"v1.2.3"}`)
 
 	requestCount := 0
-	m := &Manager{
+	m := &Runner{
 		httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			requestCount++
 			return nil, fmt.Errorf("unexpected request URL: %s", req.URL.String())
@@ -317,11 +321,11 @@ func TestResolveReleaseForUpdate_BlockedWhenPinnedVersionSet(t *testing.T) {
 func TestInstallOrUpdate_UpdateBlockedWhenPinnedVersionSet(t *testing.T) {
 	home := t.TempDir()
 	cwd := t.TempDir()
-	globalPath, _ := resolveSettingsPaths(home, cwd)
+	globalPath, _ := config.ResolveSettingsPaths(home, cwd)
 	writeSettingsFixture(t, globalPath, `{"pinned-version":"v1.2.3"}`)
 
 	requestCount := 0
-	m := &Manager{
+	m := &Runner{
 		httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			requestCount++
 			return nil, fmt.Errorf("unexpected request URL: %s", req.URL.String())
@@ -345,11 +349,11 @@ func TestInstallOrUpdate_UpdateBlockedWhenPinnedVersionSet(t *testing.T) {
 func TestInstallOrUpdateLocal_UpdateBlockedWhenPinnedVersionSet(t *testing.T) {
 	home := t.TempDir()
 	cwd := t.TempDir()
-	globalPath, _ := resolveSettingsPaths(home, cwd)
+	globalPath, _ := config.ResolveSettingsPaths(home, cwd)
 	writeSettingsFixture(t, globalPath, `{"pinned-version":"v1.2.3"}`)
 
 	requestCount := 0
-	m := &Manager{
+	m := &Runner{
 		httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			requestCount++
 			return nil, fmt.Errorf("unexpected request URL: %s", req.URL.String())
@@ -362,7 +366,7 @@ func TestInstallOrUpdateLocal_UpdateBlockedWhenPinnedVersionSet(t *testing.T) {
 		isUpdate: true,
 		location: localScopeLocation{installRoot: t.TempDir()},
 		stateDir: t.TempDir(),
-		state:    &trackedState{Version: trackedSchemaVersion},
+		state:    &state.TrackedState{Version: state.TrackedSchemaVersion},
 	})
 	if err == nil {
 		t.Fatalf("expected local update-block error")
@@ -383,11 +387,11 @@ func TestInstallOrUpdateLocal_UpdateUsesSelectedInstallRootForPinResolution(t *t
 		t.Fatalf("create nested working directory: %v", err)
 	}
 
-	_, localPath := resolveSettingsPaths(home, repoRoot)
+	_, localPath := config.ResolveSettingsPaths(home, repoRoot)
 	writeSettingsFixture(t, localPath, `{"pinned-version":"v1.2.3"}`)
 
 	requestCount := 0
-	m := &Manager{
+	m := &Runner{
 		httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			requestCount++
 			return nil, fmt.Errorf("unexpected request URL: %s", req.URL.String())
@@ -400,7 +404,7 @@ func TestInstallOrUpdateLocal_UpdateUsesSelectedInstallRootForPinResolution(t *t
 		isUpdate: true,
 		location: localScopeLocation{installRoot: repoRoot, repoRoot: repoRoot, inGitRepo: true},
 		stateDir: t.TempDir(),
-		state:    &trackedState{Version: trackedSchemaVersion},
+		state:    &state.TrackedState{Version: state.TrackedSchemaVersion},
 	})
 	if err == nil {
 		t.Fatalf("expected local update-block error")

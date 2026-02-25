@@ -15,6 +15,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/config"
+	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/files"
+	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/release"
+	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/state"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -59,11 +64,11 @@ func TestApplySettingsEdit_AppendsWithoutOverwriting(t *testing.T) {
 			"/existing": true,
 		},
 	}
-	if err := writeJSONFile(settingsPath, seed); err != nil {
+	if err := writeJSONMap(settingsPath, seed); err != nil {
 		t.Fatalf("seed settings file: %v", err)
 	}
 
-	edit, err := applySettingsEdit(settingsPath, "/managed/agents", nil)
+	edit, err := config.ApplySettingsEdit(settingsPath, "/managed/agents", nil, stateFilePerm)
 	if err != nil {
 		t.Fatalf("apply settings edit: %v", err)
 	}
@@ -71,7 +76,7 @@ func TestApplySettingsEdit_AppendsWithoutOverwriting(t *testing.T) {
 		t.Fatalf("expected Added=true")
 	}
 
-	root, err := readJSONFile(settingsPath)
+	root, err := readJSONMap(settingsPath)
 	if err != nil {
 		t.Fatalf("read settings file: %v", err)
 	}
@@ -94,11 +99,11 @@ func TestApplySettingsEdit_WrongTypeFails(t *testing.T) {
 	seed := map[string]any{
 		"chat.agentFilesLocations": "invalid",
 	}
-	if err := writeJSONFile(settingsPath, seed); err != nil {
+	if err := writeJSONMap(settingsPath, seed); err != nil {
 		t.Fatalf("seed settings file: %v", err)
 	}
 
-	if _, err := applySettingsEdit(settingsPath, "/managed/agents", nil); err == nil {
+	if _, err := config.ApplySettingsEdit(settingsPath, "/managed/agents", nil, stateFilePerm); err == nil {
 		t.Fatalf("expected error for wrong chat.agentFilesLocations type")
 	}
 }
@@ -112,20 +117,21 @@ func TestApplySettingsEdit_MigratesTrackedPreviousPath(t *testing.T) {
 			"/existing": true,
 		},
 	}
-	if err := writeJSONFile(settingsPath, seed); err != nil {
+	if err := writeJSONMap(settingsPath, seed); err != nil {
 		t.Fatalf("seed settings file: %v", err)
 	}
 
-	previous := &trackedState{
-		JSONEdits: trackedJSONOps{
-			Settings: settingsEdit{
+	previous := &state.TrackedState{
+		JSONEdits: state.TrackedJSONOps{
+			Settings: state.SettingsEdit{
+				File:      settingsPath,
 				AgentPath: "/home/user/.local/share/ccsubagents/agents",
 				Added:     true,
 			},
 		},
 	}
 
-	edit, err := applySettingsEdit(settingsPath, "~/.local/share/ccsubagents/agents", previous)
+	edit, err := config.ApplySettingsEdit(settingsPath, "~/.local/share/ccsubagents/agents", previous, stateFilePerm)
 	if err != nil {
 		t.Fatalf("apply settings edit: %v", err)
 	}
@@ -133,7 +139,7 @@ func TestApplySettingsEdit_MigratesTrackedPreviousPath(t *testing.T) {
 		t.Fatalf("expected Added=true")
 	}
 
-	root, err := readJSONFile(settingsPath)
+	root, err := readJSONMap(settingsPath)
 	if err != nil {
 		t.Fatalf("read settings file: %v", err)
 	}
@@ -158,13 +164,13 @@ func TestApplySettingsEdit_CrossTargetFallbackIgnoresConcretePathMismatch(t *tes
 			"/existing":       true,
 		},
 	}
-	if err := writeJSONFile(targetSettingsPath, seed); err != nil {
+	if err := writeJSONMap(targetSettingsPath, seed); err != nil {
 		t.Fatalf("seed target settings file: %v", err)
 	}
 
-	previous := &trackedState{
-		JSONEdits: trackedJSONOps{
-			Settings: settingsEdit{
+	previous := &state.TrackedState{
+		JSONEdits: state.TrackedJSONOps{
+			Settings: state.SettingsEdit{
 				File:      sourceSettingsPath,
 				AgentPath: "/legacy/path",
 				Added:     true,
@@ -172,7 +178,7 @@ func TestApplySettingsEdit_CrossTargetFallbackIgnoresConcretePathMismatch(t *tes
 		},
 	}
 
-	edit, err := applySettingsEdit(targetSettingsPath, "/managed/agents", previous)
+	edit, err := config.ApplySettingsEdit(targetSettingsPath, "/managed/agents", previous, stateFilePerm)
 	if err != nil {
 		t.Fatalf("apply settings edit: %v", err)
 	}
@@ -180,7 +186,7 @@ func TestApplySettingsEdit_CrossTargetFallbackIgnoresConcretePathMismatch(t *tes
 		t.Fatalf("expected Added=false when target already contained managed path")
 	}
 
-	root, err := readJSONFile(targetSettingsPath)
+	root, err := readJSONMap(targetSettingsPath)
 	if err != nil {
 		t.Fatalf("read target settings file: %v", err)
 	}
@@ -190,51 +196,6 @@ func TestApplySettingsEdit_CrossTargetFallbackIgnoresConcretePathMismatch(t *tes
 	}
 	if locations["/managed/agents"] != true {
 		t.Fatalf("expected managed path preserved: %#v", locations)
-	}
-}
-
-func TestApplySettingsEdit_LegacyFallbackUsesSingleNoFileEntry(t *testing.T) {
-	dir := t.TempDir()
-	settingsPath := filepath.Join(dir, "settings.json")
-
-	seed := map[string]any{
-		"chat.agentFilesLocations": map[string]any{
-			"/legacy/path": true,
-			"/existing":    true,
-		},
-	}
-	if err := writeJSONFile(settingsPath, seed); err != nil {
-		t.Fatalf("seed settings file: %v", err)
-	}
-
-	previous := &trackedState{
-		JSONEdits: trackedJSONOps{
-			Settings: settingsEdit{
-				File:      "",
-				AgentPath: "/legacy/path",
-				Added:     true,
-			},
-		},
-	}
-
-	edit, err := applySettingsEdit(settingsPath, "/managed/agents", previous)
-	if err != nil {
-		t.Fatalf("apply settings edit: %v", err)
-	}
-	if !edit.Added {
-		t.Fatalf("expected Added=true")
-	}
-
-	root, err := readJSONFile(settingsPath)
-	if err != nil {
-		t.Fatalf("read settings file: %v", err)
-	}
-	locations := root["chat.agentFilesLocations"].(map[string]any)
-	if locations["/managed/agents"] != true || locations["/existing"] != true {
-		t.Fatalf("unexpected locations after legacy fallback migration: %#v", locations)
-	}
-	if _, exists := locations["/legacy/path"]; exists {
-		t.Fatalf("expected legacy tracked path removed: %#v", locations)
 	}
 }
 
@@ -249,11 +210,11 @@ func TestApplyMCPEdit_PreservesExistingServersAndInputs(t *testing.T) {
 			"token": map[string]any{"type": "promptString"},
 		},
 	}
-	if err := writeJSONFile(mcpPath, seed); err != nil {
+	if err := writeJSONMap(mcpPath, seed); err != nil {
 		t.Fatalf("seed mcp file: %v", err)
 	}
 
-	edit, err := applyMCPEdit(mcpPath, "/usr/local/bin/local-artifact-mcp", nil)
+	edit, err := config.ApplyMCPEdit(mcpPath, "/usr/local/bin/local-artifact-mcp", nil, stateFilePerm)
 	if err != nil {
 		t.Fatalf("apply mcp edit: %v", err)
 	}
@@ -261,7 +222,7 @@ func TestApplyMCPEdit_PreservesExistingServersAndInputs(t *testing.T) {
 		t.Fatalf("expected HadPrevious=false")
 	}
 
-	root, err := readJSONFile(mcpPath)
+	root, err := readJSONMap(mcpPath)
 	if err != nil {
 		t.Fatalf("read mcp file: %v", err)
 	}
@@ -270,7 +231,7 @@ func TestApplyMCPEdit_PreservesExistingServersAndInputs(t *testing.T) {
 	if _, ok := servers["foo"]; !ok {
 		t.Fatalf("expected existing server preserved")
 	}
-	artifactServer, ok := servers[mcpServerKey].(map[string]any)
+	artifactServer, ok := servers[config.MCPServerKey].(map[string]any)
 	if !ok {
 		t.Fatalf("expected artifact-mcp server object")
 	}
@@ -288,20 +249,20 @@ func TestApplyMCPEdit_PreservesPriorBaselineForUninstall(t *testing.T) {
 	mcpPath := filepath.Join(dir, "mcp.json")
 	seed := map[string]any{
 		"servers": map[string]any{
-			mcpServerKey: map[string]any{"command": "/usr/local/bin/local-artifact-mcp"},
+			config.MCPServerKey: map[string]any{"command": "/usr/local/bin/local-artifact-mcp"},
 		},
 	}
-	if err := writeJSONFile(mcpPath, seed); err != nil {
+	if err := writeJSONMap(mcpPath, seed); err != nil {
 		t.Fatalf("seed mcp file: %v", err)
 	}
 
-	previous := &trackedState{
-		JSONEdits: trackedJSONOps{
-			MCP: mcpEdit{Touched: true, HadPrevious: false},
+	previous := &state.TrackedState{
+		JSONEdits: state.TrackedJSONOps{
+			MCP: state.MCPEdit{File: mcpPath, Touched: true, HadPrevious: false},
 		},
 	}
 
-	edit, err := applyMCPEdit(mcpPath, "/usr/local/bin/local-artifact-mcp", previous)
+	edit, err := config.ApplyMCPEdit(mcpPath, "/usr/local/bin/local-artifact-mcp", previous, stateFilePerm)
 	if err != nil {
 		t.Fatalf("apply mcp edit: %v", err)
 	}
@@ -317,21 +278,21 @@ func TestApplyMCPEdit_CrossTargetFallbackUsesCurrentFileBaseline(t *testing.T) {
 
 	seed := map[string]any{
 		"servers": map[string]any{
-			mcpServerKey: map[string]any{"command": "/usr/bin/target-existing"},
-			"foo":        map[string]any{"command": "foo"},
+			config.MCPServerKey: map[string]any{"command": "/usr/bin/target-existing"},
+			"foo":               map[string]any{"command": "foo"},
 		},
 	}
-	if err := writeJSONFile(targetMCPPath, seed); err != nil {
+	if err := writeJSONMap(targetMCPPath, seed); err != nil {
 		t.Fatalf("seed target mcp file: %v", err)
 	}
 
-	previous := &trackedState{
-		JSONEdits: trackedJSONOps{
-			MCP: mcpEdit{File: sourceMCPPath, Touched: true, HadPrevious: false},
+	previous := &state.TrackedState{
+		JSONEdits: state.TrackedJSONOps{
+			MCP: state.MCPEdit{File: sourceMCPPath, Touched: true, HadPrevious: false},
 		},
 	}
 
-	edit, err := applyMCPEdit(targetMCPPath, "/usr/local/bin/local-artifact-mcp", previous)
+	edit, err := config.ApplyMCPEdit(targetMCPPath, "/usr/local/bin/local-artifact-mcp", previous, stateFilePerm)
 	if err != nil {
 		t.Fatalf("apply mcp edit: %v", err)
 	}
@@ -348,53 +309,6 @@ func TestApplyMCPEdit_CrossTargetFallbackUsesCurrentFileBaseline(t *testing.T) {
 	}
 }
 
-func TestApplyMCPEdit_LegacyFallbackUsesSingleNoFileEntry(t *testing.T) {
-	dir := t.TempDir()
-	mcpPath := filepath.Join(dir, "mcp.json")
-
-	seed := map[string]any{
-		"servers": map[string]any{
-			mcpServerKey: map[string]any{"command": "/usr/bin/current-existing"},
-		},
-	}
-	if err := writeJSONFile(mcpPath, seed); err != nil {
-		t.Fatalf("seed mcp file: %v", err)
-	}
-
-	legacyPrevious, err := json.Marshal(map[string]any{"command": "/usr/bin/legacy-previous"})
-	if err != nil {
-		t.Fatalf("marshal legacy previous: %v", err)
-	}
-
-	previous := &trackedState{
-		JSONEdits: trackedJSONOps{
-			MCP: mcpEdit{
-				File:        "",
-				Key:         mcpServerKey,
-				Touched:     true,
-				HadPrevious: true,
-				Previous:    legacyPrevious,
-			},
-		},
-	}
-
-	edit, err := applyMCPEdit(mcpPath, "/usr/local/bin/local-artifact-mcp", previous)
-	if err != nil {
-		t.Fatalf("apply mcp edit: %v", err)
-	}
-	if !edit.HadPrevious {
-		t.Fatalf("expected HadPrevious=true from legacy tracked baseline")
-	}
-
-	var previousServer map[string]any
-	if err := json.Unmarshal(edit.Previous, &previousServer); err != nil {
-		t.Fatalf("decode previous server: %v", err)
-	}
-	if previousServer["command"] != "/usr/bin/legacy-previous" {
-		t.Fatalf("expected legacy tracked baseline to be reused, got %#v", previousServer)
-	}
-}
-
 func TestRevertSettingsEdit_RemovesOnlyTrackedValue(t *testing.T) {
 	dir := t.TempDir()
 	settingsPath := filepath.Join(dir, "settings.json")
@@ -405,16 +319,16 @@ func TestRevertSettingsEdit_RemovesOnlyTrackedValue(t *testing.T) {
 			"/other":          true,
 		},
 	}
-	if err := writeJSONFile(settingsPath, seed); err != nil {
+	if err := writeJSONMap(settingsPath, seed); err != nil {
 		t.Fatalf("seed settings file: %v", err)
 	}
 
-	err := revertSettingsEdit(settingsEdit{File: settingsPath, AgentPath: "/managed/agents", Added: true})
+	err := config.RevertSettingsEdit(state.SettingsEdit{File: settingsPath, AgentPath: "/managed/agents", Added: true}, stateFilePerm)
 	if err != nil {
 		t.Fatalf("revert settings edit: %v", err)
 	}
 
-	root, err := readJSONFile(settingsPath)
+	root, err := readJSONMap(settingsPath)
 	if err != nil {
 		t.Fatalf("read settings file: %v", err)
 	}
@@ -435,16 +349,16 @@ func TestApplySettingsEdit_UsesTopLevelObjectFormat(t *testing.T) {
 			"agentFilesLocations": []any{"/existing"},
 		},
 	}
-	if err := writeJSONFile(settingsPath, seed); err != nil {
+	if err := writeJSONMap(settingsPath, seed); err != nil {
 		t.Fatalf("seed settings file: %v", err)
 	}
 
-	_, err := applySettingsEdit(settingsPath, "/managed/agents", nil)
+	_, err := config.ApplySettingsEdit(settingsPath, "/managed/agents", nil, stateFilePerm)
 	if err != nil {
 		t.Fatalf("apply settings edit: %v", err)
 	}
 
-	root, err := readJSONFile(settingsPath)
+	root, err := readJSONMap(settingsPath)
 	if err != nil {
 		t.Fatalf("read settings file: %v", err)
 	}
@@ -458,22 +372,22 @@ func TestRevertMCPEdit_RestoresPreviousOrRemovesTrackedServer(t *testing.T) {
 	t.Run("restore previous", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "mcp.json")
-		if err := writeJSONFile(path, map[string]any{"servers": map[string]any{mcpServerKey: map[string]any{"command": "new"}}}); err != nil {
+		if err := writeJSONMap(path, map[string]any{"servers": map[string]any{config.MCPServerKey: map[string]any{"command": "new"}}}); err != nil {
 			t.Fatalf("seed mcp file: %v", err)
 		}
 
 		prev, _ := json.Marshal(map[string]any{"command": "old"})
-		err := revertMCPEdit(mcpEdit{File: path, Key: mcpServerKey, Touched: true, HadPrevious: true, Previous: prev})
+		err := config.RevertMCPEdit(state.MCPEdit{File: path, Key: config.MCPServerKey, Touched: true, HadPrevious: true, Previous: prev}, stateFilePerm)
 		if err != nil {
 			t.Fatalf("revert mcp edit: %v", err)
 		}
 
-		root, err := readJSONFile(path)
+		root, err := readJSONMap(path)
 		if err != nil {
 			t.Fatalf("read mcp file: %v", err)
 		}
 		servers := root["servers"].(map[string]any)
-		if servers[mcpServerKey].(map[string]any)["command"].(string) != "old" {
+		if servers[config.MCPServerKey].(map[string]any)["command"].(string) != "old" {
 			t.Fatalf("expected restored previous value")
 		}
 	})
@@ -481,21 +395,21 @@ func TestRevertMCPEdit_RestoresPreviousOrRemovesTrackedServer(t *testing.T) {
 	t.Run("remove inserted", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "mcp.json")
-		if err := writeJSONFile(path, map[string]any{"servers": map[string]any{mcpServerKey: map[string]any{"command": "new"}}}); err != nil {
+		if err := writeJSONMap(path, map[string]any{"servers": map[string]any{config.MCPServerKey: map[string]any{"command": "new"}}}); err != nil {
 			t.Fatalf("seed mcp file: %v", err)
 		}
 
-		err := revertMCPEdit(mcpEdit{File: path, Key: mcpServerKey, Touched: true, HadPrevious: false})
+		err := config.RevertMCPEdit(state.MCPEdit{File: path, Key: config.MCPServerKey, Touched: true, HadPrevious: false}, stateFilePerm)
 		if err != nil {
 			t.Fatalf("revert mcp edit: %v", err)
 		}
 
-		root, err := readJSONFile(path)
+		root, err := readJSONMap(path)
 		if err != nil {
 			t.Fatalf("read mcp file: %v", err)
 		}
 		servers := root["servers"].(map[string]any)
-		if _, ok := servers[mcpServerKey]; ok {
+		if _, ok := servers[config.MCPServerKey]; ok {
 			t.Fatalf("expected inserted server to be removed")
 		}
 	})
@@ -509,13 +423,13 @@ func TestIsAllowedManagedPath(t *testing.T) {
 		filepath.Join(binaryDir, assetArtifactWeb),
 	}
 
-	if !isAllowedManagedPath(filepath.Join(agentsDir, "one.agent.md"), agentsDir, allowedBinaries) {
+	if !files.IsAllowedManagedPath(filepath.Join(agentsDir, "one.agent.md"), agentsDir, allowedBinaries) {
 		t.Fatalf("expected managed agents path to be allowed")
 	}
-	if !isAllowedManagedPath(filepath.Join(binaryDir, assetArtifactMCP), agentsDir, allowedBinaries) {
+	if !files.IsAllowedManagedPath(filepath.Join(binaryDir, assetArtifactMCP), agentsDir, allowedBinaries) {
 		t.Fatalf("expected managed mcp binary path to be allowed")
 	}
-	if isAllowedManagedPath(filepath.Join(string(os.PathSeparator), "tmp", "oops"), agentsDir, allowedBinaries) {
+	if files.IsAllowedManagedPath(filepath.Join(string(os.PathSeparator), "tmp", "oops"), agentsDir, allowedBinaries) {
 		t.Fatalf("expected unrelated path to be denied")
 	}
 }
@@ -633,13 +547,13 @@ func TestResolveUpdateTargets_UsesTrackedMultiEdits(t *testing.T) {
 	home := filepath.Join(string(os.PathSeparator), "home", "user")
 	paths := resolveInstallPaths(home)
 
-	previous := &trackedState{
-		JSONEdits: trackedJSONOpsFromEdits(
-			[]settingsEdit{
+	previous := &state.TrackedState{
+		JSONEdits: state.TrackedJSONOpsFromEdits(
+			[]state.SettingsEdit{
 				{File: filepath.Join(home, ".vscode-server", "data", "Machine", "settings.json")},
 				{File: filepath.Join(home, ".vscode-server-insiders", "data", "Machine", "settings.json")},
 			},
-			[]mcpEdit{
+			[]state.MCPEdit{
 				{File: filepath.Join(home, ".vscode-server", "data", "User", "mcp.json"), Touched: true},
 				{File: filepath.Join(home, ".vscode-server-insiders", "data", "User", "mcp.json"), Touched: true},
 			},
@@ -664,7 +578,7 @@ func TestResolveUpdateTargets_UsesTrackedMultiEdits(t *testing.T) {
 }
 
 func TestRun_GlobalInstallPromptsForTargetSelection(t *testing.T) {
-	m := NewManager()
+	m := NewRunner()
 	m.SetInstallPromptIO(strings.NewReader(""), io.Discard)
 
 	err := m.Run(context.Background(), CommandInstall, ScopeGlobal)
@@ -690,7 +604,7 @@ func TestPromptGlobalInstallTargets_UsesPrettyPromptCopy(t *testing.T) {
 	}
 
 	var promptOut bytes.Buffer
-	m := NewManager()
+	m := NewRunner()
 	m.SetInstallPromptIO(strings.NewReader("1,2\n"), &promptOut)
 
 	targets, err := m.promptGlobalInstallTargets(context.Background(), home, paths)
@@ -736,7 +650,7 @@ func TestPromptGlobalInstallTargets_UsesPrettyPromptCopy(t *testing.T) {
 }
 
 func TestRun_GlobalUpdateDoesNotPromptForTargetSelection(t *testing.T) {
-	m := NewManager()
+	m := NewRunner()
 	m.SetInstallPromptIO(errorReader{err: errors.New("prompt read should not occur")}, io.Discard)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -763,7 +677,7 @@ func TestInstallOrUpdate_TracksBothDestinationTargets(t *testing.T) {
 		"local-artifact-web": "web-binary",
 	})
 
-	m := &Manager{
+	m := &Runner{
 		httpClient: successReleaseHTTPClient(t, "v1.2.3", agentsArchive, bundleArchive),
 		now:        func() time.Time { return time.Unix(0, 0).UTC() },
 		homeDir:    func() (string, error) { return home, nil },
@@ -784,24 +698,24 @@ func TestInstallOrUpdate_TracksBothDestinationTargets(t *testing.T) {
 	}
 
 	stateDir := filepath.Join(home, ".local", "share", "ccsubagents")
-	state, err := m.loadTrackedState(stateDir)
+	tracked, err := state.LoadTrackedState(stateDir)
 	if err != nil {
 		t.Fatalf("load tracked state: %v", err)
 	}
-	if len(state.JSONEdits.AllSettingsEdits()) != 2 {
-		t.Fatalf("expected 2 tracked settings edits, got %d", len(state.JSONEdits.AllSettingsEdits()))
+	if len(tracked.JSONEdits.AllSettingsEdits()) != 2 {
+		t.Fatalf("expected 2 tracked settings edits, got %d", len(tracked.JSONEdits.AllSettingsEdits()))
 	}
-	if len(state.JSONEdits.AllMCPEdits()) != 2 {
-		t.Fatalf("expected 2 tracked mcp edits, got %d", len(state.JSONEdits.AllMCPEdits()))
+	if len(tracked.JSONEdits.AllMCPEdits()) != 2 {
+		t.Fatalf("expected 2 tracked mcp edits, got %d", len(tracked.JSONEdits.AllMCPEdits()))
 	}
 
 	paths := resolveInstallPaths(home)
 	for _, settingsPath := range []string{paths.stable.settingsPath, paths.insiders.settingsPath} {
-		root, err := readJSONFile(settingsPath)
+		root, err := readJSONMap(settingsPath)
 		if err != nil {
 			t.Fatalf("read settings %s: %v", settingsPath, err)
 		}
-		locations, ok := root[settingsAgentPathKey].(map[string]any)
+		locations, ok := root[config.SettingsAgentPathKey].(map[string]any)
 		if !ok {
 			t.Fatalf("expected agent locations object in %s", settingsPath)
 		}
@@ -812,7 +726,7 @@ func TestInstallOrUpdate_TracksBothDestinationTargets(t *testing.T) {
 	}
 
 	for _, mcpPath := range []string{paths.stable.mcpPath, paths.insiders.mcpPath} {
-		root, err := readJSONFile(mcpPath)
+		root, err := readJSONMap(mcpPath)
 		if err != nil {
 			t.Fatalf("read mcp config %s: %v", mcpPath, err)
 		}
@@ -820,7 +734,7 @@ func TestInstallOrUpdate_TracksBothDestinationTargets(t *testing.T) {
 		if !ok {
 			t.Fatalf("expected servers object in %s", mcpPath)
 		}
-		artifact, ok := servers[mcpServerKey].(map[string]any)
+		artifact, ok := servers[config.MCPServerKey].(map[string]any)
 		if !ok {
 			t.Fatalf("expected managed mcp server in %s", mcpPath)
 		}
@@ -919,7 +833,7 @@ func TestInstallOrUpdate_AttestationFailureBeforeMutation(t *testing.T) {
 		body := ""
 		status := http.StatusOK
 		switch req.URL.String() {
-		case releaseLatestURL:
+		case release.LatestURL:
 			body = fmt.Sprintf(`{"id":101,"tag_name":"v1.2.3","assets":[{"name":"%s","browser_download_url":"https://example.invalid/assets/%s"},{"name":"%s","browser_download_url":"https://example.invalid/assets/%s"}]}`,
 				assetAgentsZip, assetAgentsZip,
 				assetLocalArtifactZip, assetLocalArtifactZip,
@@ -934,7 +848,7 @@ func TestInstallOrUpdate_AttestationFailureBeforeMutation(t *testing.T) {
 		}
 	})}
 
-	m := &Manager{
+	m := &Runner{
 		httpClient: httpClient,
 		now:        func() time.Time { return time.Unix(0, 0).UTC() },
 		homeDir:    func() (string, error) { return home, nil },
@@ -955,7 +869,7 @@ func TestInstallOrUpdate_AttestationFailureBeforeMutation(t *testing.T) {
 	if _, statErr := os.Stat(filepath.Join(home, ".local", "share", "ccsubagents", "agents")); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("expected agents dir to remain absent, stat err: %v", statErr)
 	}
-	if _, statErr := os.Stat(filepath.Join(home, ".local", "share", "ccsubagents", trackedFileName)); !errors.Is(statErr, os.ErrNotExist) {
+	if _, statErr := os.Stat(filepath.Join(home, ".local", "share", "ccsubagents", state.TrackedFileName)); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("expected tracked state to remain absent, stat err: %v", statErr)
 	}
 }
@@ -966,12 +880,12 @@ func TestInstallOrUpdate_CorruptTrackedStateFails(t *testing.T) {
 	if err := os.MkdirAll(stateDir, stateDirPerm); err != nil {
 		t.Fatalf("create state dir: %v", err)
 	}
-	trackedPath := filepath.Join(stateDir, trackedFileName)
+	trackedPath := filepath.Join(stateDir, state.TrackedFileName)
 	if err := os.WriteFile(trackedPath, []byte("{"), stateFilePerm); err != nil {
 		t.Fatalf("seed corrupt tracked state: %v", err)
 	}
 
-	m := &Manager{
+	m := &Runner{
 		httpClient: &http.Client{},
 		now:        func() time.Time { return time.Unix(0, 0).UTC() },
 		homeDir:    func() (string, error) { return home, nil },
@@ -1009,22 +923,22 @@ func TestInstallOrUpdate_UpdateStaleCleanupFailureRollsBackAndKeepsTrackedState(
 		t.Fatalf("create state dir: %v", err)
 	}
 
-	previous := trackedState{
-		Version:     trackedSchemaVersion,
-		Repo:        releaseRepo,
+	previous := state.TrackedState{
+		Version:     state.TrackedSchemaVersion,
+		Repo:        release.Repo,
 		ReleaseID:   1,
 		ReleaseTag:  "v-old",
 		InstalledAt: "2026-01-01T00:00:00Z",
-		Managed: managedState{
+		Managed: state.ManagedState{
 			Files: []string{staleOne, staleDir},
 		},
 	}
 
-	m := &Manager{
+	m := &Runner{
 		httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			status := http.StatusOK
 			switch req.URL.String() {
-			case releaseLatestURL:
+			case release.LatestURL:
 				body := fmt.Sprintf(`{"id":202,"tag_name":"v-new","assets":[{"name":"%s","browser_download_url":"https://example.invalid/assets/%s"},{"name":"%s","browser_download_url":"https://example.invalid/assets/%s"}]}`,
 					assetAgentsZip, assetAgentsZip,
 					assetLocalArtifactZip, assetLocalArtifactZip,
@@ -1049,10 +963,10 @@ func TestInstallOrUpdate_UpdateStaleCleanupFailureRollsBackAndKeepsTrackedState(
 		runCommand: func(context.Context, string, ...string) ([]byte, error) { return []byte("ok"), nil },
 	}
 
-	if err := m.saveTrackedState(stateDir, previous); err != nil {
+	if err := state.SaveTrackedState(stateDir, previous); err != nil {
 		t.Fatalf("seed tracked state: %v", err)
 	}
-	trackedPath := filepath.Join(stateDir, trackedFileName)
+	trackedPath := filepath.Join(stateDir, state.TrackedFileName)
 	originalTracked, err := os.ReadFile(trackedPath)
 	if err != nil {
 		t.Fatalf("read seeded tracked state: %v", err)
@@ -1102,7 +1016,7 @@ func TestExtractAgentsArchive_StripsTopLevelAgentsDirectory(t *testing.T) {
 		"agents/nested/child.agent.md": "child",
 	})
 
-	files, _, err := extractAgentsArchiveWithHook(zipPath, dest, nil)
+	extractedFiles, _, err := files.ExtractAgentsArchiveWithHook(zipPath, dest, nil, stateDirPerm, stateFilePerm)
 	if err != nil {
 		t.Fatalf("extract archive: %v", err)
 	}
@@ -1120,7 +1034,7 @@ func TestExtractAgentsArchive_StripsTopLevelAgentsDirectory(t *testing.T) {
 	}
 
 	fileSet := map[string]struct{}{}
-	for _, file := range files {
+	for _, file := range extractedFiles {
 		fileSet[file] = struct{}{}
 	}
 	if _, ok := fileSet[rootFile]; !ok {
@@ -1133,7 +1047,7 @@ func TestExtractAgentsArchive_StripsTopLevelAgentsDirectory(t *testing.T) {
 
 func TestUninstall_FailsWhenMCPServersObjectIsMalformed(t *testing.T) {
 	home := t.TempDir()
-	m := &Manager{
+	m := &Runner{
 		httpClient: &http.Client{},
 		now:        func() time.Time { return time.Unix(0, 0).UTC() },
 		homeDir:    func() (string, error) { return home, nil },
@@ -1146,7 +1060,7 @@ func TestUninstall_FailsWhenMCPServersObjectIsMalformed(t *testing.T) {
 		t.Fatalf("create state dir: %v", err)
 	}
 
-	mcpPath := filepath.Join(home, mcpConfigRelativePath)
+	mcpPath := filepath.Join(home, mcpConfigInsidersRelativePath)
 	if err := os.MkdirAll(filepath.Dir(mcpPath), stateDirPerm); err != nil {
 		t.Fatalf("create mcp dir: %v", err)
 	}
@@ -1154,23 +1068,23 @@ func TestUninstall_FailsWhenMCPServersObjectIsMalformed(t *testing.T) {
 		t.Fatalf("seed malformed mcp.json: %v", err)
 	}
 
-	state := trackedState{
-		Version:     trackedSchemaVersion,
-		Repo:        releaseRepo,
+	tracked := state.TrackedState{
+		Version:     state.TrackedSchemaVersion,
+		Repo:        release.Repo,
 		ReleaseID:   1,
 		ReleaseTag:  "v1.0.0",
 		InstalledAt: "2026-01-01T00:00:00Z",
-		Managed:     managedState{},
-		JSONEdits: trackedJSONOps{
-			Settings: settingsEdit{},
-			MCP: mcpEdit{
+		Managed:     state.ManagedState{},
+		JSONEdits: state.TrackedJSONOps{
+			Settings: state.SettingsEdit{},
+			MCP: state.MCPEdit{
 				File:    mcpPath,
-				Key:     mcpServerKey,
+				Key:     config.MCPServerKey,
 				Touched: true,
 			},
 		},
 	}
-	if err := m.saveTrackedState(stateDir, state); err != nil {
+	if err := state.SaveTrackedState(stateDir, tracked); err != nil {
 		t.Fatalf("seed tracked state: %v", err)
 	}
 
@@ -1185,7 +1099,7 @@ func TestUninstall_FailsWhenMCPServersObjectIsMalformed(t *testing.T) {
 
 func TestUninstall_BothTargetMigrationRevertsPerTargetMetadata(t *testing.T) {
 	home := t.TempDir()
-	m := &Manager{
+	m := &Runner{
 		httpClient: &http.Client{},
 		now:        func() time.Time { return time.Unix(0, 0).UTC() },
 		homeDir:    func() (string, error) { return home, nil },
@@ -1201,16 +1115,16 @@ func TestUninstall_BothTargetMigrationRevertsPerTargetMetadata(t *testing.T) {
 	}
 
 	agentPath := "~/.local/share/ccsubagents/agents"
-	if err := writeJSONFile(paths.stable.settingsPath, map[string]any{
-		settingsAgentPathKey: map[string]any{
+	if err := writeJSONMap(paths.stable.settingsPath, map[string]any{
+		config.SettingsAgentPathKey: map[string]any{
 			agentPath:      true,
 			"/stable-keep": true,
 		},
 	}); err != nil {
 		t.Fatalf("seed stable settings: %v", err)
 	}
-	if err := writeJSONFile(paths.insiders.settingsPath, map[string]any{
-		settingsAgentPathKey: map[string]any{
+	if err := writeJSONMap(paths.insiders.settingsPath, map[string]any{
+		config.SettingsAgentPathKey: map[string]any{
 			agentPath:        true,
 			"/insiders-keep": true,
 		},
@@ -1218,17 +1132,17 @@ func TestUninstall_BothTargetMigrationRevertsPerTargetMetadata(t *testing.T) {
 		t.Fatalf("seed insiders settings: %v", err)
 	}
 
-	if err := writeJSONFile(paths.stable.mcpPath, map[string]any{
+	if err := writeJSONMap(paths.stable.mcpPath, map[string]any{
 		"servers": map[string]any{
-			mcpServerKey: map[string]any{"command": "~/.local/bin/local-artifact-mcp"},
+			config.MCPServerKey: map[string]any{"command": "~/.local/bin/local-artifact-mcp"},
 		},
 	}); err != nil {
 		t.Fatalf("seed stable mcp: %v", err)
 	}
-	if err := writeJSONFile(paths.insiders.mcpPath, map[string]any{
+	if err := writeJSONMap(paths.insiders.mcpPath, map[string]any{
 		"servers": map[string]any{
-			mcpServerKey: map[string]any{"command": "~/.local/bin/local-artifact-mcp"},
-			"foo":        map[string]any{"command": "foo"},
+			config.MCPServerKey: map[string]any{"command": "~/.local/bin/local-artifact-mcp"},
+			"foo":               map[string]any{"command": "foo"},
 		},
 	}); err != nil {
 		t.Fatalf("seed insiders mcp: %v", err)
@@ -1244,25 +1158,25 @@ func TestUninstall_BothTargetMigrationRevertsPerTargetMetadata(t *testing.T) {
 		t.Fatalf("create state dir: %v", err)
 	}
 
-	state := trackedState{
-		Version:     trackedSchemaVersion,
-		Repo:        releaseRepo,
+	tracked := state.TrackedState{
+		Version:     state.TrackedSchemaVersion,
+		Repo:        release.Repo,
 		ReleaseID:   1,
 		ReleaseTag:  "v1.0.0",
 		InstalledAt: "2026-01-01T00:00:00Z",
-		Managed:     managedState{},
-		JSONEdits: trackedJSONOpsFromEdits(
-			[]settingsEdit{
+		Managed:     state.ManagedState{},
+		JSONEdits: state.TrackedJSONOpsFromEdits(
+			[]state.SettingsEdit{
 				{File: paths.stable.settingsPath, AgentPath: agentPath, Added: true},
 				{File: paths.insiders.settingsPath, AgentPath: agentPath, Added: false},
 			},
-			[]mcpEdit{
-				{File: paths.stable.mcpPath, Key: mcpServerKey, Touched: true, HadPrevious: false},
-				{File: paths.insiders.mcpPath, Key: mcpServerKey, Touched: true, HadPrevious: true, Previous: insidersPrevious},
+			[]state.MCPEdit{
+				{File: paths.stable.mcpPath, Key: config.MCPServerKey, Touched: true, HadPrevious: false},
+				{File: paths.insiders.mcpPath, Key: config.MCPServerKey, Touched: true, HadPrevious: true, Previous: insidersPrevious},
 			},
 		),
 	}
-	if err := m.saveTrackedState(stateDir, state); err != nil {
+	if err := state.SaveTrackedState(stateDir, tracked); err != nil {
 		t.Fatalf("seed tracked state: %v", err)
 	}
 
@@ -1270,11 +1184,11 @@ func TestUninstall_BothTargetMigrationRevertsPerTargetMetadata(t *testing.T) {
 		t.Fatalf("uninstall should succeed: %v", err)
 	}
 
-	stableSettingsRoot, err := readJSONFile(paths.stable.settingsPath)
+	stableSettingsRoot, err := readJSONMap(paths.stable.settingsPath)
 	if err != nil {
 		t.Fatalf("read stable settings: %v", err)
 	}
-	stableLocations := stableSettingsRoot[settingsAgentPathKey].(map[string]any)
+	stableLocations := stableSettingsRoot[config.SettingsAgentPathKey].(map[string]any)
 	if stableLocations["/stable-keep"] != true {
 		t.Fatalf("expected stable keep path to remain: %#v", stableLocations)
 	}
@@ -1282,30 +1196,30 @@ func TestUninstall_BothTargetMigrationRevertsPerTargetMetadata(t *testing.T) {
 		t.Fatalf("expected managed path removed from stable settings: %#v", stableLocations)
 	}
 
-	insidersSettingsRoot, err := readJSONFile(paths.insiders.settingsPath)
+	insidersSettingsRoot, err := readJSONMap(paths.insiders.settingsPath)
 	if err != nil {
 		t.Fatalf("read insiders settings: %v", err)
 	}
-	insidersLocations := insidersSettingsRoot[settingsAgentPathKey].(map[string]any)
+	insidersLocations := insidersSettingsRoot[config.SettingsAgentPathKey].(map[string]any)
 	if insidersLocations["/insiders-keep"] != true || insidersLocations[agentPath] != true {
 		t.Fatalf("expected insiders locations preserved: %#v", insidersLocations)
 	}
 
-	stableMCPRoot, err := readJSONFile(paths.stable.mcpPath)
+	stableMCPRoot, err := readJSONMap(paths.stable.mcpPath)
 	if err != nil {
 		t.Fatalf("read stable mcp: %v", err)
 	}
 	stableServers := stableMCPRoot["servers"].(map[string]any)
-	if _, exists := stableServers[mcpServerKey]; exists {
+	if _, exists := stableServers[config.MCPServerKey]; exists {
 		t.Fatalf("expected managed server removed from stable mcp: %#v", stableServers)
 	}
 
-	insidersMCPRoot, err := readJSONFile(paths.insiders.mcpPath)
+	insidersMCPRoot, err := readJSONMap(paths.insiders.mcpPath)
 	if err != nil {
 		t.Fatalf("read insiders mcp: %v", err)
 	}
 	insidersServers := insidersMCPRoot["servers"].(map[string]any)
-	restored, ok := insidersServers[mcpServerKey].(map[string]any)
+	restored, ok := insidersServers[config.MCPServerKey].(map[string]any)
 	if !ok {
 		t.Fatalf("expected insiders managed server restored: %#v", insidersServers)
 	}
@@ -1313,14 +1227,14 @@ func TestUninstall_BothTargetMigrationRevertsPerTargetMetadata(t *testing.T) {
 		t.Fatalf("expected insiders previous command restored, got %#v", restored)
 	}
 
-	if _, err := os.Stat(filepath.Join(stateDir, trackedFileName)); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(stateDir, state.TrackedFileName)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected tracked state removed, stat err: %v", err)
 	}
 }
 
 func TestUninstall_AllowsTrackedConfigParentDirs(t *testing.T) {
 	home := t.TempDir()
-	m := &Manager{
+	m := &Runner{
 		httpClient: &http.Client{},
 		now:        func() time.Time { return time.Unix(0, 0).UTC() },
 		homeDir:    func() (string, error) { return home, nil },
@@ -1333,8 +1247,8 @@ func TestUninstall_AllowsTrackedConfigParentDirs(t *testing.T) {
 		t.Fatalf("create state dir: %v", err)
 	}
 
-	settingsParent := filepath.Dir(filepath.Join(home, settingsRelativePath))
-	mcpParent := filepath.Dir(filepath.Join(home, mcpConfigRelativePath))
+	settingsParent := filepath.Dir(filepath.Join(home, settingsInsidersRelativePath))
+	mcpParent := filepath.Dir(filepath.Join(home, mcpConfigInsidersRelativePath))
 	if err := os.MkdirAll(settingsParent, stateDirPerm); err != nil {
 		t.Fatalf("create settings parent dir: %v", err)
 	}
@@ -1342,21 +1256,21 @@ func TestUninstall_AllowsTrackedConfigParentDirs(t *testing.T) {
 		t.Fatalf("create mcp parent dir: %v", err)
 	}
 
-	state := trackedState{
-		Version:     trackedSchemaVersion,
-		Repo:        releaseRepo,
+	tracked := state.TrackedState{
+		Version:     state.TrackedSchemaVersion,
+		Repo:        release.Repo,
 		ReleaseID:   1,
 		ReleaseTag:  "v1.0.0",
 		InstalledAt: "2026-01-01T00:00:00Z",
-		Managed: managedState{
+		Managed: state.ManagedState{
 			Dirs: []string{settingsParent, mcpParent},
 		},
-		JSONEdits: trackedJSONOps{
-			Settings: settingsEdit{},
-			MCP:      mcpEdit{},
+		JSONEdits: state.TrackedJSONOps{
+			Settings: state.SettingsEdit{},
+			MCP:      state.MCPEdit{},
 		},
 	}
-	if err := m.saveTrackedState(stateDir, state); err != nil {
+	if err := state.SaveTrackedState(stateDir, tracked); err != nil {
 		t.Fatalf("seed tracked state: %v", err)
 	}
 
@@ -1370,14 +1284,14 @@ func TestUninstall_AllowsTrackedConfigParentDirs(t *testing.T) {
 	if _, err := os.Stat(mcpParent); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected mcp parent dir removed, stat err: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(stateDir, trackedFileName)); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(stateDir, state.TrackedFileName)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected tracked state removed, stat err: %v", err)
 	}
 }
 
 func TestUninstall_IgnoresTypedNotEmptyDirectoryError(t *testing.T) {
 	home := t.TempDir()
-	m := &Manager{
+	m := &Runner{
 		httpClient: &http.Client{},
 		now:        func() time.Time { return time.Unix(0, 0).UTC() },
 		homeDir:    func() (string, error) { return home, nil },
@@ -1390,7 +1304,7 @@ func TestUninstall_IgnoresTypedNotEmptyDirectoryError(t *testing.T) {
 		t.Fatalf("create state dir: %v", err)
 	}
 
-	agentsDir := filepath.Join(home, agentsRelativePath)
+	agentsDir := filepath.Join(home, ".local", "share", "ccsubagents", "agents")
 	if err := os.MkdirAll(agentsDir, stateDirPerm); err != nil {
 		t.Fatalf("create agents dir: %v", err)
 	}
@@ -1399,21 +1313,21 @@ func TestUninstall_IgnoresTypedNotEmptyDirectoryError(t *testing.T) {
 		t.Fatalf("seed non-empty agents dir: %v", err)
 	}
 
-	state := trackedState{
-		Version:     trackedSchemaVersion,
-		Repo:        releaseRepo,
+	tracked := state.TrackedState{
+		Version:     state.TrackedSchemaVersion,
+		Repo:        release.Repo,
 		ReleaseID:   1,
 		ReleaseTag:  "v1.0.0",
 		InstalledAt: "2026-01-01T00:00:00Z",
-		Managed: managedState{
+		Managed: state.ManagedState{
 			Dirs: []string{agentsDir},
 		},
-		JSONEdits: trackedJSONOps{
-			Settings: settingsEdit{},
-			MCP:      mcpEdit{},
+		JSONEdits: state.TrackedJSONOps{
+			Settings: state.SettingsEdit{},
+			MCP:      state.MCPEdit{},
 		},
 	}
-	if err := m.saveTrackedState(stateDir, state); err != nil {
+	if err := state.SaveTrackedState(stateDir, tracked); err != nil {
 		t.Fatalf("seed tracked state: %v", err)
 	}
 
@@ -1424,7 +1338,7 @@ func TestUninstall_IgnoresTypedNotEmptyDirectoryError(t *testing.T) {
 	if _, err := os.Stat(keepFile); err != nil {
 		t.Fatalf("expected non-empty agents directory contents to remain: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(stateDir, trackedFileName)); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(stateDir, state.TrackedFileName)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected tracked state removed, stat err: %v", err)
 	}
 }

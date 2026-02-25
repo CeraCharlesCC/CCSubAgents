@@ -23,12 +23,6 @@ func ApplySettingsEdit(settingsPath, agentsDir string, previous *state.TrackedSt
 		if matched, ok := previous.JSONEdits.SettingsEditForFile(settingsPath); ok {
 			previousEdit = matched
 			hasPreviousEdit = true
-		} else {
-			all := previous.JSONEdits.AllSettingsEdits()
-			if len(all) == 1 && strings.TrimSpace(all[0].File) == "" {
-				previousEdit = all[0]
-				hasPreviousEdit = true
-			}
 		}
 	}
 
@@ -124,21 +118,13 @@ func ApplyMCPEdit(path, commandPath string, previous *state.TrackedState, filePe
 			if len(matched.Previous) > 0 {
 				edit.Previous = slices.Clone(matched.Previous)
 			}
-		} else {
-			all := prev.JSONEdits.AllMCPEdits()
-			if len(all) == 1 && all[0].Touched && strings.TrimSpace(all[0].File) == "" {
-				edit.HadPrevious = all[0].HadPrevious
-				if len(all[0].Previous) > 0 {
-					edit.Previous = slices.Clone(all[0].Previous)
-				}
-			} else if existing, ok := servers[MCPServerKey]; ok {
-				encoded, err := json.Marshal(existing)
-				if err != nil {
-					return state.MCPEdit{}, fmt.Errorf("marshal existing mcp server config: %w", err)
-				}
-				edit.HadPrevious = true
-				edit.Previous = encoded
+		} else if existing, ok := servers[MCPServerKey]; ok {
+			encoded, err := json.Marshal(existing)
+			if err != nil {
+				return state.MCPEdit{}, fmt.Errorf("marshal existing mcp server config: %w", err)
 			}
+			edit.HadPrevious = true
+			edit.Previous = encoded
 		}
 	} else if existing, ok := servers[MCPServerKey]; ok {
 		encoded, err := json.Marshal(existing)
