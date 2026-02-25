@@ -3,6 +3,8 @@ package bootstrap
 import (
 	"context"
 	"io"
+
+	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/installer"
 )
 
 type executeManager interface {
@@ -16,7 +18,7 @@ type executeManager interface {
 }
 
 var newExecuteManager = func() executeManager {
-	return NewManager()
+	return installer.NewRunner()
 }
 
 type ExecuteRequest struct {

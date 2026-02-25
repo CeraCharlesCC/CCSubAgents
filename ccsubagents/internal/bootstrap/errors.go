@@ -1,5 +1,5 @@
 package bootstrap
 
-import "errors"
+import "github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/installer"
 
-var ErrPinnedRequiresVersion = errors.New("--pinned requires --version")
+var ErrPinnedRequiresVersion = installer.ErrPinnedRequiresVersion
