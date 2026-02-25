@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -237,11 +238,15 @@ func TestInstallOrUpdate_PinRequestedFailedInstallDoesNotPersistPinnedVersion(t 
 
 	m := &Runner{
 		httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			if req.URL.String() != release.TagsURLPrefix+"v1.2.3" {
+			switch req.URL.String() {
+			case release.TagsURLPrefix + "v1.2.3":
+				body := `{"id":502,"tag_name":"v1.2.3","assets":[]}`
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+			case release.TagsURLPrefix + url.PathEscape(localArtifactTagPrefix+"v1.2.3"):
+				return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader(`{"message":"not found"}`)), Header: make(http.Header)}, nil
+			default:
 				return nil, fmt.Errorf("unexpected request URL: %s", req.URL.String())
 			}
-			body := `{"id":502,"tag_name":"v1.2.3","assets":[]}`
-			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 		})},
 		homeDir:    func() (string, error) { return home, nil },
 		workingDir: func() (string, error) { return cwd, nil },

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -68,6 +69,116 @@ func TestDownloadRequiredAssets_RemovesTempDirOnDownloadError(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("expected temporary download directory to be removed, found %d entries", len(entries))
+	}
+}
+
+func TestDownloadRequiredAssets_FallsBackToLocalArtifactRelease(t *testing.T) {
+	stateDir := t.TempDir()
+	bundleAssetName := localArtifactBundleAssetName(runtime.GOOS, runtime.GOARCH)
+	companionTagURL := release.TagsURLPrefix + url.PathEscape(localArtifactTagPrefix+"v1.2.3")
+
+	companionRequests := 0
+	downloadRequests := 0
+	m := &Runner{
+		httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			switch req.URL.String() {
+			case companionTagURL:
+				companionRequests++
+				body := `{"id":9001,"tag_name":"local-artifact/v1.2.3","assets":[{"name":"` + bundleAssetName + `","browser_download_url":"https://example.invalid/assets/` + bundleAssetName + `"}]}`
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+			case "https://example.invalid/assets/" + assetAgentsZip:
+				downloadRequests++
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("agents")), Header: make(http.Header)}, nil
+			case "https://example.invalid/assets/" + bundleAssetName:
+				downloadRequests++
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("bundle")), Header: make(http.Header)}, nil
+			default:
+				return nil, errors.New("unexpected request URL: " + req.URL.String())
+			}
+		})},
+	}
+
+	rel := release.Response{
+		TagName: "v1.2.3",
+		Assets: []release.Asset{
+			{Name: assetAgentsZip, BrowserDownloadURL: "https://example.invalid/assets/" + assetAgentsZip},
+		},
+	}
+
+	tmpDir, downloaded, err := m.downloadRequiredAssets(
+		context.Background(),
+		stateDir,
+		rel,
+		[]string{assetAgentsZip, bundleAssetName},
+		"download-required-assets-*",
+	)
+	if err != nil {
+		t.Fatalf("downloadRequiredAssets returned error: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	if companionRequests != 1 {
+		t.Fatalf("expected exactly 1 companion-release request, got %d", companionRequests)
+	}
+	if downloadRequests != 2 {
+		t.Fatalf("expected 2 download requests, got %d", downloadRequests)
+	}
+	if _, ok := downloaded[assetAgentsZip]; !ok {
+		t.Fatalf("expected downloaded map to include %q", assetAgentsZip)
+	}
+	bundlePath, ok := downloaded[bundleAssetName]
+	if !ok {
+		t.Fatalf("expected downloaded map to include %q", bundleAssetName)
+	}
+	if _, err := os.Stat(bundlePath); err != nil {
+		t.Fatalf("expected downloaded bundle file to exist, got %v", err)
+	}
+}
+
+func TestDownloadRequiredAssets_CompanionMissingStillReturnsMissingAsset(t *testing.T) {
+	stateDir := t.TempDir()
+	bundleAssetName := localArtifactBundleAssetName(runtime.GOOS, runtime.GOARCH)
+	companionTagURL := release.TagsURLPrefix + url.PathEscape(localArtifactTagPrefix+"v1.2.3")
+
+	companionRequests := 0
+	m := &Runner{
+		httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			switch req.URL.String() {
+			case companionTagURL:
+				companionRequests++
+				return &http.Response{
+					StatusCode: http.StatusNotFound,
+					Body:       io.NopCloser(strings.NewReader(`{"message":"not found"}`)),
+					Header:     make(http.Header),
+				}, nil
+			default:
+				return nil, errors.New("unexpected request URL: " + req.URL.String())
+			}
+		})},
+	}
+
+	rel := release.Response{
+		TagName: "v1.2.3",
+		Assets: []release.Asset{
+			{Name: assetAgentsZip, BrowserDownloadURL: "https://example.invalid/assets/" + assetAgentsZip},
+		},
+	}
+
+	_, _, err := m.downloadRequiredAssets(
+		context.Background(),
+		stateDir,
+		rel,
+		[]string{assetAgentsZip, bundleAssetName},
+		"download-required-assets-*",
+	)
+	if err == nil {
+		t.Fatalf("expected missing-asset error")
+	}
+	if !strings.Contains(err.Error(), "missing required asset \""+bundleAssetName+"\"") {
+		t.Fatalf("expected missing-asset error, got %v", err)
+	}
+	if companionRequests != 1 {
+		t.Fatalf("expected exactly 1 companion-release request, got %d", companionRequests)
 	}
 }
 

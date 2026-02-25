@@ -218,7 +218,20 @@ func (c *Client) FetchByTag(ctx context.Context, tag string) (Response, error) {
 		return Response{}, errors.New("release tag is required")
 	}
 
-	requestURL := TagsURLPrefix + url.PathEscape(normalizedTag)
+	return c.fetchByExactTag(ctx, normalizedTag)
+}
+
+func (c *Client) FetchByExactTag(ctx context.Context, tag string) (Response, error) {
+	trimmedTag := strings.TrimSpace(tag)
+	if trimmedTag == "" {
+		return Response{}, errors.New("release tag is required")
+	}
+
+	return c.fetchByExactTag(ctx, trimmedTag)
+}
+
+func (c *Client) fetchByExactTag(ctx context.Context, tag string) (Response, error) {
+	requestURL := TagsURLPrefix + url.PathEscape(tag)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
 		return Response{}, fmt.Errorf("create release tag request: %w", err)
@@ -231,25 +244,25 @@ func (c *Client) FetchByTag(ctx context.Context, tag string) (Response, error) {
 
 	resp, err := c.httpClient().Do(req)
 	if err != nil {
-		return Response{}, fmt.Errorf("request release tag %s: %w", normalizedTag, err)
+		return Response{}, fmt.Errorf("request release tag %s: %w", tag, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		return Response{}, &ReleaseNotFoundError{Tag: normalizedTag}
+		return Response{}, &ReleaseNotFoundError{Tag: tag}
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return Response{}, fmt.Errorf("release tag request failed for %s: status=%d body=%s", normalizedTag, resp.StatusCode, strings.TrimSpace(string(body)))
+		return Response{}, fmt.Errorf("release tag request failed for %s: status=%d body=%s", tag, resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	var decoded Response
 	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
-		return Response{}, fmt.Errorf("decode release tag response for %s: %w", normalizedTag, err)
+		return Response{}, fmt.Errorf("decode release tag response for %s: %w", tag, err)
 	}
 	if strings.TrimSpace(decoded.TagName) == "" {
-		return Response{}, fmt.Errorf("release tag response for %s is missing tag_name", normalizedTag)
+		return Response{}, fmt.Errorf("release tag response for %s is missing tag_name", tag)
 	}
 
 	return decoded, nil

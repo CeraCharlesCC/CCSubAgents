@@ -21,9 +21,10 @@ const (
 	stateFilePerm  = files.DefaultStateFilePerm
 	binaryFilePerm = files.DefaultBinaryFilePerm
 
-	assetAgentsZip   = "agents.zip"
-	assetArtifactMCP = "local-artifact-mcp"
-	assetArtifactWeb = "local-artifact-web"
+	assetAgentsZip         = "agents.zip"
+	assetArtifactMCP       = "local-artifact-mcp"
+	assetArtifactWeb       = "local-artifact-web"
+	localArtifactTagPrefix = "local-artifact/"
 
 	binaryInstallDirDefaultRel    = ".local/bin"
 	binaryInstallDirEnv           = "LOCAL_ARTIFACT_BIN_DIR"
