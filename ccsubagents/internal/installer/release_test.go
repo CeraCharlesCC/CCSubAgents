@@ -106,8 +106,8 @@ func TestFetchLatest_FiltersReleasesAndSelectsFirstValid(t *testing.T) {
 	if requestedURL != release.ReleasesURL {
 		t.Fatalf("expected request to %q, got %q", release.ReleasesURL, requestedURL)
 	}
-	if rel.ID != 6 || rel.TagName != "v1.1.8" {
-		t.Fatalf("expected release id=6 tag=v1.1.8, got id=%d tag=%q", rel.ID, rel.TagName)
+	if rel.ID != 5 || rel.TagName != "V1.1.9" {
+		t.Fatalf("expected release id=5 tag=V1.1.9, got id=%d tag=%q", rel.ID, rel.TagName)
 	}
 }
 

@@ -199,7 +199,7 @@ func (c *Client) FetchLatest(ctx context.Context) (Response, error) {
 		if strings.Contains(tag, "/") {
 			continue
 		}
-		if !strings.HasPrefix(tag, "v") {
+		if tag[0] != 'v' && tag[0] != 'V' {
 			continue
 		}
 		return Response{

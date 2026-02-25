@@ -336,6 +336,8 @@ func managedAgentFilesExist(agentsDir string) (bool, error) {
 	return found, nil
 }
 
+// localMCPCommandConfigured validates the configured command for the current
+// runtime OS only; shared repositories may need per-platform mcp.json values.
 func localMCPCommandConfigured(path string) (bool, error) {
 	root, err := readJSONFile(path)
 	if err != nil {

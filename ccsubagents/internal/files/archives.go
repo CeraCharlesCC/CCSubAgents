@@ -226,8 +226,12 @@ func cleanZipPath(raw string) (string, error) {
 	return clean, nil
 }
 
-func hasWindowsDrivePrefix(path string) bool {
-	return len(path) >= 2 && path[1] == ':'
+func hasWindowsDrivePrefix(p string) bool {
+	if len(p) < 2 || p[1] != ':' {
+		return false
+	}
+	c := p[0]
+	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
 }
 
 func RemoveStaleAgentFilesWithHook(oldFiles, newFiles []string, agentsDir string, beforeRemove func(string) error) error {

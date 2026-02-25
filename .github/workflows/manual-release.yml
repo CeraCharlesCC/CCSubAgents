@@ -41,6 +41,7 @@ jobs:
             "linux/amd64"
             "linux/arm64"
             "windows/amd64"
+            "darwin/amd64"
             "darwin/arm64"
           )
 
@@ -86,7 +87,8 @@ jobs:
           RELEASE_TAG: ${{ github.event.inputs.tag }}
         run: |
           gh release create "$RELEASE_TAG" \
-            dist/* \
+            dist/agents.zip \
+            dist/ccsubagents_* \
             --target main \
             --title "$RELEASE_TAG" \
             --notes "Manual release from main"
