@@ -51,8 +51,10 @@ chmod +x ./ccsubagents
   - `update` → `global`
   - `uninstall` → `global`
 - For `install --scope=global`, you can target:
-  - `.vscode-server-insiders`
-  - `.vscode-server`
+  - VS Code Server — Insiders
+  - VS Code Server — Stable
+  - VS Code Desktop — Insiders
+  - VS Code Desktop — Stable
   - custom path(s)
 - For custom path target(s), `<path>` means each path you enter at the prompt (for example, `~/my-project`).
 - Each custom path resolves as:
@@ -68,7 +70,7 @@ Examples:
 
 # Global scope with custom path target
 ./ccsubagents install --scope=global
-# At the prompt: choose 3, then enter one or more comma-separated paths
+# At the prompt: choose 5, then enter one or more comma-separated paths
 ```
 
 ## What's the benefit?

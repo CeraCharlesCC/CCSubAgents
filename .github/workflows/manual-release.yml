@@ -30,42 +30,63 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: local-artifact/go.mod
+          go-version: '1.22.x'
 
       - name: Build release artifacts
         run: |
           set -euo pipefail
           mkdir -p dist
-          (cd ccsubagents && go build -o "$GITHUB_WORKSPACE/dist/ccsubagents" ./cmd/ccsubagents)
-          (cd local-artifact && go build -o "$GITHUB_WORKSPACE/dist/local-artifact-mcp" ./cmd/local-artifact-mcp)
-          (cd local-artifact && go build -o "$GITHUB_WORKSPACE/dist/local-artifact-web" ./cmd/local-artifact-web)
-          (cd dist && zip -j local-artifact.zip local-artifact-mcp local-artifact-web)
+
+          targets=(
+            "linux/amd64"
+            "linux/arm64"
+            "windows/amd64"
+            "darwin/arm64"
+          )
+
+          for target in "${targets[@]}"; do
+            goos="${target%/*}"
+            goarch="${target#*/}"
+            ext=""
+            if [ "$goos" = "windows" ]; then
+              ext=".exe"
+            fi
+
+            (cd ccsubagents && CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -o "$GITHUB_WORKSPACE/dist/ccsubagents_${goos}_${goarch}${ext}" ./cmd/ccsubagents)
+
+            bundle_dir="$(mktemp -d)"
+            (cd local-artifact && CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -o "$bundle_dir/local-artifact-mcp${ext}" ./cmd/local-artifact-mcp)
+            (cd local-artifact && CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -o "$bundle_dir/local-artifact-web${ext}" ./cmd/local-artifact-web)
+            (cd "$bundle_dir" && zip -j "$GITHUB_WORKSPACE/dist/local-artifact_${goos}_${goarch}.zip" "local-artifact-mcp${ext}" "local-artifact-web${ext}")
+            rm -rf "$bundle_dir"
+          done
+
           (cd definition/.github/agents && zip -r "$GITHUB_WORKSPACE/dist/agents.zip" .)
 
-      - name: Attest agents.zip
+      - name: Attest release assets
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: dist/agents.zip
+          subject-path: dist/*
 
-      - name: Attest local-artifact.zip
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-path: dist/local-artifact.zip
+      - name: Publish local-artifact release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          LOCAL_ARTIFACT_TAG="local-artifact/${RELEASE_TAG}"
+          gh release create "$LOCAL_ARTIFACT_TAG" \
+            dist/local-artifact_*.zip \
+            --target main \
+            --title "$LOCAL_ARTIFACT_TAG" \
+            --notes "local-artifact bundles"
 
-      - name: Attest ccsubagents
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-path: dist/ccsubagents
-
-      - name: Publish release
+      - name: Publish main release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.event.inputs.tag }}
         run: |
           gh release create "$RELEASE_TAG" \
-            dist/agents.zip \
-            dist/local-artifact.zip \
-            dist/ccsubagents \
+            dist/* \
             --target main \
             --title "$RELEASE_TAG" \
             --notes "Manual release from main"

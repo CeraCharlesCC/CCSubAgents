@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -195,11 +196,12 @@ func (r *Runner) uninstallLocal(ctx context.Context) error {
 	}
 
 	managedDir := filepath.Join(location.installRoot, config.LocalManagedDirRelativePath)
+	mcpBinaryName, webBinaryName := localArtifactBinaryNames(runtime.GOOS)
 	agentsDir := filepath.Join(location.installRoot, config.LocalAgentsRelativePath)
 	mcpPath := filepath.Join(location.installRoot, config.LocalMCPRelativePath)
 	allowedBinaries := []string{
-		filepath.Join(managedDir, assetArtifactMCP),
-		filepath.Join(managedDir, assetArtifactWeb),
+		filepath.Join(managedDir, mcpBinaryName),
+		filepath.Join(managedDir, webBinaryName),
 	}
 
 	for _, path := range record.Managed.Files {
@@ -308,7 +310,9 @@ func (r *Runner) installOrUpdateLocal(ctx context.Context, cfg localInstallConfi
 		r.reportStepOK("Detected existing team setup", "refreshing binaries only")
 	}
 
-	requiredAssets := []string{assetLocalArtifactZip}
+	goos := runtime.GOOS
+	goarch := runtime.GOARCH
+	requiredAssets := []string{localArtifactBundleAssetName(goos, goarch)}
 	if !cfg.binaryOnly {
 		requiredAssets = append(requiredAssets, assetAgentsZip)
 	}
@@ -325,7 +329,7 @@ func (r *Runner) installOrUpdateLocal(ctx context.Context, cfg localInstallConfi
 		return err
 	}
 
-	bundleBinaries, err := r.extractDownloadedBundle(tmpDir, downloaded)
+	bundleBinaries, err := r.extractDownloadedBundle(tmpDir, downloaded, goos, goarch)
 	if err != nil {
 		return err
 	}
@@ -346,7 +350,7 @@ func (r *Runner) installOrUpdateLocal(ctx context.Context, cfg localInstallConfi
 		return err
 	}
 
-	binaryPaths, err := r.installExtractedBinaries(ctx, bundleBinaries, managedDir, mutations, "")
+	binaryPaths, err := r.installExtractedBinaries(ctx, bundleBinaries, managedDir, mutations, "", goos)
 	if err != nil {
 		return err
 	}
@@ -383,7 +387,7 @@ func (r *Runner) installOrUpdateLocal(ctx context.Context, cfg localInstallConfi
 		if cfg.previous != nil {
 			previousState = &state.TrackedState{JSONEdits: cfg.previous.JSONEdits}
 		}
-		mcpEdit, err := config.ApplyMCPEdit(mcpPath, config.LocalMCPCommand, previousState, stateFilePerm)
+		mcpEdit, err := config.ApplyMCPEdit(mcpPath, config.LocalMCPCommand(goos), previousState, stateFilePerm)
 		if err != nil {
 			return err
 		}
@@ -571,7 +575,17 @@ func (r *Runner) reportGlobalPathWarning(home string) {
 	}
 	r.reportWarning(
 		fmt.Sprintf("%s is not in PATH", toHomeTildePath(home, expected)),
-		"Add it to your shell profile:",
-		"export PATH=\"$HOME/.local/bin:$PATH\"",
+		func() string {
+			if runtime.GOOS == "windows" {
+				return "Add it to your user PATH environment variable."
+			}
+			return "Add it to your shell profile:"
+		}(),
+		func() string {
+			if runtime.GOOS == "windows" {
+				return "Use System Properties → Environment Variables to add the directory."
+			}
+			return "export PATH=\"$HOME/.local/bin:$PATH\""
+		}(),
 	)
 }

@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/files"
@@ -17,8 +18,15 @@ const (
 	LocalManagedDirRelativePath = ".ccsubagents"
 	LocalAgentsRelativePath     = ".github/agents"
 	LocalMCPRelativePath        = ".vscode/mcp.json"
-	LocalMCPCommand             = "${workspaceFolder}/.ccsubagents/local-artifact-mcp"
+	LocalMCPCommandBase         = "${workspaceFolder}/.ccsubagents/local-artifact-mcp"
 )
+
+func LocalMCPCommand(goos string) string {
+	if strings.EqualFold(goos, "windows") {
+		return LocalMCPCommandBase + ".exe"
+	}
+	return LocalMCPCommandBase
+}
 
 func localIgnorePathPrefix(installRoot, repoRoot string) string {
 	if strings.TrimSpace(repoRoot) == "" {
@@ -354,5 +362,5 @@ func localMCPCommandConfigured(path string) (bool, error) {
 		return false, nil
 	}
 	command, _ := server["command"].(string)
-	return strings.TrimSpace(command) == LocalMCPCommand, nil
+	return strings.TrimSpace(command) == LocalMCPCommand(runtime.GOOS), nil
 }

@@ -47,6 +47,11 @@ func zipBytes(t *testing.T, files map[string]string) []byte {
 	return buf.Bytes()
 }
 
+func bundleBinaryFiles(mcpContent, webContent string) map[string]string {
+	mcpBinaryName, webBinaryName := localArtifactBinaryNames(runtime.GOOS)
+	return map[string]string{mcpBinaryName: mcpContent, webBinaryName: webContent}
+}
+
 func mustWriteZipFile(t *testing.T, path string, files map[string]string) {
 	t.Helper()
 	b := zipBytes(t, files)
@@ -456,6 +461,31 @@ func TestResolveInstallPaths_Defaults(t *testing.T) {
 	if paths.insiders.mcpPath != filepath.Join(home, mcpConfigInsidersRelativePath) {
 		t.Fatalf("expected default insiders mcp path under home, got %q", paths.insiders.mcpPath)
 	}
+
+	switch runtime.GOOS {
+	case "windows":
+		appData := filepath.Join(home, "AppData", "Roaming")
+		if paths.desktopStable.settingsPath != filepath.Join(appData, "Code", "User", "settings.json") {
+			t.Fatalf("expected default desktop stable settings path, got %q", paths.desktopStable.settingsPath)
+		}
+		if paths.desktopInsiders.mcpPath != filepath.Join(appData, "Code - Insiders", "User", "mcp.json") {
+			t.Fatalf("expected default desktop insiders mcp path, got %q", paths.desktopInsiders.mcpPath)
+		}
+	case "darwin":
+		if paths.desktopStable.settingsPath != filepath.Join(home, "Library", "Application Support", "Code", "User", "settings.json") {
+			t.Fatalf("expected default desktop stable settings path, got %q", paths.desktopStable.settingsPath)
+		}
+		if paths.desktopInsiders.mcpPath != filepath.Join(home, "Library", "Application Support", "Code - Insiders", "User", "mcp.json") {
+			t.Fatalf("expected default desktop insiders mcp path, got %q", paths.desktopInsiders.mcpPath)
+		}
+	default:
+		if paths.desktopStable.settingsPath != filepath.Join(home, ".config", "Code", "User", "settings.json") {
+			t.Fatalf("expected default desktop stable settings path, got %q", paths.desktopStable.settingsPath)
+		}
+		if paths.desktopInsiders.mcpPath != filepath.Join(home, ".config", "Code - Insiders", "User", "mcp.json") {
+			t.Fatalf("expected default desktop insiders mcp path, got %q", paths.desktopInsiders.mcpPath)
+		}
+	}
 }
 
 func TestResolveInstallPaths_EnvOverrides(t *testing.T) {
@@ -479,6 +509,12 @@ func TestResolveInstallPaths_EnvOverrides(t *testing.T) {
 	}
 	if paths.insiders.mcpPath != filepath.Join(string(os.PathSeparator), "tmp", "custom-mcp.json") {
 		t.Fatalf("expected absolute insiders mcp path override, got %q", paths.insiders.mcpPath)
+	}
+	if paths.desktopStable.settingsPath != filepath.Join(home, "custom", "settings.json") {
+		t.Fatalf("expected desktop stable settings override, got %q", paths.desktopStable.settingsPath)
+	}
+	if paths.desktopInsiders.mcpPath != filepath.Join(string(os.PathSeparator), "tmp", "custom-mcp.json") {
+		t.Fatalf("expected desktop insiders mcp override, got %q", paths.desktopInsiders.mcpPath)
 	}
 }
 
@@ -593,6 +629,14 @@ func TestRun_GlobalInstallPromptsForTargetSelection(t *testing.T) {
 func TestPromptGlobalInstallTargets_UsesPrettyPromptCopy(t *testing.T) {
 	home := t.TempDir()
 	paths := installPaths{
+		desktopStable: configPaths{
+			settingsPath: filepath.Join(home, "desktop-stable", "User", "settings.json"),
+			mcpPath:      filepath.Join(home, "desktop-stable", "User", "mcp.json"),
+		},
+		desktopInsiders: configPaths{
+			settingsPath: filepath.Join(home, "desktop-insiders", "User", "settings.json"),
+			mcpPath:      filepath.Join(home, "desktop-insiders", "User", "mcp.json"),
+		},
 		stable: configPaths{
 			settingsPath: filepath.Join(home, ".vscode-server", "data", "Machine", "settings.json"),
 			mcpPath:      filepath.Join(home, ".vscode-server", "data", "User", "mcp.json"),
@@ -635,7 +679,9 @@ func TestPromptGlobalInstallTargets_UsesPrettyPromptCopy(t *testing.T) {
 		"Where should ccsubagents be installed?",
 		"VS Code Server — Insiders",
 		"VS Code Server — Stable",
-		"[3] Custom path(s)",
+		"VS Code Desktop — Insiders",
+		"VS Code Desktop — Stable",
+		"[5] Custom path(s)",
 		"Choice (comma-separated, e.g. 1,2):",
 		stableRoot,
 		insidersSettings,
@@ -672,10 +718,7 @@ func (r errorReader) Read(_ []byte) (int, error) {
 func TestInstallOrUpdate_TracksBothDestinationTargets(t *testing.T) {
 	home := t.TempDir()
 	agentsArchive := zipBytes(t, map[string]string{"agents/example.agent.md": "content"})
-	bundleArchive := zipBytes(t, map[string]string{
-		"local-artifact-mcp": "mcp-binary",
-		"local-artifact-web": "web-binary",
-	})
+	bundleArchive := zipBytes(t, bundleBinaryFiles("mcp-binary", "web-binary"))
 
 	m := &Runner{
 		httpClient: successReleaseHTTPClient(t, "v1.2.3", agentsArchive, bundleArchive),
@@ -738,7 +781,8 @@ func TestInstallOrUpdate_TracksBothDestinationTargets(t *testing.T) {
 		if !ok {
 			t.Fatalf("expected managed mcp server in %s", mcpPath)
 		}
-		if artifact["command"] != "~/.local/bin/local-artifact-mcp" {
+		mcpBinaryName, _ := localArtifactBinaryNames(runtime.GOOS)
+		if artifact["command"] != toHomeTildePath(home, filepath.Join(paths.binaryDir, mcpBinaryName)) {
 			t.Fatalf("unexpected command for %s: %#v", mcpPath, artifact)
 		}
 	}
@@ -748,12 +792,20 @@ func TestToHomeTildePath(t *testing.T) {
 	home := filepath.Join(string(os.PathSeparator), "home", "user")
 
 	got := toHomeTildePath(home, filepath.Join(home, ".local", "share", "ccsubagents", "agents"))
-	if got != "~/.local/share/ccsubagents/agents" {
+	if runtime.GOOS == "windows" {
+		if got != filepath.ToSlash(filepath.Join(home, ".local", "share", "ccsubagents", "agents")) {
+			t.Fatalf("expected windows absolute path, got %q", got)
+		}
+	} else if got != "~/.local/share/ccsubagents/agents" {
 		t.Fatalf("expected home-relative tilde path, got %q", got)
 	}
 
 	got = toHomeTildePath(home, home)
-	if got != "~" {
+	if runtime.GOOS == "windows" {
+		if got != filepath.ToSlash(home) {
+			t.Fatalf("expected windows absolute home path, got %q", got)
+		}
+	} else if got != "~" {
 		t.Fatalf("expected home root to map to ~, got %q", got)
 	}
 
@@ -823,25 +875,27 @@ func TestTrimConfigFileSuffix_PreservesWindowsVolumeRoot(t *testing.T) {
 func TestInstallOrUpdate_AttestationFailureBeforeMutation(t *testing.T) {
 	home := t.TempDir()
 	agentsArchive := zipBytes(t, map[string]string{"agents/example.agent.md": "content"})
+	mcpBinaryName, webBinaryName := localArtifactBinaryNames(runtime.GOOS)
 	artifactBundleArchive := zipBytes(t, map[string]string{
-		"local-artifact-mcp":          "mcp-binary",
-		"nested/local-artifact-web":   "web-binary",
+		mcpBinaryName:                 "mcp-binary",
+		"nested/" + webBinaryName:     "web-binary",
 		"nested/not-needed-something": "ignored",
 	})
 
 	httpClient := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		bundleAssetName := localArtifactBundleAssetName(runtime.GOOS, runtime.GOARCH)
 		body := ""
 		status := http.StatusOK
 		switch req.URL.String() {
-		case release.LatestURL:
-			body = fmt.Sprintf(`{"id":101,"tag_name":"v1.2.3","assets":[{"name":"%s","browser_download_url":"https://example.invalid/assets/%s"},{"name":"%s","browser_download_url":"https://example.invalid/assets/%s"}]}`,
+		case release.ReleasesURL:
+			body = fmt.Sprintf(`[{"id":101,"tag_name":"v1.2.3","draft":false,"prerelease":false,"assets":[{"name":"%s","browser_download_url":"https://example.invalid/assets/%s"},{"name":"%s","browser_download_url":"https://example.invalid/assets/%s"}]}]`,
 				assetAgentsZip, assetAgentsZip,
-				assetLocalArtifactZip, assetLocalArtifactZip,
+				bundleAssetName, bundleAssetName,
 			)
 			return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 		case "https://example.invalid/assets/" + assetAgentsZip:
 			return &http.Response{StatusCode: status, Body: io.NopCloser(bytes.NewReader(agentsArchive)), Header: make(http.Header)}, nil
-		case "https://example.invalid/assets/" + assetLocalArtifactZip:
+		case "https://example.invalid/assets/" + bundleAssetName:
 			return &http.Response{StatusCode: status, Body: io.NopCloser(bytes.NewReader(artifactBundleArchive)), Header: make(http.Header)}, nil
 		default:
 			return nil, fmt.Errorf("unexpected request URL: %s", req.URL.String())
@@ -936,21 +990,23 @@ func TestInstallOrUpdate_UpdateStaleCleanupFailureRollsBackAndKeepsTrackedState(
 
 	m := &Runner{
 		httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			bundleAssetName := localArtifactBundleAssetName(runtime.GOOS, runtime.GOARCH)
 			status := http.StatusOK
 			switch req.URL.String() {
-			case release.LatestURL:
-				body := fmt.Sprintf(`{"id":202,"tag_name":"v-new","assets":[{"name":"%s","browser_download_url":"https://example.invalid/assets/%s"},{"name":"%s","browser_download_url":"https://example.invalid/assets/%s"}]}`,
+			case release.ReleasesURL:
+				body := fmt.Sprintf(`[{"id":202,"tag_name":"v-new","draft":false,"prerelease":false,"assets":[{"name":"%s","browser_download_url":"https://example.invalid/assets/%s"},{"name":"%s","browser_download_url":"https://example.invalid/assets/%s"}]}]`,
 					assetAgentsZip, assetAgentsZip,
-					assetLocalArtifactZip, assetLocalArtifactZip,
+					bundleAssetName, bundleAssetName,
 				)
 				return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 			case "https://example.invalid/assets/" + assetAgentsZip:
 				archive := zipBytes(t, map[string]string{"agents/current.agent.md": "new"})
 				return &http.Response{StatusCode: status, Body: io.NopCloser(bytes.NewReader(archive)), Header: make(http.Header)}, nil
-			case "https://example.invalid/assets/" + assetLocalArtifactZip:
+			case "https://example.invalid/assets/" + bundleAssetName:
+				mcpBinaryName, webBinaryName := localArtifactBinaryNames(runtime.GOOS)
 				archive := zipBytes(t, map[string]string{
-					"release/local-artifact-mcp": "mcp",
-					"local-artifact-web":         "web",
+					"release/" + mcpBinaryName: "mcp",
+					webBinaryName:              "web",
 				})
 				return &http.Response{StatusCode: status, Body: io.NopCloser(bytes.NewReader(archive)), Header: make(http.Header)}, nil
 			default:
@@ -1114,7 +1170,9 @@ func TestUninstall_BothTargetMigrationRevertsPerTargetMetadata(t *testing.T) {
 		}
 	}
 
-	agentPath := "~/.local/share/ccsubagents/agents"
+	mcpBinaryName, _ := localArtifactBinaryNames(runtime.GOOS)
+	agentPath := toHomeTildePath(home, filepath.Join(home, ".local", "share", "ccsubagents", "agents"))
+	mcpCommandPath := toHomeTildePath(home, filepath.Join(paths.binaryDir, mcpBinaryName))
 	if err := writeJSONMap(paths.stable.settingsPath, map[string]any{
 		config.SettingsAgentPathKey: map[string]any{
 			agentPath:      true,
@@ -1134,14 +1192,14 @@ func TestUninstall_BothTargetMigrationRevertsPerTargetMetadata(t *testing.T) {
 
 	if err := writeJSONMap(paths.stable.mcpPath, map[string]any{
 		"servers": map[string]any{
-			config.MCPServerKey: map[string]any{"command": "~/.local/bin/local-artifact-mcp"},
+			config.MCPServerKey: map[string]any{"command": mcpCommandPath},
 		},
 	}); err != nil {
 		t.Fatalf("seed stable mcp: %v", err)
 	}
 	if err := writeJSONMap(paths.insiders.mcpPath, map[string]any{
 		"servers": map[string]any{
-			config.MCPServerKey: map[string]any{"command": "~/.local/bin/local-artifact-mcp"},
+			config.MCPServerKey: map[string]any{"command": mcpCommandPath},
 			"foo":               map[string]any{"command": "foo"},
 		},
 	}); err != nil {

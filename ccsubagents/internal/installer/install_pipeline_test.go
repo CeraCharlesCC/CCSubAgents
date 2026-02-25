@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -34,7 +35,7 @@ func TestDownloadRequiredAssets_RemovesTempDirOnDownloadError(t *testing.T) {
 		TagName: "v1.2.3",
 		Assets: []release.Asset{
 			{Name: assetAgentsZip, BrowserDownloadURL: "https://example.invalid/assets/" + assetAgentsZip},
-			{Name: assetLocalArtifactZip, BrowserDownloadURL: "https://example.invalid/assets/" + assetLocalArtifactZip},
+			{Name: localArtifactBundleAssetName(runtime.GOOS, runtime.GOARCH), BrowserDownloadURL: "https://example.invalid/assets/" + localArtifactBundleAssetName(runtime.GOOS, runtime.GOARCH)},
 		},
 	}
 
@@ -42,7 +43,7 @@ func TestDownloadRequiredAssets_RemovesTempDirOnDownloadError(t *testing.T) {
 		context.Background(),
 		stateDir,
 		release,
-		[]string{assetAgentsZip, assetLocalArtifactZip},
+		[]string{assetAgentsZip, localArtifactBundleAssetName(runtime.GOOS, runtime.GOARCH)},
 		"download-required-assets-*",
 	)
 	if err == nil {
@@ -113,9 +114,10 @@ func TestVerifyAttestationsOrReport_AttestationFailureAddsSkipGuidance(t *testin
 func TestInstallExtractedBinaries_PermissionErrorIncludesPrivilegeHint(t *testing.T) {
 	destinationDir := t.TempDir()
 	bundleDir := t.TempDir()
+	mcpBinaryName, webBinaryName := localArtifactBinaryNames(runtime.GOOS)
 	bundleBinaries := map[string]string{
-		assetArtifactMCP: filepath.Join(bundleDir, assetArtifactMCP),
-		assetArtifactWeb: filepath.Join(bundleDir, assetArtifactWeb),
+		mcpBinaryName: filepath.Join(bundleDir, mcpBinaryName),
+		webBinaryName: filepath.Join(bundleDir, webBinaryName),
 	}
 
 	m := &Runner{
@@ -125,7 +127,7 @@ func TestInstallExtractedBinaries_PermissionErrorIncludesPrivilegeHint(t *testin
 	}
 
 	mutations := files.NewMutationTracker(files.NewRollback(), stateDirPerm)
-	_, err := m.installExtractedBinaries(context.Background(), bundleBinaries, destinationDir, mutations, destinationDir)
+	_, err := m.installExtractedBinaries(context.Background(), bundleBinaries, destinationDir, mutations, destinationDir, runtime.GOOS)
 	if err == nil {
 		t.Fatalf("expected installExtractedBinaries to fail")
 	}
@@ -135,7 +137,7 @@ func TestInstallExtractedBinaries_PermissionErrorIncludesPrivilegeHint(t *testin
 	if !strings.Contains(err.Error(), "requires privileges to write "+destinationDir) {
 		t.Fatalf("expected privilege hint in error, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "install "+assetArtifactMCP+" into "+destinationDir) {
+	if !strings.Contains(err.Error(), "install "+mcpBinaryName+" into "+destinationDir) {
 		t.Fatalf("expected wrapped install context in error, got %v", err)
 	}
 }

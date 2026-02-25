@@ -25,9 +25,9 @@ func TestResolveReleaseForInstall_UsesTagEndpointWhenVersionRequested(t *testing
 	tagRequests := 0
 	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		switch req.URL.String() {
-		case release.LatestURL:
+		case release.ReleasesURL:
 			latestRequests++
-			body := `{"id":300,"tag_name":"v-latest","assets":[]}`
+			body := `[{"id":300,"tag_name":"v-latest","draft":false,"prerelease":false,"assets":[]}]`
 			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 		case release.TagsURLPrefix + "v1.2.3":
 			tagRequests++
@@ -129,9 +129,9 @@ func TestResolveReleaseForInstall_AllowsMatchingPinnedVersion(t *testing.T) {
 				tagRequests++
 				body := `{"id":401,"tag_name":"v1.2.3","assets":[]}`
 				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
-			case release.LatestURL:
+			case release.ReleasesURL:
 				latestRequests++
-				body := `{"id":402,"tag_name":"v-latest","assets":[]}`
+				body := `[{"id":402,"tag_name":"v-latest","draft":false,"prerelease":false,"assets":[]}]`
 				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 			default:
 				return nil, fmt.Errorf("unexpected request URL: %s", req.URL.String())
