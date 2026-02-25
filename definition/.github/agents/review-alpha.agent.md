@@ -19,7 +19,8 @@ tools:
     'artifact-mcp/resolve_artifact',
   ]
 model: [GPT-5.3-Codex (copilot)]
-user-invocable: false
+user-invokable: false   # for current stable 
+user-invocable: false   # insiders + upcoming; see https://github.com/microsoft/vscode/issues/296845
 disable-model-invocation: false
 ---
 

@@ -3,7 +3,8 @@ name: orchestrator
 description: Clarifies requirements, then drives Plan → Implement → Review loops until done. Coordinates subagents via artifact-mcp.
 argument-hint: "Describe the goal, constraints, and any pointers (files/branch/PR). I will ask clarifying questions and iterate."
 target: vscode
-user-invocable: true
+user-invokable: true   # for current stable 
+user-invocable: true   # insiders + upcoming; see https://github.com/microsoft/vscode/issues/296845
 disable-model-invocation: true
 tools:
   [

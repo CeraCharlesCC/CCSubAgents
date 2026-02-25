@@ -17,7 +17,8 @@ tools:
     'artifact-mcp/get_artifact_list',
   ]
 model: [Claude Opus 4.6 (copilot)]
-user-invocable: false
+user-invokable: false   # for current stable 
+user-invocable: false   # insiders + upcoming; see https://github.com/microsoft/vscode/issues/296845
 disable-model-invocation: false
 ---
 
