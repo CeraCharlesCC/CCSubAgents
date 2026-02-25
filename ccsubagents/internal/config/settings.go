@@ -31,7 +31,12 @@ const (
 
 func ResolveSettingsPaths(home, cwd string) (string, string) {
 	globalPath := filepath.Join(home, ".local", "share", "ccsubagents", "settings.json")
-	localPath := filepath.Join(cwd, "ccsubagents", "settings.json")
+	cleanCwd := filepath.Clean(cwd)
+	localRoot := cleanCwd
+	if !strings.EqualFold(filepath.Base(cleanCwd), "ccsubagents") {
+		localRoot = filepath.Join(cleanCwd, "ccsubagents")
+	}
+	localPath := filepath.Join(localRoot, "settings.json")
 	return globalPath, localPath
 }
 
@@ -59,10 +64,20 @@ func NormalizeInstallVersionTag(raw string) string {
 	return NormalizeVersionTag(raw)
 }
 
+func isPathMissingError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if os.IsNotExist(err) {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "not a directory")
+}
+
 func readSettingsPatch(path string) (settingsPatch, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if isPathMissingError(err) {
 			return settingsPatch{}, nil
 		}
 		return settingsPatch{}, err
@@ -145,9 +160,9 @@ func ChoosePinWritePath(cwd, home string) (string, SettingsScope, error) {
 		if info.IsDir() {
 			return localPath, SettingsScopeLocal, nil
 		}
-		return "", "", fmt.Errorf("local settings parent exists but is not a directory: %s", localDir)
+		return globalPath, SettingsScopeGlobal, nil
 	}
-	if !errors.Is(err, os.ErrNotExist) {
+	if !os.IsNotExist(err) {
 		return "", "", fmt.Errorf("check local settings directory %s: %w", localDir, err)
 	}
 

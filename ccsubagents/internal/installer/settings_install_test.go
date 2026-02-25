@@ -107,6 +107,44 @@ func TestLoadMergedInstallSettings_MissingFilesAreEmpty(t *testing.T) {
 	}
 }
 
+func TestResolveSettingsPaths_CwdAlreadyAtCcsubagentsDirectory(t *testing.T) {
+	home := t.TempDir()
+	root := t.TempDir()
+	cwd := filepath.Join(root, "ccsubagents")
+	if err := os.MkdirAll(cwd, stateDirPerm); err != nil {
+		t.Fatalf("create cwd: %v", err)
+	}
+
+	_, localPath := config.ResolveSettingsPaths(home, cwd)
+	want := filepath.Join(cwd, "settings.json")
+	if localPath != want {
+		t.Fatalf("expected local settings path %q, got %q", want, localPath)
+	}
+}
+
+func TestLoadMergedInstallSettings_LocalPathFileComponentIsTreatedAsMissing(t *testing.T) {
+	home := t.TempDir()
+	cwd := t.TempDir()
+	globalPath, _ := config.ResolveSettingsPaths(home, cwd)
+	writeSettingsFixture(t, globalPath, `{"autostart-webui": true, "pinned-version": "v1.2.3"}`)
+
+	blockingPath := filepath.Join(cwd, "ccsubagents")
+	if err := os.WriteFile(blockingPath, []byte("not-a-directory"), stateFilePerm); err != nil {
+		t.Fatalf("create blocking file: %v", err)
+	}
+
+	settings, err := config.LoadMergedInstallSettings(home, cwd)
+	if err != nil {
+		t.Fatalf("expected blocking local file path to be treated as missing, got %v", err)
+	}
+	if !settings.AutostartWebUI {
+		t.Fatalf("expected global autostart setting to be preserved")
+	}
+	if settings.PinnedVersion != "v1.2.3" {
+		t.Fatalf("expected global pinned version to be preserved, got %q", settings.PinnedVersion)
+	}
+}
+
 func TestChoosePinWritePath_PrefersLocalWhenDirectoryExists(t *testing.T) {
 	home := t.TempDir()
 	cwd := t.TempDir()
@@ -130,6 +168,26 @@ func TestChoosePinWritePath_PrefersLocalWhenDirectoryExists(t *testing.T) {
 func TestChoosePinWritePath_FallsBackToGlobal(t *testing.T) {
 	home := t.TempDir()
 	cwd := t.TempDir()
+
+	path, scope, err := config.ChoosePinWritePath(cwd, home)
+	if err != nil {
+		t.Fatalf("choose pin write path: %v", err)
+	}
+	globalPath, _ := config.ResolveSettingsPaths(home, cwd)
+	if path != globalPath {
+		t.Fatalf("expected global write path %q, got %q", globalPath, path)
+	}
+	if scope != config.SettingsScopeGlobal {
+		t.Fatalf("expected global scope, got %q", scope)
+	}
+}
+
+func TestChoosePinWritePath_FallsBackToGlobalWhenLocalParentIsFile(t *testing.T) {
+	home := t.TempDir()
+	cwd := t.TempDir()
+	if err := os.WriteFile(filepath.Join(cwd, "ccsubagents"), []byte("file"), stateFilePerm); err != nil {
+		t.Fatalf("create local parent file: %v", err)
+	}
 
 	path, scope, err := config.ChoosePinWritePath(cwd, home)
 	if err != nil {
