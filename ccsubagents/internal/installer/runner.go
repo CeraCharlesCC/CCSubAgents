@@ -155,10 +155,7 @@ func resolveInstallPaths(home string) installPaths {
 	desktopInsiders := configPaths{}
 	switch runtime.GOOS {
 	case "windows":
-		appDataDir := strings.TrimSpace(os.Getenv("APPDATA"))
-		if appDataDir == "" {
-			appDataDir = filepath.Join(home, "AppData", "Roaming")
-		}
+		appDataDir := filepath.Join(home, "AppData", "Roaming")
 		desktopStable = configPaths{
 			settingsPath: filepath.Join(appDataDir, "Code", "User", "settings.json"),
 			mcpPath:      filepath.Join(appDataDir, "Code", "User", "mcp.json"),
@@ -248,8 +245,12 @@ func resolveConfiguredPath(home, value string) string {
 	if trimmed == "~" {
 		return filepath.Clean(home)
 	}
-	if strings.HasPrefix(trimmed, "~"+string(os.PathSeparator)) {
-		return filepath.Join(home, trimmed[2:])
+	if strings.HasPrefix(trimmed, "~/") || strings.HasPrefix(trimmed, "~\\") {
+		remainder := strings.TrimLeft(trimmed[2:], `/\`)
+		if remainder == "" {
+			return filepath.Clean(home)
+		}
+		return filepath.Join(home, remainder)
 	}
 	if filepath.IsAbs(trimmed) {
 		return filepath.Clean(trimmed)
@@ -259,9 +260,6 @@ func resolveConfiguredPath(home, value string) string {
 
 func toHomeTildePath(home, path string) string {
 	cleanPath := filepath.Clean(path)
-	if runtime.GOOS == "windows" {
-		return filepath.ToSlash(cleanPath)
-	}
 	cleanHome := filepath.Clean(home)
 	if cleanHome == "" || cleanHome == "." {
 		return filepath.ToSlash(cleanPath)

@@ -441,12 +441,22 @@ func (r *Runner) installOrUpdateLocal(ctx context.Context, cfg localInstallConfi
 		ReleaseID:   rel.ID,
 		ReleaseTag:  rel.TagName,
 		InstalledAt: r.now().UTC().Format(time.RFC3339),
-		Managed: state.ManagedState{
-			Files: files.UniqueSorted(append(append([]string{}, binaryPaths...), extractedFiles...)),
-			Dirs:  files.UniqueSorted(append(mutations.CreatedDirectories(), extractedDirs...)),
-		},
-		JSONEdits:   state.TrackedJSONOpsFromEdits(nil, mcpEdits),
 		IgnoreEdits: ignoreEdits,
+	}
+	managedFiles := append(append([]string{}, binaryPaths...), extractedFiles...)
+	managedDirs := append(mutations.CreatedDirectories(), extractedDirs...)
+	if cfg.previous != nil && !cfg.isUpdate {
+		managedFiles = append(managedFiles, cfg.previous.Managed.Files...)
+		managedDirs = append(managedDirs, cfg.previous.Managed.Dirs...)
+	}
+	record.Managed = state.ManagedState{
+		Files: files.UniqueSorted(managedFiles),
+		Dirs:  files.UniqueSorted(managedDirs),
+	}
+	if len(mcpEdits) > 0 {
+		record.JSONEdits = state.TrackedJSONOpsFromEdits(nil, mcpEdits)
+	} else if cfg.previous != nil {
+		record.JSONEdits = cfg.previous.JSONEdits.Clone()
 	}
 
 	if err := r.persistPendingPinWrite(mutations); err != nil {

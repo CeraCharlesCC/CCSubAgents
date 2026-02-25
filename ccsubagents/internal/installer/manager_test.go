@@ -792,20 +792,12 @@ func TestToHomeTildePath(t *testing.T) {
 	home := filepath.Join(string(os.PathSeparator), "home", "user")
 
 	got := toHomeTildePath(home, filepath.Join(home, ".local", "share", "ccsubagents", "agents"))
-	if runtime.GOOS == "windows" {
-		if got != filepath.ToSlash(filepath.Join(home, ".local", "share", "ccsubagents", "agents")) {
-			t.Fatalf("expected windows absolute path, got %q", got)
-		}
-	} else if got != "~/.local/share/ccsubagents/agents" {
+	if got != "~/.local/share/ccsubagents/agents" {
 		t.Fatalf("expected home-relative tilde path, got %q", got)
 	}
 
 	got = toHomeTildePath(home, home)
-	if runtime.GOOS == "windows" {
-		if got != filepath.ToSlash(home) {
-			t.Fatalf("expected windows absolute home path, got %q", got)
-		}
-	} else if got != "~" {
+	if got != "~" {
 		t.Fatalf("expected home root to map to ~, got %q", got)
 	}
 
