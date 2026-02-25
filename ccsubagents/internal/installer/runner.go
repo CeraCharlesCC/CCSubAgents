@@ -255,6 +255,12 @@ func resolveConfiguredPath(home, value string) string {
 	if filepath.IsAbs(trimmed) {
 		return filepath.Clean(trimmed)
 	}
+	// On Windows, a leading slash or backslash is a rooted path on the current
+	// drive (e.g. "\tmp\file.json"), which filepath.IsAbs reports as non-absolute.
+	// Treat it as a direct override rather than joining it under home.
+	if os.PathSeparator == '\\' && (strings.HasPrefix(trimmed, `\`) || strings.HasPrefix(trimmed, "/")) {
+		return filepath.Clean(trimmed)
+	}
 	return filepath.Join(home, trimmed)
 }
 
