@@ -82,3 +82,50 @@ func TestFetchReleaseByTag_EscapesTagPathSegment(t *testing.T) {
 		t.Fatalf("expected request to %q, got %q", wantURL, requestedURL)
 	}
 }
+
+func TestFetchLatest_FiltersReleasesAndSelectsFirstValid(t *testing.T) {
+	var requestedURL string
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requestedURL = req.URL.String()
+		body := `[
+			{"id":1,"tag_name":"local-artifact/v1.2.3","draft":false,"prerelease":false,"assets":[]},
+			{"id":2,"tag_name":"v1.2.2","draft":true,"prerelease":false,"assets":[]},
+			{"id":3,"tag_name":"v1.2.1","draft":false,"prerelease":true,"assets":[]},
+			{"id":4,"tag_name":"release-1.2.0","draft":false,"prerelease":false,"assets":[]},
+			{"id":5,"tag_name":"V1.1.9","draft":false,"prerelease":false,"assets":[{"name":"agents.zip","browser_download_url":"https://example.invalid/agents.zip"}]},
+			{"id":6,"tag_name":"v1.1.8","draft":false,"prerelease":false,"assets":[{"name":"agents.zip","browser_download_url":"https://example.invalid/agents.zip"}]}
+		]`
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+	})}
+
+	m := &Runner{httpClient: client}
+	rel, err := m.releaseClient().FetchLatest(context.Background())
+	if err != nil {
+		t.Fatalf("FetchLatest returned error: %v", err)
+	}
+	if requestedURL != release.ReleasesURL {
+		t.Fatalf("expected request to %q, got %q", release.ReleasesURL, requestedURL)
+	}
+	if rel.ID != 5 || rel.TagName != "V1.1.9" {
+		t.Fatalf("expected release id=5 tag=V1.1.9, got id=%d tag=%q", rel.ID, rel.TagName)
+	}
+}
+
+func TestFetchLatest_NoMatchingReleaseReturnsError(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := `[
+			{"id":1,"tag_name":"local-artifact/v1.2.3","draft":false,"prerelease":false,"assets":[]},
+			{"id":2,"tag_name":"preview-1.2.2","draft":false,"prerelease":false,"assets":[]}
+		]`
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+	})}
+
+	m := &Runner{httpClient: client}
+	_, err := m.releaseClient().FetchLatest(context.Background())
+	if err == nil {
+		t.Fatalf("expected FetchLatest to fail when no matching release exists")
+	}
+	if !strings.Contains(err.Error(), "no matching stable release found") {
+		t.Fatalf("expected no-matching-release error, got %v", err)
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -32,19 +33,20 @@ func assertStatusContainsInOrder(t *testing.T, status string, wants []string) {
 
 func successReleaseHTTPClient(t *testing.T, releaseTag string, agentsArchive, bundleArchive []byte) *http.Client {
 	t.Helper()
+	bundleAssetName := localArtifactBundleAssetName(runtime.GOOS, runtime.GOARCH)
 	return &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		status := http.StatusOK
 		switch req.URL.String() {
-		case release.LatestURL:
-			body := fmt.Sprintf(`{"id":101,"tag_name":%q,"assets":[{"name":%q,"browser_download_url":"https://example.invalid/assets/%s"},{"name":%q,"browser_download_url":"https://example.invalid/assets/%s"}]}`,
+		case release.ReleasesURL:
+			body := fmt.Sprintf(`[{"id":101,"tag_name":%q,"draft":false,"prerelease":false,"assets":[{"name":%q,"browser_download_url":"https://example.invalid/assets/%s"},{"name":%q,"browser_download_url":"https://example.invalid/assets/%s"}]}]`,
 				releaseTag,
 				assetAgentsZip, assetAgentsZip,
-				assetLocalArtifactZip, assetLocalArtifactZip,
+				bundleAssetName, bundleAssetName,
 			)
 			return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 		case "https://example.invalid/assets/" + assetAgentsZip:
 			return &http.Response{StatusCode: status, Body: io.NopCloser(bytes.NewReader(agentsArchive)), Header: make(http.Header)}, nil
-		case "https://example.invalid/assets/" + assetLocalArtifactZip:
+		case "https://example.invalid/assets/" + bundleAssetName:
 			return &http.Response{StatusCode: status, Body: io.NopCloser(bytes.NewReader(bundleArchive)), Header: make(http.Header)}, nil
 		default:
 			return nil, fmt.Errorf("unexpected request URL: %s", req.URL.String())
@@ -72,10 +74,7 @@ func statusTestManager(home string, client *http.Client, statusOut io.Writer) *R
 func TestInstallOrUpdate_ReportsInstallProgress(t *testing.T) {
 	home := t.TempDir()
 	agentsArchive := zipBytes(t, map[string]string{"agents/example.agent.md": "content"})
-	bundleArchive := zipBytes(t, map[string]string{
-		"local-artifact-mcp": "mcp-binary",
-		"local-artifact-web": "web-binary",
-	})
+	bundleArchive := zipBytes(t, bundleBinaryFiles("mcp-binary", "web-binary"))
 
 	var out bytes.Buffer
 	m := statusTestManager(home, successReleaseHTTPClient(t, "v1.2.3", agentsArchive, bundleArchive), &out)
@@ -96,7 +95,7 @@ func TestInstallOrUpdate_ReportsInstallProgress(t *testing.T) {
 		"Install complete.",
 	})
 
-	for _, disallowed := range []string{"==>", "  - ", "local-artifact-mcp", "local-artifact-web", "agents.zip", "local-artifact.zip"} {
+	for _, disallowed := range []string{"==>", "  - ", "local-artifact-mcp", "local-artifact-web", "agents.zip", localArtifactBundleAssetName(runtime.GOOS, runtime.GOARCH)} {
 		if strings.Contains(status, disallowed) {
 			t.Fatalf("expected compact default status without %q, got:\n%s", disallowed, status)
 		}
@@ -115,10 +114,7 @@ func TestInstallOrUpdate_ReportsUpdateCleanupProgress(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	m := statusTestManager(home, successReleaseHTTPClient(t, "v2.0.0", zipBytes(t, map[string]string{"agents/new.agent.md": "fresh"}), zipBytes(t, map[string]string{
-		"local-artifact-mcp": "mcp-binary",
-		"local-artifact-web": "web-binary",
-	})), &out)
+	m := statusTestManager(home, successReleaseHTTPClient(t, "v2.0.0", zipBytes(t, map[string]string{"agents/new.agent.md": "fresh"}), zipBytes(t, bundleBinaryFiles("mcp-binary", "web-binary"))), &out)
 
 	stateDir := filepath.Join(home, ".local", "share", "ccsubagents")
 	if err := os.MkdirAll(stateDir, stateDirPerm); err != nil {
@@ -162,10 +158,7 @@ func TestInstallOrUpdate_ReportsUpdateCleanupProgress(t *testing.T) {
 func TestInstallOrUpdate_ReportsSkipAttestationWhenFlagSet(t *testing.T) {
 	home := t.TempDir()
 	agentsArchive := zipBytes(t, map[string]string{"agents/example.agent.md": "content"})
-	bundleArchive := zipBytes(t, map[string]string{
-		"local-artifact-mcp": "mcp-binary",
-		"local-artifact-web": "web-binary",
-	})
+	bundleArchive := zipBytes(t, bundleBinaryFiles("mcp-binary", "web-binary"))
 
 	var out bytes.Buffer
 	m := statusTestManager(home, successReleaseHTTPClient(t, "v1.2.3", agentsArchive, bundleArchive), &out)
@@ -189,10 +182,10 @@ func TestInstallOrUpdate_ReportsAlreadyLatestNoopForUpdate(t *testing.T) {
 	requestCount := 0
 	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		requestCount++
-		if req.URL.String() != release.LatestURL {
+		if req.URL.String() != release.ReleasesURL {
 			return nil, fmt.Errorf("unexpected request URL: %s", req.URL.String())
 		}
-		body := `{"id":101,"tag_name":"v2.0.0","assets":[]}`
+		body := `[{"id":101,"tag_name":"v2.0.0","draft":false,"prerelease":false,"assets":[]}]`
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 	})}
 
@@ -231,10 +224,7 @@ func TestInstallOrUpdate_VerboseDetailGating(t *testing.T) {
 		t.Helper()
 		home := t.TempDir()
 		agentsArchive := zipBytes(t, map[string]string{"agents/example.agent.md": "content"})
-		bundleArchive := zipBytes(t, map[string]string{
-			"local-artifact-mcp": "mcp-binary",
-			"local-artifact-web": "web-binary",
-		})
+		bundleArchive := zipBytes(t, bundleBinaryFiles("mcp-binary", "web-binary"))
 
 		var out bytes.Buffer
 		m := statusTestManager(home, successReleaseHTTPClient(t, "v1.2.3", agentsArchive, bundleArchive), &out)
@@ -262,10 +252,7 @@ func TestInstallOrUpdate_VerboseDetailGating(t *testing.T) {
 func TestInstallOrUpdate_AttestationFailureReportsActionableGuidance(t *testing.T) {
 	home := t.TempDir()
 	agentsArchive := zipBytes(t, map[string]string{"agents/example.agent.md": "content"})
-	bundleArchive := zipBytes(t, map[string]string{
-		"local-artifact-mcp": "mcp-binary",
-		"local-artifact-web": "web-binary",
-	})
+	bundleArchive := zipBytes(t, bundleBinaryFiles("mcp-binary", "web-binary"))
 
 	var out bytes.Buffer
 	m := statusTestManager(home, successReleaseHTTPClient(t, "v1.2.3", agentsArchive, bundleArchive), &out)
@@ -301,10 +288,7 @@ func TestInstallOrUpdate_AttestationFailureReportsActionableGuidance(t *testing.
 func TestInstallOrUpdate_AttestationFailureUpdateReportsActionableGuidance(t *testing.T) {
 	home := t.TempDir()
 	agentsArchive := zipBytes(t, map[string]string{"agents/example.agent.md": "content"})
-	bundleArchive := zipBytes(t, map[string]string{
-		"local-artifact-mcp": "mcp-binary",
-		"local-artifact-web": "web-binary",
-	})
+	bundleArchive := zipBytes(t, bundleBinaryFiles("mcp-binary", "web-binary"))
 
 	var out bytes.Buffer
 	m := statusTestManager(home, successReleaseHTTPClient(t, "v1.2.3", agentsArchive, bundleArchive), &out)
@@ -414,11 +398,13 @@ func TestReportGlobalPathWarning_ContainsHeadlineAndGuidanceLines(t *testing.T) 
 
 	m.reportGlobalPathWarning(home)
 	status := out.String()
-	for _, want := range []string{
-		"⚠ ~/.local/bin is not in PATH",
-		"Add it to your shell profile:",
-		"export PATH=\"$HOME/.local/bin:$PATH\"",
-	} {
+	wants := []string{fmt.Sprintf("⚠ %s is not in PATH", toHomeTildePath(home, filepath.Join(home, binaryInstallDirDefaultRel)))}
+	if runtime.GOOS == "windows" {
+		wants = append(wants, "Add it to your user PATH environment variable.", "Use System Properties → Environment Variables to add the directory.")
+	} else {
+		wants = append(wants, "Add it to your shell profile:", "export PATH=\"$HOME/.local/bin:$PATH\"")
+	}
+	for _, want := range wants {
 		if !strings.Contains(status, want) {
 			t.Fatalf("expected PATH warning output to contain %q, got %q", want, status)
 		}

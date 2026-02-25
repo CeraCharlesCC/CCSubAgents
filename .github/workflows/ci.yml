@@ -4,11 +4,34 @@ on:
   pull_request:
 
 jobs:
-  local-artifact:
-    runs-on: ubuntu-latest
+  test-build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - module: local-artifact
+            go-version-file: local-artifact/go.mod
+            os: ubuntu-latest
+          - module: local-artifact
+            go-version-file: local-artifact/go.mod
+            os: windows-latest
+          - module: local-artifact
+            go-version-file: local-artifact/go.mod
+            os: macos-14
+          - module: ccsubagents
+            go-version-file: ccsubagents/go.mod
+            os: ubuntu-latest
+          - module: ccsubagents
+            go-version-file: ccsubagents/go.mod
+            os: windows-latest
+          - module: ccsubagents
+            go-version-file: ccsubagents/go.mod
+            os: macos-14
     defaults:
       run:
-        working-directory: local-artifact
+        shell: bash
+        working-directory: ${{ matrix.module }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -16,22 +39,28 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: local-artifact/go.mod
+          go-version-file: ${{ matrix.go-version-file }}
 
       - name: Test module
         run: go test ./...
 
-      - name: Build local-artifact-mcp
-        run: go build -o /tmp/local-artifact-mcp ./cmd/local-artifact-mcp
+      - name: Build module binaries
+        run: |
+          set -euo pipefail
+          ext=""
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            ext=".exe"
+          fi
 
-      - name: Build local-artifact-web
-        run: go build -o /tmp/local-artifact-web ./cmd/local-artifact-web
+          if [[ "${{ matrix.module }}" == "ccsubagents" ]]; then
+            go build -o "$RUNNER_TEMP/ccsubagents${ext}" ./cmd/ccsubagents
+          else
+            go build -o "$RUNNER_TEMP/local-artifact-mcp${ext}" ./cmd/local-artifact-mcp
+            go build -o "$RUNNER_TEMP/local-artifact-web${ext}" ./cmd/local-artifact-web
+          fi
 
-  ccsubagents:
+  linux-arm64-cross-compile:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ccsubagents
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -41,8 +70,9 @@ jobs:
         with:
           go-version-file: ccsubagents/go.mod
 
-      - name: Test module
-        run: go test ./...
-
-      - name: Build ccsubagents
-        run: go build -o /tmp/ccsubagents ./cmd/ccsubagents
+      - name: Cross-compile linux/arm64 binaries
+        run: |
+          set -euo pipefail
+          (cd ccsubagents && env CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./cmd/ccsubagents)
+          (cd local-artifact && env CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./cmd/local-artifact-mcp)
+          (cd local-artifact && env CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./cmd/local-artifact-web)

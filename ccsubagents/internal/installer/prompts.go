@@ -59,7 +59,13 @@ func describeGlobalInstallTargetPath(home string, target installConfigTarget) st
 	mcpPath := filepath.Clean(strings.TrimSpace(target.mcpPath))
 
 	settingsRoot, settingsHasRoot := trimConfigFileSuffix(settingsPath, "data", "Machine", "settings.json")
+	if !settingsHasRoot {
+		settingsRoot, settingsHasRoot = trimConfigFileSuffix(settingsPath, "User", "settings.json")
+	}
 	mcpRoot, mcpHasRoot := trimConfigFileSuffix(mcpPath, "data", "User", "mcp.json")
+	if !mcpHasRoot {
+		mcpRoot, mcpHasRoot = trimConfigFileSuffix(mcpPath, "User", "mcp.json")
+	}
 	if settingsHasRoot && mcpHasRoot && filepath.Clean(settingsRoot) == filepath.Clean(mcpRoot) {
 		return toHomeTildePath(home, settingsRoot)
 	}
@@ -97,12 +103,22 @@ func (r *Runner) promptGlobalInstallTargets(ctx context.Context, home string, pa
 			settingsPath: paths.stable.settingsPath,
 			mcpPath:      paths.stable.mcpPath,
 		})
+		desktopInsidersDisplay := describeGlobalInstallTargetPath(home, installConfigTarget{
+			settingsPath: paths.desktopInsiders.settingsPath,
+			mcpPath:      paths.desktopInsiders.mcpPath,
+		})
+		desktopStableDisplay := describeGlobalInstallTargetPath(home, installConfigTarget{
+			settingsPath: paths.desktopStable.settingsPath,
+			mcpPath:      paths.desktopStable.mcpPath,
+		})
 
 		var prompt bytes.Buffer
 		prompt.WriteString("Where should ccsubagents be installed?\n\n")
 		fmt.Fprintf(&prompt, "[1] VS Code Server — Insiders   (%s)\n", insidersDisplay)
 		fmt.Fprintf(&prompt, "[2] VS Code Server — Stable     (%s)\n", stableDisplay)
-		prompt.WriteString("[3] Custom path(s)\n")
+		fmt.Fprintf(&prompt, "[3] VS Code Desktop — Insiders  (%s)\n", desktopInsidersDisplay)
+		fmt.Fprintf(&prompt, "[4] VS Code Desktop — Stable    (%s)\n", desktopStableDisplay)
+		prompt.WriteString("[5] Custom path(s)\n")
 		prompt.WriteString("\n")
 		prompt.WriteString("Choice (comma-separated, e.g. 1,2): ")
 
@@ -120,7 +136,7 @@ func (r *Runner) promptGlobalInstallTargets(ctx context.Context, home string, pa
 		valid := true
 		for _, choice := range choices {
 			switch choice {
-			case "1", "2", "3":
+			case "1", "2", "3", "4", "5":
 				selected[choice] = struct{}{}
 			default:
 				valid = false
@@ -131,7 +147,7 @@ func (r *Runner) promptGlobalInstallTargets(ctx context.Context, home string, pa
 			if errors.Is(err, io.EOF) {
 				return nil, errors.New("global install target selection canceled")
 			}
-			if _, writeErr := io.WriteString(output, "Invalid selection. Enter comma-separated values using 1, 2, and/or 3.\n\n"); writeErr != nil {
+			if _, writeErr := io.WriteString(output, "Invalid selection. Enter comma-separated values using 1 through 5.\n\n"); writeErr != nil {
 				return nil, fmt.Errorf("write install target prompt: %w", writeErr)
 			}
 			continue
@@ -145,6 +161,12 @@ func (r *Runner) promptGlobalInstallTargets(ctx context.Context, home string, pa
 			targets = append(targets, installConfigTarget{settingsPath: paths.stable.settingsPath, mcpPath: paths.stable.mcpPath})
 		}
 		if _, ok := selected["3"]; ok {
+			targets = append(targets, installConfigTarget{settingsPath: paths.desktopInsiders.settingsPath, mcpPath: paths.desktopInsiders.mcpPath})
+		}
+		if _, ok := selected["4"]; ok {
+			targets = append(targets, installConfigTarget{settingsPath: paths.desktopStable.settingsPath, mcpPath: paths.desktopStable.mcpPath})
+		}
+		if _, ok := selected["5"]; ok {
 			if _, err := io.WriteString(output, "Enter custom target path(s), comma-separated: "); err != nil {
 				return nil, fmt.Errorf("write custom target prompt: %w", err)
 			}

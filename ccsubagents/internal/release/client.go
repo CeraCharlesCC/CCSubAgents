@@ -18,6 +18,7 @@ const (
 	Repo                  = "CeraCharlesCC/CCSubAgents"
 	WorkflowPath          = ".github/workflows/manual-release.yml"
 	LatestURL             = "https://api.github.com/repos/" + Repo + "/releases/latest"
+	ReleasesURL           = "https://api.github.com/repos/" + Repo + "/releases?per_page=100"
 	TagsURLPrefix         = "https://api.github.com/repos/" + Repo + "/releases/tags/"
 	HeaderAccept          = "application/vnd.github+json"
 	HeaderUserAgent       = "ccsubagents-bootstrap"
@@ -30,6 +31,14 @@ type Response struct {
 	ID      int64   `json:"id"`
 	TagName string  `json:"tag_name"`
 	Assets  []Asset `json:"assets"`
+}
+
+type listResponse struct {
+	ID         int64   `json:"id"`
+	TagName    string  `json:"tag_name"`
+	Draft      bool    `json:"draft"`
+	Prerelease bool    `json:"prerelease"`
+	Assets     []Asset `json:"assets"`
 }
 
 type Asset struct {
@@ -153,9 +162,9 @@ func (c *Client) getenv(key string) string {
 }
 
 func (c *Client) FetchLatest(ctx context.Context) (Response, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, LatestURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ReleasesURL, nil)
 	if err != nil {
-		return Response{}, fmt.Errorf("create latest release request: %w", err)
+		return Response{}, fmt.Errorf("create releases request: %w", err)
 	}
 	req.Header.Set("Accept", HeaderAccept)
 	req.Header.Set("User-Agent", HeaderUserAgent)
@@ -165,23 +174,42 @@ func (c *Client) FetchLatest(ctx context.Context) (Response, error) {
 
 	resp, err := c.httpClient().Do(req)
 	if err != nil {
-		return Response{}, fmt.Errorf("request latest release: %w", err)
+		return Response{}, fmt.Errorf("request releases: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return Response{}, fmt.Errorf("latest release request failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return Response{}, fmt.Errorf("releases request failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
-	var decoded Response
+	var decoded []listResponse
 	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
-		return Response{}, fmt.Errorf("decode latest release response: %w", err)
+		return Response{}, fmt.Errorf("decode releases response: %w", err)
 	}
-	if strings.TrimSpace(decoded.TagName) == "" {
-		return Response{}, errors.New("latest release response is missing tag_name")
+
+	for _, rel := range decoded {
+		if rel.Draft || rel.Prerelease {
+			continue
+		}
+		tag := strings.TrimSpace(rel.TagName)
+		if tag == "" {
+			continue
+		}
+		if strings.Contains(tag, "/") {
+			continue
+		}
+		if tag[0] != 'v' && tag[0] != 'V' {
+			continue
+		}
+		return Response{
+			ID:      rel.ID,
+			TagName: rel.TagName,
+			Assets:  rel.Assets,
+		}, nil
 	}
-	return decoded, nil
+
+	return Response{}, errors.New("no matching stable release found")
 }
 
 func (c *Client) FetchByTag(ctx context.Context, tag string) (Response, error) {

@@ -101,10 +101,11 @@ Behavior summary:
 
 - Installs from the latest release in `https://github.com/CeraCharlesCC/CCSubAgents`.
 - Verifies downloaded release assets with GitHub attestations before making install/update changes.
-- Installs from `local-artifact.zip` (which contains `local-artifact-mcp` and `local-artifact-web`) and places both binaries into `~/.local/bin` by default.
+- Installs from a runtime-specific bundle asset (`local-artifact_<goos>_<goarch>.zip`) and places `local-artifact-mcp`/`local-artifact-web` (or `.exe` variants on Windows) into `~/.local/bin` by default.
 - Extracts `agents.zip` into `~/.local/share/ccsubagents/agents`.
-- Adds `~/.local/share/ccsubagents/agents` to `chat.agentFilesLocations` in `~/.vscode-server-insiders/data/Machine/settings.json` using the object-map format (`"path": true`) without overwriting existing entries.
-- Adds/updates only `servers.artifact-mcp` in `~/.vscode-server-insiders/data/User/mcp.json` by default, and preserves other keys (including `inputs`).
+- For `install --scope=global`, prompts for VS Code Desktop (Stable/Insiders), VS Code Server (Stable/Insiders), or custom target path(s).
+- Adds `~/.local/share/ccsubagents/agents` to `chat.agentFilesLocations` in the selected `settings.json` target(s) using the object-map format (`"path": true`) without overwriting existing entries.
+- Adds/updates only `servers.artifact-mcp` in the selected `mcp.json` target(s), and preserves other keys (including `inputs`).
 - Tracks managed files and config insertions in `~/.local/share/ccsubagents/tracked.json` for safe uninstall.
 
 Operational notes:
@@ -112,8 +113,8 @@ Operational notes:
 - `install` and `update` require `gh` CLI in `PATH` for attestation verification (`gh attestation verify`).
 - Override install/config paths if needed:
   - `LOCAL_ARTIFACT_BIN_DIR` (default `~/.local/bin`)
-  - `LOCAL_ARTIFACT_SETTINGS_PATH` (default `~/.vscode-server-insiders/data/Machine/settings.json`)
-  - `LOCAL_ARTIFACT_MCP_PATH` (default `~/.vscode-server-insiders/data/User/mcp.json`)
+  - `LOCAL_ARTIFACT_SETTINGS_PATH` (overrides resolved global `settings.json` target path)
+  - `LOCAL_ARTIFACT_MCP_PATH` (overrides resolved global `mcp.json` target path)
 - If you point `LOCAL_ARTIFACT_BIN_DIR` to a system path (for example `/usr/local/bin`), elevated privileges may be required.
 - `update` forcibly overwrites managed install artifacts to the latest release.
 - `uninstall` removes tracked artifacts and reverts only tracked JSON insertions.

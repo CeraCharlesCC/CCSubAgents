@@ -17,33 +17,17 @@ func writeSettingsFile(t *testing.T, path, content string) {
 	}
 }
 
-func withWorkingDirectory(t *testing.T, dir string) {
-	t.Helper()
-	previous, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	if err := os.Chdir(dir); err != nil {
-		t.Fatalf("chdir to %s: %v", dir, err)
-	}
-	t.Cleanup(func() {
-		_ = os.Chdir(previous)
-	})
-}
-
 func TestResolveAutostartWebUI_LocalOverridesGlobal(t *testing.T) {
 	home := t.TempDir()
 	cwd := t.TempDir()
-	t.Setenv("HOME", home)
-	withWorkingDirectory(t, cwd)
 
 	globalPath, localPath := resolveCCSubagentsSettingsPaths(home, cwd)
 	writeSettingsFile(t, globalPath, `{"autostart-webui": true}`)
 	writeSettingsFile(t, localPath, `{"autostart-webui": false}`)
 
-	enabled, err := ResolveAutostartWebUI()
+	enabled, err := resolveMergedAutostartWebUI(home, cwd)
 	if err != nil {
-		t.Fatalf("ResolveAutostartWebUI returned error: %v", err)
+		t.Fatalf("resolveMergedAutostartWebUI returned error: %v", err)
 	}
 	if enabled {
 		t.Fatalf("expected local override to disable autostart-webui")
@@ -53,15 +37,13 @@ func TestResolveAutostartWebUI_LocalOverridesGlobal(t *testing.T) {
 func TestResolveAutostartWebUI_LocalEnablesWhenGlobalMissing(t *testing.T) {
 	home := t.TempDir()
 	cwd := t.TempDir()
-	t.Setenv("HOME", home)
-	withWorkingDirectory(t, cwd)
 
 	_, localPath := resolveCCSubagentsSettingsPaths(home, cwd)
 	writeSettingsFile(t, localPath, `{"autostart-webui": true}`)
 
-	enabled, err := ResolveAutostartWebUI()
+	enabled, err := resolveMergedAutostartWebUI(home, cwd)
 	if err != nil {
-		t.Fatalf("ResolveAutostartWebUI returned error: %v", err)
+		t.Fatalf("resolveMergedAutostartWebUI returned error: %v", err)
 	}
 	if !enabled {
 		t.Fatalf("expected local settings to enable autostart-webui")
@@ -71,10 +53,8 @@ func TestResolveAutostartWebUI_LocalEnablesWhenGlobalMissing(t *testing.T) {
 func TestResolveAutostartWebUI_MissingFilesDefaultFalse(t *testing.T) {
 	home := t.TempDir()
 	cwd := t.TempDir()
-	t.Setenv("HOME", home)
-	withWorkingDirectory(t, cwd)
 
-	enabled, err := ResolveAutostartWebUI()
+	enabled, err := resolveMergedAutostartWebUI(home, cwd)
 	if err != nil {
 		t.Fatalf("expected missing files to be treated as empty settings, got %v", err)
 	}
@@ -86,13 +66,11 @@ func TestResolveAutostartWebUI_MissingFilesDefaultFalse(t *testing.T) {
 func TestResolveAutostartWebUI_TypeMismatchFails(t *testing.T) {
 	home := t.TempDir()
 	cwd := t.TempDir()
-	t.Setenv("HOME", home)
-	withWorkingDirectory(t, cwd)
 
 	globalPath, _ := resolveCCSubagentsSettingsPaths(home, cwd)
 	writeSettingsFile(t, globalPath, `{"autostart-webui": "yes"}`)
 
-	_, err := ResolveAutostartWebUI()
+	_, err := resolveMergedAutostartWebUI(home, cwd)
 	if err == nil {
 		t.Fatalf("expected type mismatch error")
 	}

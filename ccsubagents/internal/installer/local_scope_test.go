@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -36,10 +37,7 @@ func TestInstallOrUpdateLocal_RollbackRestoresIgnoreFile_OnPostIgnoreFailure(t *
 	}
 
 	agentsArchive := zipBytes(t, map[string]string{"agents/example.agent.md": "content"})
-	bundleArchive := zipBytes(t, map[string]string{
-		"local-artifact-mcp": "mcp-binary",
-		"local-artifact-web": "web-binary",
-	})
+	bundleArchive := zipBytes(t, bundleBinaryFiles("mcp-binary", "web-binary"))
 
 	m := &Runner{
 		httpClient: successReleaseHTTPClient(t, "v1.2.3", agentsArchive, bundleArchive),
@@ -90,10 +88,7 @@ func TestInstallOrUpdateLocal_AttestationFailureUpdateReportsActionableGuidance(
 	}
 
 	agentsArchive := zipBytes(t, map[string]string{"agents/example.agent.md": "content"})
-	bundleArchive := zipBytes(t, map[string]string{
-		"local-artifact-mcp": "mcp-binary",
-		"local-artifact-web": "web-binary",
-	})
+	bundleArchive := zipBytes(t, bundleBinaryFiles("mcp-binary", "web-binary"))
 
 	var out bytes.Buffer
 	m := &Runner{
@@ -166,7 +161,7 @@ func TestInstallLocal_TeamRerunPreservesFullManagedState(t *testing.T) {
 	if err := writeJSONMap(mcpPath, map[string]any{
 		"servers": map[string]any{
 			config.MCPServerKey: map[string]any{
-				"command": config.LocalMCPCommand,
+				"command": config.LocalMCPCommand(runtime.GOOS),
 			},
 		},
 	}); err != nil {
@@ -177,6 +172,7 @@ func TestInstallLocal_TeamRerunPreservesFullManagedState(t *testing.T) {
 	if err := os.MkdirAll(stateDir, stateDirPerm); err != nil {
 		t.Fatalf("create state dir: %v", err)
 	}
+	mcpBinaryName, webBinaryName := localArtifactBinaryNames(runtime.GOOS)
 	m := &Runner{
 		now:     func() time.Time { return time.Unix(0, 0).UTC() },
 		homeDir: func() (string, error) { return home, nil },
@@ -194,8 +190,8 @@ func TestInstallLocal_TeamRerunPreservesFullManagedState(t *testing.T) {
 				InstalledAt: "2026-01-01T00:00:00Z",
 				Managed: state.ManagedState{
 					Files: []string{
-						filepath.Join(installRoot, config.LocalManagedDirRelativePath, assetArtifactMCP),
-						filepath.Join(installRoot, config.LocalManagedDirRelativePath, assetArtifactWeb),
+						filepath.Join(installRoot, config.LocalManagedDirRelativePath, mcpBinaryName),
+						filepath.Join(installRoot, config.LocalManagedDirRelativePath, webBinaryName),
 						filepath.Join(installRoot, config.LocalAgentsRelativePath, "existing.agent.md"),
 					},
 					Dirs: []string{
@@ -220,10 +216,7 @@ func TestInstallLocal_TeamRerunPreservesFullManagedState(t *testing.T) {
 	}
 
 	agentsArchive := zipBytes(t, map[string]string{"agents/new.agent.md": "new"})
-	bundleArchive := zipBytes(t, map[string]string{
-		assetArtifactMCP: "mcp-binary",
-		assetArtifactWeb: "web-binary",
-	})
+	bundleArchive := zipBytes(t, bundleBinaryFiles("mcp-binary", "web-binary"))
 
 	m = &Runner{
 		httpClient:            successReleaseHTTPClient(t, "v1.2.3", agentsArchive, bundleArchive),
@@ -432,10 +425,14 @@ func TestReportGlobalPathWarning_WarnsWhenLocalBinMissing(t *testing.T) {
 
 	m.reportGlobalPathWarning(home)
 	got := out.String()
-	if !strings.Contains(got, "⚠ ~/.local/bin is not in PATH") {
+	if !strings.Contains(got, "⚠ "+toHomeTildePath(home, filepath.Join(home, binaryInstallDirDefaultRel))+" is not in PATH") {
 		t.Fatalf("expected PATH warning, got %q", got)
 	}
-	if !strings.Contains(got, "export PATH=\"$HOME/.local/bin:$PATH\"") {
+	if runtime.GOOS == "windows" {
+		if !strings.Contains(got, "Add it to your user PATH environment variable.") {
+			t.Fatalf("expected windows PATH hint, got %q", got)
+		}
+	} else if !strings.Contains(got, "export PATH=\"$HOME/.local/bin:$PATH\"") {
 		t.Fatalf("expected PATH export hint, got %q", got)
 	}
 }

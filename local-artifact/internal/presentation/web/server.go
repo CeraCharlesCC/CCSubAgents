@@ -903,6 +903,17 @@ func (s *Server) serviceForSubspace(selector string) *domain.Service {
 }
 
 func (s *Server) discoverSubspaces() ([]string, error) {
+	info, err := os.Stat(s.baseStoreRoot)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []string{globalSubspaceSelector}, nil
+		}
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("store root is not a directory: %s", s.baseStoreRoot)
+	}
+
 	hashes := make([]string, 0)
 	entries, err := os.ReadDir(s.baseStoreRoot)
 	if err != nil {

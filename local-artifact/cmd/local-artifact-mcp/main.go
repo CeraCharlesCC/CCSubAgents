@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 
 	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/config"
 	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/presentation/mcp"
@@ -50,7 +51,7 @@ func startLocalArtifactWeb(stderr io.Writer) error {
 		return fmt.Errorf("resolve executable path: %w", err)
 	}
 
-	webPath := filepath.Join(filepath.Dir(exePath), "local-artifact-web")
+	webPath := localArtifactWebPath(exePath, runtime.GOOS)
 	cmd := exec.Command(webPath)
 	cmd.Stdout = stderr
 	cmd.Stderr = stderr
@@ -66,4 +67,12 @@ func startLocalArtifactWeb(stderr io.Writer) error {
 	}()
 
 	return nil
+}
+
+func localArtifactWebPath(exePath, goos string) string {
+	name := "local-artifact-web"
+	if goos == "windows" {
+		name += ".exe"
+	}
+	return filepath.Join(filepath.Dir(exePath), name)
 }

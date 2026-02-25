@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -46,16 +47,15 @@ func ExtractBundleBinaries(zipPath, destDir string, names []string, perm os.File
 			continue
 		}
 
-		name := strings.TrimSpace(file.Name)
-		if name == "" {
+		clean, err := cleanZipPath(file.Name)
+		if err != nil {
+			return nil, err
+		}
+		if clean == "" {
 			continue
 		}
-		clean := filepath.Clean(name)
-		if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || filepath.IsAbs(clean) {
-			return nil, fmt.Errorf("unsafe archive path: %s", file.Name)
-		}
 
-		baseName := filepath.Base(clean)
+		baseName := path.Base(clean)
 		if _, ok := expected[baseName]; !ok {
 			continue
 		}
@@ -122,13 +122,12 @@ func ExtractAgentsArchiveWithHook(zipPath, destDir string, beforeWrite func(stri
 	}()
 
 	for _, file := range r.File {
-		name := strings.TrimSpace(file.Name)
-		if name == "" {
-			continue
+		clean, err := cleanZipPath(file.Name)
+		if err != nil {
+			return nil, nil, err
 		}
-		clean := filepath.Clean(name)
-		if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || filepath.IsAbs(clean) {
-			return nil, nil, fmt.Errorf("unsafe archive path: %s", file.Name)
+		if clean == "" {
+			continue
 		}
 
 		if stripAgentsPrefix {
@@ -141,7 +140,7 @@ func ExtractAgentsArchiveWithHook(zipPath, destDir string, beforeWrite func(stri
 			}
 		}
 
-		destPath := filepath.Join(destDir, clean)
+		destPath := filepath.Join(destDir, filepath.FromSlash(clean))
 		destPath = filepath.Clean(destPath)
 		if !IsPathWithinDir(destPath, destDir) {
 			return nil, nil, fmt.Errorf("archive path escapes destination: %s", file.Name)
@@ -195,16 +194,12 @@ func ExtractAgentsArchiveWithHook(zipPath, destDir string, beforeWrite func(stri
 func shouldStripAgentsPrefix(files []*zip.File) (bool, error) {
 	seen := false
 	for _, file := range files {
-		name := strings.TrimSpace(file.Name)
-		if name == "" {
-			continue
+		clean, err := cleanZipPath(file.Name)
+		if err != nil {
+			return false, err
 		}
-		clean := filepath.Clean(name)
-		if clean == "." {
+		if clean == "" {
 			continue
-		}
-		if clean == ".." || strings.HasPrefix(clean, "../") || filepath.IsAbs(clean) {
-			return false, fmt.Errorf("unsafe archive path: %s", file.Name)
 		}
 		seen = true
 		if clean == "agents" || strings.HasPrefix(clean, "agents/") {
@@ -213,6 +208,30 @@ func shouldStripAgentsPrefix(files []*zip.File) (bool, error) {
 		return false, nil
 	}
 	return seen, nil
+}
+
+func cleanZipPath(raw string) (string, error) {
+	name := strings.TrimSpace(raw)
+	if name == "" {
+		return "", nil
+	}
+	normalized := strings.ReplaceAll(name, "\\", "/")
+	clean := path.Clean(normalized)
+	if clean == "." {
+		return "", nil
+	}
+	if clean == ".." || strings.HasPrefix(clean, "../") || path.IsAbs(clean) || hasWindowsDrivePrefix(clean) {
+		return "", fmt.Errorf("unsafe archive path: %s", raw)
+	}
+	return clean, nil
+}
+
+func hasWindowsDrivePrefix(p string) bool {
+	if len(p) < 2 || p[1] != ':' {
+		return false
+	}
+	c := p[0]
+	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
 }
 
 func RemoveStaleAgentFilesWithHook(oldFiles, newFiles []string, agentsDir string, beforeRemove func(string) error) error {

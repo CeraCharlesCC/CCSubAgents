@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -303,22 +304,24 @@ func (r *Runner) verifyAttestationsOrReport(ctx context.Context, downloaded map[
 	return nil
 }
 
-func (r *Runner) extractDownloadedBundle(tmpDir string, downloaded map[string]string) (map[string]string, error) {
-	bundleZipPath := downloaded[assetLocalArtifactZip]
+func (r *Runner) extractDownloadedBundle(tmpDir string, downloaded map[string]string, goos, goarch string) (map[string]string, error) {
+	bundleAssetName := localArtifactBundleAssetName(goos, goarch)
+	bundleZipPath := downloaded[bundleAssetName]
 	if bundleZipPath == "" {
-		return nil, fmt.Errorf("missing downloaded release asset %q", assetLocalArtifactZip)
+		return nil, fmt.Errorf("missing downloaded release asset %q", bundleAssetName)
 	}
 
 	bundleDir := filepath.Join(tmpDir, "local-artifact")
 	if err := os.MkdirAll(bundleDir, stateDirPerm); err != nil {
 		return nil, fmt.Errorf("create local-artifact bundle extraction dir: %w", err)
 	}
+	mcpBinaryName, webBinaryName := localArtifactBinaryNames(goos)
 
-	bundleBinaries, err := files.ExtractBundleBinaries(bundleZipPath, bundleDir, []string{assetArtifactMCP, assetArtifactWeb}, binaryFilePerm)
+	bundleBinaries, err := files.ExtractBundleBinaries(bundleZipPath, bundleDir, []string{mcpBinaryName, webBinaryName}, binaryFilePerm)
 	if err != nil {
-		return nil, fmt.Errorf("extract %s: %w", assetLocalArtifactZip, err)
+		return nil, fmt.Errorf("extract %s: %w", bundleAssetName, err)
 	}
-	r.reportDetail("extracted bundle %s", assetLocalArtifactZip)
+	r.reportDetail("extracted bundle %s", bundleAssetName)
 	return bundleBinaries, nil
 }
 
@@ -326,10 +329,13 @@ type fileSnapshotter interface {
 	SnapshotFile(string) error
 }
 
-func (r *Runner) installExtractedBinaries(ctx context.Context, bundleBinaries map[string]string, destinationDir string, mutations fileSnapshotter, permissionHintDir string) ([]string, error) {
+func (r *Runner) installExtractedBinaries(ctx context.Context, bundleBinaries map[string]string, destinationDir string, mutations fileSnapshotter, permissionHintDir, goos string) ([]string, error) {
+	mcpBinaryName, webBinaryName := localArtifactBinaryNames(goos)
+	binaryNames := []string{mcpBinaryName, webBinaryName}
+
 	binaryPaths := []string{
-		filepath.Join(destinationDir, assetArtifactMCP),
-		filepath.Join(destinationDir, assetArtifactWeb),
+		filepath.Join(destinationDir, mcpBinaryName),
+		filepath.Join(destinationDir, webBinaryName),
 	}
 
 	installer := r.installBinary
@@ -337,7 +343,7 @@ func (r *Runner) installExtractedBinaries(ctx context.Context, bundleBinaries ma
 		installer = func(src, dst string) error { return files.InstallBinary(src, dst, binaryFilePerm) }
 	}
 
-	for _, binaryName := range []string{assetArtifactMCP, assetArtifactWeb} {
+	for _, binaryName := range binaryNames {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -428,7 +434,9 @@ func (r *Runner) installOrUpdate(ctx context.Context, isUpdate bool) (retErr err
 	}
 	r.reportDetail("tracked state path: %s", filepath.Join(stateDir, state.TrackedFileName))
 
-	tmpDir, downloaded, err := r.downloadRequiredAssets(ctx, stateDir, rel, installAssetNames, "download-*")
+	goos := runtime.GOOS
+	goarch := runtime.GOARCH
+	tmpDir, downloaded, err := r.downloadRequiredAssets(ctx, stateDir, rel, installAssetNamesForRuntime(), "download-*")
 	if err != nil {
 		return err
 	}
@@ -441,7 +449,7 @@ func (r *Runner) installOrUpdate(ctx context.Context, isUpdate bool) (retErr err
 		return err
 	}
 
-	bundleBinaries, err := r.extractDownloadedBundle(tmpDir, downloaded)
+	bundleBinaries, err := r.extractDownloadedBundle(tmpDir, downloaded, goos, goarch)
 	if err != nil {
 		return err
 	}
@@ -472,7 +480,7 @@ func (r *Runner) installOrUpdate(ctx context.Context, isUpdate bool) (retErr err
 		return fmt.Errorf("create binary install directory %s: %w", paths.binaryDir, err)
 	}
 
-	binaryPaths, err := r.installExtractedBinaries(ctx, bundleBinaries, paths.binaryDir, mutations, paths.binaryDir)
+	binaryPaths, err := r.installExtractedBinaries(ctx, bundleBinaries, paths.binaryDir, mutations, paths.binaryDir, goos)
 	if err != nil {
 		return err
 	}
@@ -506,7 +514,8 @@ func (r *Runner) installOrUpdate(ctx context.Context, isUpdate bool) (retErr err
 	}
 
 	settingsAgentPath := toHomeTildePath(home, agentsDir)
-	mcpCommandPath := toHomeTildePath(home, filepath.Join(paths.binaryDir, assetArtifactMCP))
+	mcpBinaryName, _ := localArtifactBinaryNames(goos)
+	mcpCommandPath := toHomeTildePath(home, filepath.Join(paths.binaryDir, mcpBinaryName))
 
 	if err := ctx.Err(); err != nil {
 		return err
@@ -623,10 +632,8 @@ func (r *Runner) uninstall(ctx context.Context) error {
 		allowedConfigParentDirs = append(allowedConfigParentDirs, filepath.Dir(edit.File))
 	}
 	allowedConfigParentDirs = files.UniqueSorted(allowedConfigParentDirs)
-	allowedBinaries := []string{
-		filepath.Join(paths.binaryDir, assetArtifactMCP),
-		filepath.Join(paths.binaryDir, assetArtifactWeb),
-	}
+	mcpBinaryName, webBinaryName := localArtifactBinaryNames(runtime.GOOS)
+	allowedBinaries := []string{filepath.Join(paths.binaryDir, mcpBinaryName), filepath.Join(paths.binaryDir, webBinaryName)}
 
 	for _, path := range tracked.Managed.Files {
 		if err := ctx.Err(); err != nil {

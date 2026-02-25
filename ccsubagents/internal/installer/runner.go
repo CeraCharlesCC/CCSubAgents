@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -20,10 +21,9 @@ const (
 	stateFilePerm  = files.DefaultStateFilePerm
 	binaryFilePerm = files.DefaultBinaryFilePerm
 
-	assetAgentsZip        = "agents.zip"
-	assetLocalArtifactZip = "local-artifact.zip"
-	assetArtifactMCP      = "local-artifact-mcp"
-	assetArtifactWeb      = "local-artifact-web"
+	assetAgentsZip   = "agents.zip"
+	assetArtifactMCP = "local-artifact-mcp"
+	assetArtifactWeb = "local-artifact-web"
 
 	binaryInstallDirDefaultRel    = ".local/bin"
 	binaryInstallDirEnv           = "LOCAL_ARTIFACT_BIN_DIR"
@@ -34,8 +34,6 @@ const (
 	mcpConfigInsidersRelativePath = ".vscode-server-insiders/data/User/mcp.json"
 	mcpConfigPathEnv              = "LOCAL_ARTIFACT_MCP_PATH"
 )
-
-var installAssetNames = []string{assetAgentsZip, assetLocalArtifactZip}
 
 type Command string
 
@@ -81,9 +79,11 @@ type Runner struct {
 }
 
 type installPaths struct {
-	binaryDir string
-	stable    configPaths
-	insiders  configPaths
+	binaryDir       string
+	desktopStable   configPaths
+	desktopInsiders configPaths
+	stable          configPaths
+	insiders        configPaths
 }
 
 type configPaths struct {
@@ -151,8 +151,43 @@ func runCommand(ctx context.Context, name string, args ...string) ([]byte, error
 }
 
 func resolveInstallPaths(home string) installPaths {
+	desktopStable := configPaths{}
+	desktopInsiders := configPaths{}
+	switch runtime.GOOS {
+	case "windows":
+		appDataDir := filepath.Join(home, "AppData", "Roaming")
+		desktopStable = configPaths{
+			settingsPath: filepath.Join(appDataDir, "Code", "User", "settings.json"),
+			mcpPath:      filepath.Join(appDataDir, "Code", "User", "mcp.json"),
+		}
+		desktopInsiders = configPaths{
+			settingsPath: filepath.Join(appDataDir, "Code - Insiders", "User", "settings.json"),
+			mcpPath:      filepath.Join(appDataDir, "Code - Insiders", "User", "mcp.json"),
+		}
+	case "darwin":
+		desktopStable = configPaths{
+			settingsPath: filepath.Join(home, "Library", "Application Support", "Code", "User", "settings.json"),
+			mcpPath:      filepath.Join(home, "Library", "Application Support", "Code", "User", "mcp.json"),
+		}
+		desktopInsiders = configPaths{
+			settingsPath: filepath.Join(home, "Library", "Application Support", "Code - Insiders", "User", "settings.json"),
+			mcpPath:      filepath.Join(home, "Library", "Application Support", "Code - Insiders", "User", "mcp.json"),
+		}
+	default:
+		desktopStable = configPaths{
+			settingsPath: filepath.Join(home, ".config", "Code", "User", "settings.json"),
+			mcpPath:      filepath.Join(home, ".config", "Code", "User", "mcp.json"),
+		}
+		desktopInsiders = configPaths{
+			settingsPath: filepath.Join(home, ".config", "Code - Insiders", "User", "settings.json"),
+			mcpPath:      filepath.Join(home, ".config", "Code - Insiders", "User", "mcp.json"),
+		}
+	}
+
 	paths := installPaths{
-		binaryDir: filepath.Join(home, binaryInstallDirDefaultRel),
+		binaryDir:       filepath.Join(home, binaryInstallDirDefaultRel),
+		desktopStable:   desktopStable,
+		desktopInsiders: desktopInsiders,
 		stable: configPaths{
 			settingsPath: filepath.Join(home, settingsStableRelativePath),
 			mcpPath:      filepath.Join(home, mcpConfigStableRelativePath),
@@ -167,15 +202,39 @@ func resolveInstallPaths(home string) installPaths {
 		paths.binaryDir = override
 	}
 	if override := resolveConfiguredPath(home, os.Getenv(settingsPathEnv)); override != "" {
+		paths.desktopStable.settingsPath = override
+		paths.desktopInsiders.settingsPath = override
 		paths.stable.settingsPath = override
 		paths.insiders.settingsPath = override
 	}
 	if override := resolveConfiguredPath(home, os.Getenv(mcpConfigPathEnv)); override != "" {
+		paths.desktopStable.mcpPath = override
+		paths.desktopInsiders.mcpPath = override
 		paths.stable.mcpPath = override
 		paths.insiders.mcpPath = override
 	}
 
 	return paths
+}
+
+func exeSuffix(goos string) string {
+	if strings.EqualFold(goos, "windows") {
+		return ".exe"
+	}
+	return ""
+}
+
+func localArtifactBinaryNames(goos string) (mcp, web string) {
+	suffix := exeSuffix(goos)
+	return assetArtifactMCP + suffix, assetArtifactWeb + suffix
+}
+
+func localArtifactBundleAssetName(goos, goarch string) string {
+	return fmt.Sprintf("local-artifact_%s_%s.zip", goos, goarch)
+}
+
+func installAssetNamesForRuntime() []string {
+	return []string{assetAgentsZip, localArtifactBundleAssetName(runtime.GOOS, runtime.GOARCH)}
 }
 
 func resolveConfiguredPath(home, value string) string {
@@ -186,10 +245,20 @@ func resolveConfiguredPath(home, value string) string {
 	if trimmed == "~" {
 		return filepath.Clean(home)
 	}
-	if strings.HasPrefix(trimmed, "~"+string(os.PathSeparator)) {
-		return filepath.Join(home, trimmed[2:])
+	if strings.HasPrefix(trimmed, "~/") || strings.HasPrefix(trimmed, "~\\") {
+		remainder := strings.TrimLeft(trimmed[2:], `/\`)
+		if remainder == "" {
+			return filepath.Clean(home)
+		}
+		return filepath.Join(home, remainder)
 	}
 	if filepath.IsAbs(trimmed) {
+		return filepath.Clean(trimmed)
+	}
+	// On Windows, a leading slash or backslash is a rooted path on the current
+	// drive (e.g. "\tmp\file.json"), which filepath.IsAbs reports as non-absolute.
+	// Treat it as a direct override rather than joining it under home.
+	if os.PathSeparator == '\\' && (strings.HasPrefix(trimmed, `\`) || strings.HasPrefix(trimmed, "/")) {
 		return filepath.Clean(trimmed)
 	}
 	return filepath.Join(home, trimmed)
