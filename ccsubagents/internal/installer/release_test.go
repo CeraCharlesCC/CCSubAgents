@@ -83,6 +83,29 @@ func TestFetchReleaseByTag_EscapesTagPathSegment(t *testing.T) {
 	}
 }
 
+func TestFetchReleaseByExactTag_UsesLiteralTag(t *testing.T) {
+	var requestedURL string
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requestedURL = req.URL.String()
+		body := `{"id":202,"tag_name":"local-artifact/v1.2.3","assets":[]}`
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+	})}
+
+	m := &Runner{httpClient: client}
+	rel, err := m.releaseClient().FetchByExactTag(context.Background(), "local-artifact/v1.2.3")
+	if err != nil {
+		t.Fatalf("FetchByExactTag returned error: %v", err)
+	}
+
+	wantURL := release.TagsURLPrefix + "local-artifact%2Fv1.2.3"
+	if requestedURL != wantURL {
+		t.Fatalf("expected request to %q, got %q", wantURL, requestedURL)
+	}
+	if rel.TagName != "local-artifact/v1.2.3" {
+		t.Fatalf("expected local-artifact/v1.2.3, got %q", rel.TagName)
+	}
+}
+
 func TestFetchLatest_FiltersReleasesAndSelectsFirstValid(t *testing.T) {
 	var requestedURL string
 	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {

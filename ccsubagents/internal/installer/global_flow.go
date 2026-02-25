@@ -15,6 +15,7 @@ import (
 	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/files"
 	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/release"
 	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/state"
+	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/versiontag"
 )
 
 type pendingPinWrite struct {
@@ -254,7 +255,19 @@ func uniqueInstallTargets(targets []installConfigTarget) []installConfigTarget {
 }
 
 func (r *Runner) downloadRequiredAssets(ctx context.Context, stateDir string, rel release.Response, requiredAssetNames []string, tempPrefix string) (string, map[string]string, error) {
-	assets, err := release.MapRequiredAssets(rel.Assets, requiredAssetNames)
+	resolvedAssets := rel.Assets
+	missing := missingRequiredAssetNames(resolvedAssets, requiredAssetNames)
+	if len(missing) > 0 {
+		companion, err := r.fetchCompanionReleaseForMissingAssets(ctx, rel, missing)
+		if err != nil {
+			return "", nil, err
+		}
+		if len(companion.Assets) > 0 {
+			resolvedAssets = mergeReleaseAssets(resolvedAssets, companion.Assets)
+		}
+	}
+
+	assets, err := release.MapRequiredAssets(resolvedAssets, requiredAssetNames)
 	if err != nil {
 		return "", nil, err
 	}
@@ -281,6 +294,71 @@ func (r *Runner) downloadRequiredAssets(ctx context.Context, stateDir string, re
 
 	r.reportStepOK("Downloaded release assets", rel.TagName)
 	return tmpDir, downloaded, nil
+}
+
+func (r *Runner) fetchCompanionReleaseForMissingAssets(ctx context.Context, rel release.Response, missing []string) (release.Response, error) {
+	needsLocalArtifactRelease := false
+	for _, name := range missing {
+		if isLocalArtifactBundleAsset(name) {
+			needsLocalArtifactRelease = true
+			break
+		}
+	}
+	if !needsLocalArtifactRelease {
+		return release.Response{}, nil
+	}
+
+	mainTag := versiontag.Normalize(rel.TagName)
+	if mainTag == "" {
+		return release.Response{}, nil
+	}
+
+	companionTag := localArtifactTagPrefix + mainTag
+	companion, err := r.releaseClient().FetchByExactTag(ctx, companionTag)
+	if err == nil {
+		return companion, nil
+	}
+	if errors.Is(err, release.ErrReleaseNotFound) {
+		return release.Response{}, nil
+	}
+	return release.Response{}, fmt.Errorf("fetch release %s: %w", companionTag, err)
+}
+
+func missingRequiredAssetNames(assets []release.Asset, required []string) []string {
+	byName := make(map[string]struct{}, len(assets))
+	for _, asset := range assets {
+		byName[asset.Name] = struct{}{}
+	}
+
+	missing := make([]string, 0, len(required))
+	for _, name := range required {
+		if _, ok := byName[name]; ok {
+			continue
+		}
+		missing = append(missing, name)
+	}
+	return missing
+}
+
+func mergeReleaseAssets(primary, secondary []release.Asset) []release.Asset {
+	merged := make([]release.Asset, 0, len(primary)+len(secondary))
+	seen := make(map[string]struct{}, len(primary)+len(secondary))
+	appendUnique := func(src []release.Asset) {
+		for _, asset := range src {
+			if _, ok := seen[asset.Name]; ok {
+				continue
+			}
+			seen[asset.Name] = struct{}{}
+			merged = append(merged, asset)
+		}
+	}
+	appendUnique(primary)
+	appendUnique(secondary)
+	return merged
+}
+
+func isLocalArtifactBundleAsset(name string) bool {
+	return strings.HasPrefix(name, "local-artifact_") && strings.HasSuffix(name, ".zip")
 }
 
 func (r *Runner) verifyAttestationsOrReport(ctx context.Context, downloaded map[string]string, isUpdate bool, scope Scope) error {
