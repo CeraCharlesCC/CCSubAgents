@@ -10,7 +10,6 @@ import (
 
 	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/core/artifacts"
 	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/core/workspaces"
-	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/infrastructure/migrate"
 	artsqlite "github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/infrastructure/sqlite"
 )
 
@@ -117,9 +116,6 @@ func (e *Engine) serviceForWorkspaceID(ctx context.Context, workspaceID string) 
 	workspaceRoot := e.baseStoreRoot
 	if workspaceID != workspaces.GlobalWorkspaceID {
 		workspaceRoot = filepath.Join(e.baseStoreRoot, workspaceID)
-	}
-	if _, err := migrate.MigrateWorkspaceIfNeeded(ctx, workspaceRoot); err != nil {
-		return nil, err
 	}
 	repo, err := artsqlite.NewArtifactRepository(workspaceRoot)
 	if err != nil {

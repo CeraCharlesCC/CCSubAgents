@@ -24,7 +24,6 @@ import (
 
 	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/core/artifacts"
 	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/core/workspaces"
-	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/infrastructure/migrate"
 	artsqlite "github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/infrastructure/sqlite"
 )
 
@@ -940,9 +939,6 @@ func (s *Server) serviceForSubspace(selector string) (*artifacts.Service, error)
 	storeRoot := s.baseStoreRoot
 	if selector != globalSubspaceSelector {
 		storeRoot = filepath.Join(s.baseStoreRoot, selector)
-	}
-	if _, err := migrate.MigrateWorkspaceIfNeeded(context.Background(), storeRoot); err != nil {
-		return nil, err
 	}
 	repo, err := artsqlite.NewArtifactRepository(storeRoot)
 	if err != nil {
