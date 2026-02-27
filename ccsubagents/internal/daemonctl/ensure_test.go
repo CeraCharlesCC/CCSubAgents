@@ -33,12 +33,25 @@ func TestWaitForStop_AcceptsExplicitAlreadyStoppedSignal(t *testing.T) {
 	}
 }
 
-func TestWaitForStop_RejectsNonStoppedServiceUnavailable(t *testing.T) {
+func TestWaitForStop_AcceptsMissingSocketServiceUnavailable(t *testing.T) {
 	original := newDefaultHealthClient
 	t.Cleanup(func() { newDefaultHealthClient = original })
 
 	newDefaultHealthClient = func(string) (daemonHealthClient, error) {
 		return fakeHealthClient{err: &daemonclient.RemoteError{Code: daemonclient.CodeServiceUnavailable, Message: "dial unix /tmp/ccsubagentsd.sock: connect: no such file or directory"}}, nil
+	}
+
+	if err := WaitForStop(context.Background(), t.TempDir(), 50*time.Millisecond); err != nil {
+		t.Fatalf("expected missing-socket stop success, got %v", err)
+	}
+}
+
+func TestWaitForStop_RejectsNonStoppedServiceUnavailable(t *testing.T) {
+	original := newDefaultHealthClient
+	t.Cleanup(func() { newDefaultHealthClient = original })
+
+	newDefaultHealthClient = func(string) (daemonHealthClient, error) {
+		return fakeHealthClient{err: &daemonclient.RemoteError{Code: daemonclient.CodeServiceUnavailable, Message: "dial unix /tmp/ccsubagentsd.sock: connect: network is unreachable"}}, nil
 	}
 
 	err := WaitForStop(context.Background(), t.TempDir(), 50*time.Millisecond)

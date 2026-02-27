@@ -67,7 +67,7 @@ func WaitForStop(ctx context.Context, stateDir string, timeout time.Duration) er
 		}
 
 		err := client.Health(ctx)
-		if err != nil && isExplicitStoppedHealthError(err) {
+		if err != nil && isStoppedHealthError(err) {
 			return nil
 		}
 		if err != nil {
@@ -80,13 +80,21 @@ func WaitForStop(ctx context.Context, stateDir string, timeout time.Duration) er
 	}
 }
 
-func isExplicitStoppedHealthError(err error) bool {
+func isStoppedHealthError(err error) bool {
 	var remoteErr *daemonclient.RemoteError
 	if !errors.As(err, &remoteErr) {
 		return false
 	}
 	msg := strings.ToLower(strings.TrimSpace(remoteErr.Message))
-	return strings.Contains(msg, "already stopped") || strings.Contains(msg, "already unavailable")
+	if strings.Contains(msg, "already stopped") || strings.Contains(msg, "already unavailable") {
+		return true
+	}
+	if remoteErr.Code != daemonclient.CodeServiceUnavailable {
+		return false
+	}
+	return strings.Contains(msg, "no such file or directory") ||
+		strings.Contains(msg, "connection refused") ||
+		strings.Contains(msg, "actively refused")
 }
 
 func startProcess(stateDir, storeRoot, token string, stderr io.Writer) error {
