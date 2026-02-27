@@ -15,8 +15,7 @@ func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
-type cliArgs struct {
-	commandRaw            string
+type lifecycleArgs struct {
 	scopeRaw              string
 	versionRaw            string
 	pinned                bool
@@ -26,34 +25,60 @@ type cliArgs struct {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
-	parsed, err := parseCLIArgs(args)
+	if len(args) == 0 {
+		printUsage(stderr)
+		return 2
+	}
+
+	command := strings.TrimSpace(args[0])
+	if command == "--help" || command == "-h" || command == "help" {
+		printUsage(stderr)
+		return 2
+	}
+
+	switch command {
+	case "install", "update", "uninstall":
+		return runLifecycle(command, args[1:], stdout, stderr)
+	case "doctor":
+		return runDoctor(args[1:], stdout, stderr)
+	case "daemon":
+		return runDaemon(args[1:], stdout, stderr)
+	case "artifacts":
+		return runArtifacts(args[1:], os.Stdin, stdout, stderr)
+	default:
+		fmt.Fprintf(stderr, "unknown command %q\n", command)
+		printUsage(stderr)
+		return 1
+	}
+}
+
+func runLifecycle(command string, args []string, stdout, stderr io.Writer) int {
+	parsed, err := parseLifecycleArgs(command, args)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		printUsage(stderr)
 		return 2
 	}
-
 	if parsed.showUsage {
 		printUsage(stderr)
 		return 2
 	}
 
-	command, err := bootstrap.ParseCommand(parsed.commandRaw)
+	parsedCommand, err := bootstrap.ParseCommand(command)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		printUsage(stderr)
+		return 1
+	}
+	scope, err := bootstrap.ResolveScope(parsedCommand, parsed.scopeRaw)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		printUsage(stderr)
 		return 1
 	}
 
-	scope, err := bootstrap.ResolveScope(command, parsed.scopeRaw)
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		printUsage(stderr)
-		return 1
-	}
-
-	if err := bootstrap.Execute(context.Background(), bootstrap.ExecuteRequest{
-		Command: command,
+	err = bootstrap.Execute(context.Background(), bootstrap.ExecuteRequest{
+		Command: parsedCommand,
 		Scope:   scope,
 		Options: bootstrap.ExecuteOptions{
 			InstallVersion:        parsed.versionRaw,
@@ -62,16 +87,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 			Verbose:               parsed.verbose,
 			StatusWriter:          stdout,
 		},
-	}); err != nil {
+	})
+	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-
 	return 0
 }
 
-func parseCLIArgs(args []string) (cliArgs, error) {
-	fs := flag.NewFlagSet("ccsubagents", flag.ContinueOnError)
+func parseLifecycleArgs(command string, args []string) (lifecycleArgs, error) {
+	fs := flag.NewFlagSet("ccsubagents "+command, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 
 	help := fs.Bool("help", false, "show help")
@@ -82,115 +107,30 @@ func parseCLIArgs(args []string) (cliArgs, error) {
 	version := fs.String("version", "", "release version to install (for example v1.2.3)")
 	pinned := fs.Bool("pinned", false, "pin the specified --version in settings.json")
 
-	if err := fs.Parse(normalizeGlobalOptionOrder(args)); err != nil {
-		return cliArgs{}, err
+	if err := fs.Parse(args); err != nil {
+		return lifecycleArgs{}, err
 	}
-
 	if *help {
-		return cliArgs{showUsage: true, skipAttestationsCheck: *skipAttestationsCheck, verbose: *verbose}, nil
+		return lifecycleArgs{showUsage: true}, nil
+	}
+	if fs.NArg() > 0 {
+		return lifecycleArgs{}, fmt.Errorf("unexpected arguments: %s", strings.Join(fs.Args(), " "))
 	}
 
-	visited := map[string]bool{}
-	fs.Visit(func(f *flag.Flag) {
-		visited[f.Name] = true
-	})
-	if visited["scope"] && *scope == "" {
-		return cliArgs{}, fmt.Errorf("--scope requires a value")
+	if command != "install" && (strings.TrimSpace(*version) != "" || *pinned) {
+		return lifecycleArgs{}, fmt.Errorf("--version and --pinned can only be used with install")
 	}
-	if visited["version"] && *version == "" {
-		return cliArgs{}, fmt.Errorf("--version requires a value")
+	if *pinned && bootstrap.NormalizeInstallVersionTag(*version) == "" {
+		return lifecycleArgs{}, bootstrap.ErrPinnedRequiresVersion
 	}
 
-	positionals := fs.Args()
-	if len(positionals) != 1 {
-		return cliArgs{}, fmt.Errorf("expected exactly 1 command argument (install, update, or uninstall)")
-	}
-
-	commandRaw := positionals[0]
-	versionRaw := strings.TrimSpace(*version)
-	normalizedVersion := bootstrap.NormalizeInstallVersionTag(versionRaw)
-	if *pinned && normalizedVersion == "" {
-		return cliArgs{}, bootstrap.ErrPinnedRequiresVersion
-	}
-	if commandRaw != "install" && (versionRaw != "" || *pinned) {
-		return cliArgs{}, fmt.Errorf("--version and --pinned can only be used with install")
-	}
-
-	return cliArgs{
-		commandRaw:            commandRaw,
+	return lifecycleArgs{
 		scopeRaw:              *scope,
-		versionRaw:            versionRaw,
+		versionRaw:            *version,
 		pinned:                *pinned,
 		skipAttestationsCheck: *skipAttestationsCheck,
 		verbose:               *verbose,
 	}, nil
-}
-
-func normalizeGlobalOptionOrder(args []string) []string {
-	globalOptions := make([]string, 0, len(args))
-	others := make([]string, 0, len(args))
-	skipNext := false
-
-	for idx := 0; idx < len(args); idx++ {
-		if skipNext {
-			skipNext = false
-			continue
-		}
-
-		arg := args[idx]
-		name, hasInlineValue, isOption := parseOptionName(arg)
-		if isOption && isGlobalOptionName(name) {
-			// Handle options with values specially so a missing value does not consume
-			// subsequent options during flag parsing.
-			if (name == "scope" || name == "version") && !hasInlineValue {
-				if idx+1 < len(args) {
-					// Shell quoting is resolved before os.Args is built, so quoted
-					// values (for example --scope="my scope") arrive as one token.
-					if _, _, nextIsOption := parseOptionName(args[idx+1]); !nextIsOption {
-						globalOptions = append(globalOptions, arg)
-						globalOptions = append(globalOptions, args[idx+1])
-						skipNext = true
-					} else {
-						globalOptions = append(globalOptions, "--"+name+"=")
-					}
-				} else {
-					globalOptions = append(globalOptions, "--"+name+"=")
-				}
-				continue
-			}
-			globalOptions = append(globalOptions, arg)
-			continue
-		}
-		others = append(others, arg)
-	}
-
-	return append(globalOptions, others...)
-}
-
-func parseOptionName(arg string) (string, bool, bool) {
-	if !strings.HasPrefix(arg, "-") {
-		return "", false, false
-	}
-	name := strings.TrimLeft(arg, "-")
-	if name == "" {
-		return "", false, false
-	}
-	parts := strings.SplitN(name, "=", 2)
-	if len(parts) == 2 {
-		return parts[0], true, true
-	}
-	return parts[0], false, true
-}
-
-func isGlobalOptionName(name string) bool {
-	switch name {
-	case "help", "h", "skip-attestations-check", "scope", "version", "pinned":
-		return true
-	case "verbose":
-		return true
-	default:
-		return false
-	}
 }
 
 func printUsage(w io.Writer) {
@@ -200,9 +140,12 @@ Commands:
   install      Install agent definitions and local-artifact binaries
   update       Update an existing installation to the latest release
   uninstall    Remove installed files and revert configuration changes
+  doctor       Run diagnostics for paths, daemon, binaries, and transaction state
+  daemon       Manage daemon lifecycle (status, start, stop)
+  artifacts    Manage daemon artifacts (ls, get, put)
 
-Options:
-  --scope=local|global         Installation scope (default: install→local, update/uninstall→global)
+Lifecycle options (install/update/uninstall):
+  --scope=local|global         Installation scope (default: install->local, update/uninstall->global)
   --version=<tag>              Install a specific release tag (install only)
   --pinned                     Save --version as pinned-version in settings.json (install only)
   --skip-attestations-check    Skip release attestation verification
@@ -211,12 +154,14 @@ Options:
 
 Examples:
   ccsubagents install
-  ccsubagents install --scope=global
-  ccsubagents install --version=v1.2.3
-  ccsubagents install --version=v1.2.3 --pinned
-  ccsubagents update
-  ccsubagents uninstall
-  ccsubagents install --scope=global --verbose
+  ccsubagents update --scope=global
+  ccsubagents doctor
+  ccsubagents daemon status
+  ccsubagents daemon start
+  ccsubagents daemon stop
+  ccsubagents artifacts ls --workspace-id=global
+  ccsubagents artifacts get plan/demo --out=./demo.txt
+  ccsubagents artifacts put plan/demo ./demo.txt --mime-type=text/plain
 `
 
 	_, _ = io.WriteString(w, usage)

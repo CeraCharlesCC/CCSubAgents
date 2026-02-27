@@ -3,6 +3,7 @@ package mcp
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,7 +11,8 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/domain"
+	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/core/artifacts"
+	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/presentation/daemon"
 )
 
 type todoArtifactSelector struct {
@@ -62,11 +64,12 @@ func (s *Server) toolTodo(ctx context.Context, argsRaw json.RawMessage) (any, *j
 
 	operation := strings.TrimSpace(args.Operation)
 	if operation != "read" && operation != "write" {
-		return toolErrorFromErr(fmt.Errorf("%w: operation must be read or write", domain.ErrInvalidInput)), nil
+		return toolErrorFromErr(fmt.Errorf("%w: operation must be read or write", artifacts.ErrInvalidInput)), nil
 	}
 
-	svc := s.service(ctx)
-	baseName, err := resolveTodoBaseName(ctx, svc, args.Artifact)
+	workspace := s.currentWorkspace(ctx)
+	client := s.daemon()
+	baseName, err := resolveTodoBaseName(ctx, client, workspace, args.Artifact)
 	if err != nil {
 		return toolErrorFromErr(err), nil
 	}
@@ -74,24 +77,30 @@ func (s *Server) toolTodo(ctx context.Context, argsRaw json.RawMessage) (any, *j
 	nameEsc := url.PathEscape(todoName)
 
 	if operation == "read" {
-		a, data, err := svc.Get(ctx, domain.Selector{Name: todoName})
+		got, err := client.Get(ctx, daemon.GetRequest{Workspace: workspace, Selector: daemon.Selector{Name: todoName}})
 		if err != nil {
-			if errors.Is(err, domain.ErrNotFound) {
+			var remoteErr *daemon.RemoteError
+			if errors.Is(err, artifacts.ErrNotFound) || (errors.As(err, &remoteErr) && remoteErr.Code == daemon.CodeNotFound) {
 				out := todoOut{
 					TodoList:  []todoItem{},
 					Exists:    false,
 					Name:      todoName,
-					URIByName: domain.URIByName(nameEsc),
+					URIByName: artifacts.URIByName(nameEsc),
 				}
 				return toolResult{Content: todoSuccessContent(operation, out), StructuredContent: out}, nil
 			}
 			return toolErrorFromErr(err), nil
+		}
+		data, decodeErr := base64.StdEncoding.DecodeString(got.DataBase64)
+		if decodeErr != nil {
+			return toolError("internal error: invalid daemon payload"), nil
 		}
 
 		items, err := normalizeAndValidateTodoItemsFromStored(data)
 		if err != nil {
 			return toolError("internal error: invalid stored todo artifact"), nil
 		}
+		a := got.Artifact
 
 		out := todoOut{
 			TodoList:  items,
@@ -99,14 +108,14 @@ func (s *Server) toolTodo(ctx context.Context, argsRaw json.RawMessage) (any, *j
 			Name:      a.Name,
 			Ref:       a.Ref,
 			PrevRef:   a.PrevRef,
-			URIByName: domain.URIByName(nameEsc),
+			URIByName: artifacts.URIByName(nameEsc),
 			URIByRef:  a.URIByRef(),
 		}
 		return toolResult{Content: todoSuccessContent(operation, out), StructuredContent: out}, nil
 	}
 
 	if args.TodoList == nil {
-		return toolErrorFromErr(fmt.Errorf("%w: todoList is required for write", domain.ErrInvalidInput)), nil
+		return toolErrorFromErr(fmt.Errorf("%w: todoList is required for write", artifacts.ErrInvalidInput)), nil
 	}
 
 	items, err := normalizeAndValidateTodoInputItems(*args.TodoList)
@@ -118,7 +127,8 @@ func (s *Server) toolTodo(ctx context.Context, argsRaw json.RawMessage) (any, *j
 		return toolError("internal error: failed to marshal todoList"), nil
 	}
 
-	a, err := svc.SaveText(ctx, domain.SaveTextInput{
+	a, err := client.SaveText(ctx, daemon.SaveTextRequest{
+		Workspace:       workspace,
 		Name:            todoName,
 		Text:            string(payload),
 		MimeType:        "application/json; charset=utf-8",
@@ -134,7 +144,7 @@ func (s *Server) toolTodo(ctx context.Context, argsRaw json.RawMessage) (any, *j
 		Name:      a.Name,
 		Ref:       a.Ref,
 		PrevRef:   a.PrevRef,
-		URIByName: domain.URIByName(nameEsc),
+		URIByName: artifacts.URIByName(nameEsc),
 		URIByRef:  a.URIByRef(),
 	}
 	return toolResult{Content: todoSuccessContent(operation, out), StructuredContent: out}, nil
@@ -154,26 +164,27 @@ func todoSuccessContent(operation string, out todoOut) []any {
 	}
 }
 
-func resolveTodoBaseName(ctx context.Context, svc *domain.Service, sel todoArtifactSelector) (string, error) {
+func resolveTodoBaseName(ctx context.Context, client *daemon.Client, workspace daemon.WorkspaceSelector, sel todoArtifactSelector) (string, error) {
 	hasName := strings.TrimSpace(sel.Name) != ""
 	hasRef := strings.TrimSpace(sel.Ref) != ""
 
 	if !hasName && !hasRef {
-		return "", domain.ErrRefOrName
+		return "", artifacts.ErrRefOrName
 	}
 	if hasName && hasRef {
-		return "", domain.ErrRefAndNameMutuallyExclusive
+		return "", artifacts.ErrRefAndNameMutuallyExclusive
 	}
 	if hasName {
 		return strings.TrimSpace(sel.Name), nil
 	}
 
-	a, _, err := svc.Get(ctx, domain.Selector{Ref: strings.TrimSpace(sel.Ref)})
+	got, err := client.Get(ctx, daemon.GetRequest{Workspace: workspace, Selector: daemon.Selector{Ref: strings.TrimSpace(sel.Ref)}})
 	if err != nil {
 		return "", err
 	}
+	a := got.Artifact
 	if strings.TrimSpace(a.Name) == "" {
-		return "", fmt.Errorf("%w: artifact referenced by ref has no name", domain.ErrInvalidInput)
+		return "", fmt.Errorf("%w: artifact referenced by ref has no name", artifacts.ErrInvalidInput)
 	}
 	return strings.TrimSpace(a.Name), nil
 }
@@ -190,7 +201,7 @@ func normalizeAndValidateTodoInputItems(items []todoItemInput) ([]todoItem, erro
 	normalized := make([]todoItem, len(items))
 	for i, item := range items {
 		if item.ID == nil {
-			return nil, fmt.Errorf("%w: todoList[%d].id is required", domain.ErrInvalidInput, i)
+			return nil, fmt.Errorf("%w: todoList[%d].id is required", artifacts.ErrInvalidInput, i)
 		}
 		normalized[i] = todoItem{
 			ID:     *item.ID,
@@ -207,18 +218,18 @@ func normalizeAndValidateTodoItems(items []todoItem) ([]todoItem, error) {
 	for i, item := range items {
 		title := strings.TrimSpace(item.Title)
 		if title == "" {
-			return nil, fmt.Errorf("%w: todoList[%d].title is required", domain.ErrInvalidInput, i)
+			return nil, fmt.Errorf("%w: todoList[%d].title is required", artifacts.ErrInvalidInput, i)
 		}
 
 		status := strings.TrimSpace(item.Status)
 		switch status {
 		case "not-started", "in-progress", "completed":
 		default:
-			return nil, fmt.Errorf("%w: todoList[%d].status must be one of not-started|in-progress|completed", domain.ErrInvalidInput, i)
+			return nil, fmt.Errorf("%w: todoList[%d].status must be one of not-started|in-progress|completed", artifacts.ErrInvalidInput, i)
 		}
 
 		if _, exists := seenIDs[item.ID]; exists {
-			return nil, fmt.Errorf("%w: todoList[%d].id duplicates %d", domain.ErrInvalidInput, i, item.ID)
+			return nil, fmt.Errorf("%w: todoList[%d].id duplicates %d", artifacts.ErrInvalidInput, i, item.ID)
 		}
 		seenIDs[item.ID] = struct{}{}
 

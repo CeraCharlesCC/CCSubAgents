@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/domain"
+	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/core/artifacts"
 )
 
 type webHarness struct {
@@ -23,29 +23,37 @@ type webHarness struct {
 
 func newWebHarness(t *testing.T) *webHarness {
 	t.Helper()
+	s := New(t.TempDir())
+	t.Cleanup(func() {
+		_ = s.Close()
+	})
 	return &webHarness{
 		t: t,
-		s: New(t.TempDir()),
+		s: s,
 	}
 }
 
-func (h *webHarness) svc(subspace string) *domain.Service {
+func (h *webHarness) svc(subspace string) *artifacts.Service {
 	h.t.Helper()
-	return h.s.serviceForSubspace(subspace)
+	svc, err := h.s.serviceForSubspace(subspace)
+	if err != nil {
+		h.t.Fatalf("serviceForSubspace(%q): %v", subspace, err)
+	}
+	return svc
 }
 
-func (h *webHarness) mustSaveText(subspace, name, text string) domain.Artifact {
+func (h *webHarness) mustSaveText(subspace, name, text string) artifacts.Artifact {
 	h.t.Helper()
-	art, err := h.svc(subspace).SaveText(context.Background(), domain.SaveTextInput{Name: name, Text: text})
+	art, err := h.svc(subspace).SaveText(context.Background(), artifacts.SaveTextInput{Name: name, Text: text})
 	if err != nil {
 		h.t.Fatalf("save text %q: %v", name, err)
 	}
 	return art
 }
 
-func (h *webHarness) mustGetByName(subspace, name string) (domain.Artifact, []byte) {
+func (h *webHarness) mustGetByName(subspace, name string) (artifacts.Artifact, []byte) {
 	h.t.Helper()
-	art, payload, err := h.svc(subspace).Get(context.Background(), domain.Selector{Name: name})
+	art, payload, err := h.svc(subspace).Get(context.Background(), artifacts.Selector{Name: name})
 	if err != nil {
 		h.t.Fatalf("get %q: %v", name, err)
 	}

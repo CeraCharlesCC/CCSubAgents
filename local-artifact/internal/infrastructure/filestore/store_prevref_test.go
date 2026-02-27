@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/domain"
+	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/core/artifacts"
 )
 
 func TestStorePrevRef_SameNameCreatesVersionLinkAndPreservesOldRef(t *testing.T) {
@@ -17,16 +17,16 @@ func TestStorePrevRef_SameNameCreatesVersionLinkAndPreservesOldRef(t *testing.T)
 	firstRef := "20260216T120000Z-aaaaaaaaaaaaaaaa"
 	secondRef := "20260216T120001Z-bbbbbbbbbbbbbbbb"
 
-	firstIn := domain.Artifact{
+	firstIn := artifacts.Artifact{
 		Ref:       firstRef,
 		Name:      "plan/task-123",
-		Kind:      domain.ArtifactKindText,
+		Kind:      artifacts.ArtifactKindText,
 		MimeType:  "text/plain; charset=utf-8",
 		SizeBytes: 5,
 		SHA256:    "sha-first",
 		CreatedAt: time.Now().UTC(),
 	}
-	firstOut, err := store.Save(ctx, firstIn, []byte("first"), domain.SaveOptions{})
+	firstOut, err := store.Save(ctx, firstIn, []byte("first"), artifacts.SaveOptions{})
 	if err != nil {
 		t.Fatalf("first save failed: %v", err)
 	}
@@ -34,16 +34,16 @@ func TestStorePrevRef_SameNameCreatesVersionLinkAndPreservesOldRef(t *testing.T)
 		t.Fatalf("expected first prevRef empty, got %q", firstOut.PrevRef)
 	}
 
-	secondIn := domain.Artifact{
+	secondIn := artifacts.Artifact{
 		Ref:       secondRef,
 		Name:      "plan/task-123",
-		Kind:      domain.ArtifactKindText,
+		Kind:      artifacts.ArtifactKindText,
 		MimeType:  "text/plain; charset=utf-8",
 		SizeBytes: 6,
 		SHA256:    "sha-second",
 		CreatedAt: time.Now().UTC(),
 	}
-	secondOut, err := store.Save(ctx, secondIn, []byte("second"), domain.SaveOptions{})
+	secondOut, err := store.Save(ctx, secondIn, []byte("second"), artifacts.SaveOptions{})
 	if err != nil {
 		t.Fatalf("second save failed: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestStorePrevRef_SameNameCreatesVersionLinkAndPreservesOldRef(t *testing.T)
 		t.Fatalf("expected resolve=%q, got %q", secondRef, resolvedRef)
 	}
 
-	latestMeta, latestData, err := store.Get(ctx, domain.Selector{Name: "plan/task-123"})
+	latestMeta, latestData, err := store.Get(ctx, artifacts.Selector{Name: "plan/task-123"})
 	if err != nil {
 		t.Fatalf("get latest by name failed: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestStorePrevRef_SameNameCreatesVersionLinkAndPreservesOldRef(t *testing.T)
 		t.Fatalf("unexpected latest artifact: meta=%+v data=%q", latestMeta, string(latestData))
 	}
 
-	firstMeta, firstData, err := store.Get(ctx, domain.Selector{Ref: firstRef})
+	firstMeta, firstData, err := store.Get(ctx, artifacts.Selector{Ref: firstRef})
 	if err != nil {
 		t.Fatalf("get old by ref failed: %v", err)
 	}
@@ -101,11 +101,11 @@ func TestStorePrevRef_ConcurrentSameNameSavesKeepVersionLink(t *testing.T) {
 		refs[1]: "second",
 	}
 
-	artifacts := []domain.Artifact{
+	inputs := []artifacts.Artifact{
 		{
 			Ref:       refs[0],
 			Name:      name,
-			Kind:      domain.ArtifactKindText,
+			Kind:      artifacts.ArtifactKindText,
 			MimeType:  "text/plain; charset=utf-8",
 			SizeBytes: int64(len(payloadByRef[refs[0]])),
 			SHA256:    "sha-first",
@@ -114,7 +114,7 @@ func TestStorePrevRef_ConcurrentSameNameSavesKeepVersionLink(t *testing.T) {
 		{
 			Ref:       refs[1],
 			Name:      name,
-			Kind:      domain.ArtifactKindText,
+			Kind:      artifacts.ArtifactKindText,
 			MimeType:  "text/plain; charset=utf-8",
 			SizeBytes: int64(len(payloadByRef[refs[1]])),
 			SHA256:    "sha-second",
@@ -123,15 +123,15 @@ func TestStorePrevRef_ConcurrentSameNameSavesKeepVersionLink(t *testing.T) {
 	}
 
 	start := make(chan struct{})
-	errCh := make(chan error, len(artifacts))
+	errCh := make(chan error, len(inputs))
 	var wg sync.WaitGroup
-	for idx := range artifacts {
+	for idx := range inputs {
 		idx := idx
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			<-start
-			_, err := store.Save(ctx, artifacts[idx], []byte(payloadByRef[artifacts[idx].Ref]), domain.SaveOptions{})
+			_, err := store.Save(ctx, inputs[idx], []byte(payloadByRef[inputs[idx].Ref]), artifacts.SaveOptions{})
 			errCh <- err
 		}()
 	}
@@ -149,7 +149,7 @@ func TestStorePrevRef_ConcurrentSameNameSavesKeepVersionLink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve failed: %v", err)
 	}
-	latest, latestData, err := store.Get(ctx, domain.Selector{Name: name})
+	latest, latestData, err := store.Get(ctx, artifacts.Selector{Name: name})
 	if err != nil {
 		t.Fatalf("get latest by name failed: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestStorePrevRef_ConcurrentSameNameSavesKeepVersionLink(t *testing.T) {
 	}
 
 	for _, ref := range refs {
-		meta, data, err := store.Get(ctx, domain.Selector{Ref: ref})
+		meta, data, err := store.Get(ctx, artifacts.Selector{Ref: ref})
 		if err != nil {
 			t.Fatalf("get by ref %s failed: %v", ref, err)
 		}
@@ -201,29 +201,29 @@ func TestStorePrevRef_ExpectedPrevRefMatchSucceeds(t *testing.T) {
 	firstRef := "20260216T120010Z-aaaaaaaaaaaaaaaa"
 	secondRef := "20260216T120011Z-bbbbbbbbbbbbbbbb"
 
-	first := domain.Artifact{
+	first := artifacts.Artifact{
 		Ref:       firstRef,
 		Name:      "plan/task-cas",
-		Kind:      domain.ArtifactKindText,
+		Kind:      artifacts.ArtifactKindText,
 		MimeType:  "text/plain; charset=utf-8",
 		SizeBytes: 5,
 		SHA256:    "sha-first",
 		CreatedAt: time.Now().UTC(),
 	}
-	if _, err := store.Save(ctx, first, []byte("first"), domain.SaveOptions{}); err != nil {
+	if _, err := store.Save(ctx, first, []byte("first"), artifacts.SaveOptions{}); err != nil {
 		t.Fatalf("first save failed: %v", err)
 	}
 
-	second := domain.Artifact{
+	second := artifacts.Artifact{
 		Ref:       secondRef,
 		Name:      "plan/task-cas",
-		Kind:      domain.ArtifactKindText,
+		Kind:      artifacts.ArtifactKindText,
 		MimeType:  "text/plain; charset=utf-8",
 		SizeBytes: 6,
 		SHA256:    "sha-second",
 		CreatedAt: time.Now().UTC(),
 	}
-	out, err := store.Save(ctx, second, []byte("second"), domain.SaveOptions{ExpectedPrevRef: firstRef})
+	out, err := store.Save(ctx, second, []byte("second"), artifacts.SaveOptions{ExpectedPrevRef: firstRef})
 	if err != nil {
 		t.Fatalf("second save with matching expectedPrevRef failed: %v", err)
 	}
@@ -239,33 +239,33 @@ func TestStorePrevRef_ExpectedPrevRefStaleReturnsConflict(t *testing.T) {
 	firstRef := "20260216T120020Z-aaaaaaaaaaaaaaaa"
 	staleRef := "20260216T120019Z-cccccccccccccccc"
 
-	first := domain.Artifact{
+	first := artifacts.Artifact{
 		Ref:       firstRef,
 		Name:      "plan/task-cas-stale",
-		Kind:      domain.ArtifactKindText,
+		Kind:      artifacts.ArtifactKindText,
 		MimeType:  "text/plain; charset=utf-8",
 		SizeBytes: 5,
 		SHA256:    "sha-first",
 		CreatedAt: time.Now().UTC(),
 	}
-	if _, err := store.Save(ctx, first, []byte("first"), domain.SaveOptions{}); err != nil {
+	if _, err := store.Save(ctx, first, []byte("first"), artifacts.SaveOptions{}); err != nil {
 		t.Fatalf("first save failed: %v", err)
 	}
 
-	second := domain.Artifact{
+	second := artifacts.Artifact{
 		Ref:       "20260216T120021Z-bbbbbbbbbbbbbbbb",
 		Name:      "plan/task-cas-stale",
-		Kind:      domain.ArtifactKindText,
+		Kind:      artifacts.ArtifactKindText,
 		MimeType:  "text/plain; charset=utf-8",
 		SizeBytes: 6,
 		SHA256:    "sha-second",
 		CreatedAt: time.Now().UTC(),
 	}
-	_, err := store.Save(ctx, second, []byte("second"), domain.SaveOptions{ExpectedPrevRef: staleRef})
+	_, err := store.Save(ctx, second, []byte("second"), artifacts.SaveOptions{ExpectedPrevRef: staleRef})
 	if err == nil {
 		t.Fatal("expected stale expectedPrevRef to return conflict")
 	}
-	if !errors.Is(err, domain.ErrConflict) {
+	if !errors.Is(err, artifacts.ErrConflict) {
 		t.Fatalf("expected conflict error, got %v", err)
 	}
 
@@ -284,16 +284,16 @@ func TestStorePrevRef_ConcurrentCASSameExpectedPrevRef_OneSuccessOneConflict(t *
 
 	name := "plan/task-cas-race"
 	firstRef := "20260216T120030Z-aaaaaaaaaaaaaaaa"
-	seed := domain.Artifact{
+	seed := artifacts.Artifact{
 		Ref:       firstRef,
 		Name:      name,
-		Kind:      domain.ArtifactKindText,
+		Kind:      artifacts.ArtifactKindText,
 		MimeType:  "text/plain; charset=utf-8",
 		SizeBytes: 5,
 		SHA256:    "sha-first",
 		CreatedAt: time.Now().UTC(),
 	}
-	if _, err := store.Save(ctx, seed, []byte("first"), domain.SaveOptions{}); err != nil {
+	if _, err := store.Save(ctx, seed, []byte("first"), artifacts.SaveOptions{}); err != nil {
 		t.Fatalf("seed save failed: %v", err)
 	}
 
@@ -308,7 +308,7 @@ func TestStorePrevRef_ConcurrentCASSameExpectedPrevRef_OneSuccessOneConflict(t *
 
 	type saveResult struct {
 		ref string
-		out domain.Artifact
+		out artifacts.Artifact
 		err error
 	}
 
@@ -318,10 +318,10 @@ func TestStorePrevRef_ConcurrentCASSameExpectedPrevRef_OneSuccessOneConflict(t *
 
 	for _, ref := range refs {
 		ref := ref
-		artifact := domain.Artifact{
+		artifact := artifacts.Artifact{
 			Ref:       ref,
 			Name:      name,
-			Kind:      domain.ArtifactKindText,
+			Kind:      artifacts.ArtifactKindText,
 			MimeType:  "text/plain; charset=utf-8",
 			SizeBytes: int64(len(payloadByRef[ref])),
 			SHA256:    "sha-" + ref,
@@ -332,7 +332,7 @@ func TestStorePrevRef_ConcurrentCASSameExpectedPrevRef_OneSuccessOneConflict(t *
 		go func() {
 			defer wg.Done()
 			<-start
-			out, err := store.Save(ctx, artifact, []byte(payloadByRef[ref]), domain.SaveOptions{ExpectedPrevRef: firstRef})
+			out, err := store.Save(ctx, artifact, []byte(payloadByRef[ref]), artifacts.SaveOptions{ExpectedPrevRef: firstRef})
 			resultCh <- saveResult{ref: ref, out: out, err: err}
 		}()
 	}
@@ -353,7 +353,7 @@ func TestStorePrevRef_ConcurrentCASSameExpectedPrevRef_OneSuccessOneConflict(t *
 			if result.out.PrevRef != firstRef {
 				t.Fatalf("successful CAS save expected prevRef=%q, got %q", firstRef, result.out.PrevRef)
 			}
-		case errors.Is(result.err, domain.ErrConflict):
+		case errors.Is(result.err, artifacts.ErrConflict):
 			conflicts++
 			conflictRef = result.ref
 		default:
@@ -373,7 +373,7 @@ func TestStorePrevRef_ConcurrentCASSameExpectedPrevRef_OneSuccessOneConflict(t *
 		t.Fatalf("expected resolve to point at successful ref %q, got %q", successRef, resolved)
 	}
 
-	latest, latestData, err := store.Get(ctx, domain.Selector{Name: name})
+	latest, latestData, err := store.Get(ctx, artifacts.Selector{Name: name})
 	if err != nil {
 		t.Fatalf("get latest failed: %v", err)
 	}
@@ -384,7 +384,7 @@ func TestStorePrevRef_ConcurrentCASSameExpectedPrevRef_OneSuccessOneConflict(t *
 		t.Fatalf("unexpected latest payload: got %q want %q", string(latestData), expected)
 	}
 
-	firstMeta, firstData, err := store.Get(ctx, domain.Selector{Ref: firstRef})
+	firstMeta, firstData, err := store.Get(ctx, artifacts.Selector{Ref: firstRef})
 	if err != nil {
 		t.Fatalf("get seed ref failed: %v", err)
 	}
@@ -392,7 +392,7 @@ func TestStorePrevRef_ConcurrentCASSameExpectedPrevRef_OneSuccessOneConflict(t *
 		t.Fatalf("unexpected seed artifact state: meta=%+v data=%q", firstMeta, string(firstData))
 	}
 
-	if _, _, err := store.Get(ctx, domain.Selector{Ref: conflictRef}); !errors.Is(err, domain.ErrNotFound) {
+	if _, _, err := store.Get(ctx, artifacts.Selector{Ref: conflictRef}); !errors.Is(err, artifacts.ErrNotFound) {
 		t.Fatalf("expected conflicted ref %q to be absent, got err=%v", conflictRef, err)
 	}
 }

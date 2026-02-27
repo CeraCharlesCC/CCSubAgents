@@ -426,6 +426,7 @@ func TestIsAllowedManagedPath(t *testing.T) {
 	allowedBinaries := []string{
 		filepath.Join(binaryDir, assetArtifactMCP),
 		filepath.Join(binaryDir, assetArtifactWeb),
+		filepath.Join(binaryDir, ccsubagentsdBinaryName(runtime.GOOS)),
 	}
 
 	if !files.IsAllowedManagedPath(filepath.Join(agentsDir, "one.agent.md"), agentsDir, allowedBinaries) {
@@ -436,6 +437,51 @@ func TestIsAllowedManagedPath(t *testing.T) {
 	}
 	if files.IsAllowedManagedPath(filepath.Join(string(os.PathSeparator), "tmp", "oops"), agentsDir, allowedBinaries) {
 		t.Fatalf("expected unrelated path to be denied")
+	}
+}
+
+func TestUninstall_RemovesTrackedCCSubagentsdBinary(t *testing.T) {
+	home := t.TempDir()
+	m := &Runner{
+		httpClient: &http.Client{},
+		now:        func() time.Time { return time.Unix(0, 0).UTC() },
+		homeDir:    func() (string, error) { return home, nil },
+		lookPath:   func(string) (string, error) { return "/usr/bin/gh", nil },
+		runCommand: func(context.Context, string, ...string) ([]byte, error) { return nil, nil },
+	}
+
+	binaryDir := filepath.Join(home, binaryInstallDirDefaultRel)
+	if err := os.MkdirAll(binaryDir, stateDirPerm); err != nil {
+		t.Fatalf("mkdir binary dir: %v", err)
+	}
+	daemonBinary := filepath.Join(binaryDir, ccsubagentsdBinaryName(runtime.GOOS))
+	if err := os.WriteFile(daemonBinary, []byte("daemon"), stateFilePerm); err != nil {
+		t.Fatalf("seed daemon binary: %v", err)
+	}
+
+	stateDir := globalStateDirForTest(home)
+	if err := os.MkdirAll(stateDir, stateDirPerm); err != nil {
+		t.Fatalf("mkdir state dir: %v", err)
+	}
+	tracked := state.TrackedState{
+		Version:     state.TrackedSchemaVersion,
+		Repo:        release.Repo,
+		ReleaseID:   1,
+		ReleaseTag:  "v1.0.0",
+		InstalledAt: "2026-01-01T00:00:00Z",
+		Managed: state.ManagedState{
+			Files: []string{daemonBinary},
+		},
+	}
+	if err := state.SaveTrackedState(stateDir, tracked); err != nil {
+		t.Fatalf("seed tracked state: %v", err)
+	}
+
+	if err := m.uninstall(context.Background()); err != nil {
+		t.Fatalf("uninstall should succeed: %v", err)
+	}
+	if _, err := os.Stat(daemonBinary); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected daemon binary removed, stat err: %v", err)
 	}
 }
 
@@ -740,7 +786,7 @@ func TestInstallOrUpdate_TracksBothDestinationTargets(t *testing.T) {
 		t.Fatalf("install should succeed: %v", err)
 	}
 
-	stateDir := filepath.Join(home, ".local", "share", "ccsubagents")
+	stateDir := globalStateDirForTest(home)
 	tracked, err := state.LoadTrackedState(stateDir)
 	if err != nil {
 		t.Fatalf("load tracked state: %v", err)
@@ -762,7 +808,7 @@ func TestInstallOrUpdate_TracksBothDestinationTargets(t *testing.T) {
 		if !ok {
 			t.Fatalf("expected agent locations object in %s", settingsPath)
 		}
-		agentPath := "~/.local/share/ccsubagents/agents"
+		agentPath := globalAgentsTildePathForTest(home)
 		if locations[agentPath] != true {
 			t.Fatalf("expected managed agent path in %s", settingsPath)
 		}
@@ -788,11 +834,68 @@ func TestInstallOrUpdate_TracksBothDestinationTargets(t *testing.T) {
 	}
 }
 
+func TestInstallOrUpdate_TracksDaemonBinaryAndUninstallRemovesIt(t *testing.T) {
+	home := t.TempDir()
+	agentsArchive := zipBytes(t, map[string]string{"agents/example.agent.md": "content"})
+	mcpBinaryName, webBinaryName := localArtifactBinaryNames(runtime.GOOS)
+	daemonBinaryName := ccsubagentsdBinaryName(runtime.GOOS)
+	bundleArchive := zipBytes(t, map[string]string{
+		mcpBinaryName:    "mcp-binary",
+		webBinaryName:    "web-binary",
+		daemonBinaryName: "daemon-binary",
+	})
+
+	m := &Runner{
+		httpClient: successReleaseHTTPClient(t, "v1.2.3", agentsArchive, bundleArchive),
+		now:        func() time.Time { return time.Unix(0, 0).UTC() },
+		homeDir:    func() (string, error) { return home, nil },
+		lookPath:   func(string) (string, error) { return "/usr/bin/gh", nil },
+		runCommand: func(context.Context, string, ...string) ([]byte, error) { return []byte("ok"), nil },
+		installBinary: func(src, dst string) error {
+			data, err := os.ReadFile(src)
+			if err != nil {
+				return err
+			}
+			return os.WriteFile(dst, data, binaryFilePerm)
+		},
+	}
+
+	if err := m.installOrUpdate(context.Background(), false); err != nil {
+		t.Fatalf("install should succeed: %v", err)
+	}
+
+	paths := resolveInstallPaths(home)
+	daemonPath := filepath.Join(paths.binaryDir, daemonBinaryName)
+	stateDir := globalStateDirForTest(home)
+	tracked, err := state.LoadTrackedState(stateDir)
+	if err != nil {
+		t.Fatalf("load tracked state: %v", err)
+	}
+
+	foundDaemon := false
+	for _, managed := range tracked.Managed.Files {
+		if managed == daemonPath {
+			foundDaemon = true
+			break
+		}
+	}
+	if !foundDaemon {
+		t.Fatalf("expected tracked managed files to include daemon binary %q, got %#v", daemonPath, tracked.Managed.Files)
+	}
+
+	if err := m.uninstall(context.Background()); err != nil {
+		t.Fatalf("uninstall should succeed: %v", err)
+	}
+	if _, err := os.Stat(daemonPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected daemon binary removed by uninstall, stat err: %v", err)
+	}
+}
+
 func TestToHomeTildePath(t *testing.T) {
 	home := filepath.Join(string(os.PathSeparator), "home", "user")
 
-	got := toHomeTildePath(home, filepath.Join(home, ".local", "share", "ccsubagents", "agents"))
-	if got != "~/.local/share/ccsubagents/agents" {
+	got := toHomeTildePath(home, globalAgentsDirForTest(home))
+	if got != globalAgentsTildePathForTest(home) {
 		t.Fatalf("expected home-relative tilde path, got %q", got)
 	}
 
@@ -912,17 +1015,17 @@ func TestInstallOrUpdate_AttestationFailureBeforeMutation(t *testing.T) {
 		t.Fatalf("expected attestation error, got: %v", err)
 	}
 
-	if _, statErr := os.Stat(filepath.Join(home, ".local", "share", "ccsubagents", "agents")); !errors.Is(statErr, os.ErrNotExist) {
+	if _, statErr := os.Stat(globalAgentsDirForTest(home)); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("expected agents dir to remain absent, stat err: %v", statErr)
 	}
-	if _, statErr := os.Stat(filepath.Join(home, ".local", "share", "ccsubagents", state.TrackedFileName)); !errors.Is(statErr, os.ErrNotExist) {
+	if _, statErr := os.Stat(filepath.Join(globalStateDirForTest(home), state.TrackedFileName)); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("expected tracked state to remain absent, stat err: %v", statErr)
 	}
 }
 
 func TestInstallOrUpdate_CorruptTrackedStateFails(t *testing.T) {
 	home := t.TempDir()
-	stateDir := filepath.Join(home, ".local", "share", "ccsubagents")
+	stateDir := globalStateDirForTest(home)
 	if err := os.MkdirAll(stateDir, stateDirPerm); err != nil {
 		t.Fatalf("create state dir: %v", err)
 	}
@@ -950,7 +1053,7 @@ func TestInstallOrUpdate_CorruptTrackedStateFails(t *testing.T) {
 
 func TestInstallOrUpdate_UpdateStaleCleanupFailureRollsBackAndKeepsTrackedState(t *testing.T) {
 	home := t.TempDir()
-	agentsDir := filepath.Join(home, ".local", "share", "ccsubagents", "agents")
+	agentsDir := globalAgentsDirForTest(home)
 	staleDir := filepath.Join(agentsDir, "stale-dir")
 	if err := os.MkdirAll(staleDir, stateDirPerm); err != nil {
 		t.Fatalf("create agents dir: %v", err)
@@ -964,7 +1067,7 @@ func TestInstallOrUpdate_UpdateStaleCleanupFailureRollsBackAndKeepsTrackedState(
 		t.Fatalf("seed stale directory content: %v", err)
 	}
 
-	stateDir := filepath.Join(home, ".local", "share", "ccsubagents")
+	stateDir := globalStateDirForTest(home)
 	if err := os.MkdirAll(stateDir, stateDirPerm); err != nil {
 		t.Fatalf("create state dir: %v", err)
 	}
@@ -1103,7 +1206,7 @@ func TestUninstall_FailsWhenMCPServersObjectIsMalformed(t *testing.T) {
 		runCommand: func(context.Context, string, ...string) ([]byte, error) { return nil, nil },
 	}
 
-	stateDir := filepath.Join(home, ".local", "share", "ccsubagents")
+	stateDir := globalStateDirForTest(home)
 	if err := os.MkdirAll(stateDir, stateDirPerm); err != nil {
 		t.Fatalf("create state dir: %v", err)
 	}
@@ -1163,7 +1266,7 @@ func TestUninstall_BothTargetMigrationRevertsPerTargetMetadata(t *testing.T) {
 	}
 
 	mcpBinaryName, _ := localArtifactBinaryNames(runtime.GOOS)
-	agentPath := toHomeTildePath(home, filepath.Join(home, ".local", "share", "ccsubagents", "agents"))
+	agentPath := globalAgentsTildePathForTest(home)
 	mcpCommandPath := toHomeTildePath(home, filepath.Join(paths.binaryDir, mcpBinaryName))
 	if err := writeJSONMap(paths.stable.settingsPath, map[string]any{
 		config.SettingsAgentPathKey: map[string]any{
@@ -1203,7 +1306,7 @@ func TestUninstall_BothTargetMigrationRevertsPerTargetMetadata(t *testing.T) {
 		t.Fatalf("marshal insiders previous mcp: %v", err)
 	}
 
-	stateDir := filepath.Join(home, ".local", "share", "ccsubagents")
+	stateDir := globalStateDirForTest(home)
 	if err := os.MkdirAll(stateDir, stateDirPerm); err != nil {
 		t.Fatalf("create state dir: %v", err)
 	}
@@ -1292,7 +1395,7 @@ func TestUninstall_AllowsTrackedConfigParentDirs(t *testing.T) {
 		runCommand: func(context.Context, string, ...string) ([]byte, error) { return nil, nil },
 	}
 
-	stateDir := filepath.Join(home, ".local", "share", "ccsubagents")
+	stateDir := globalStateDirForTest(home)
 	if err := os.MkdirAll(stateDir, stateDirPerm); err != nil {
 		t.Fatalf("create state dir: %v", err)
 	}
@@ -1349,12 +1452,12 @@ func TestUninstall_IgnoresTypedNotEmptyDirectoryError(t *testing.T) {
 		runCommand: func(context.Context, string, ...string) ([]byte, error) { return nil, nil },
 	}
 
-	stateDir := filepath.Join(home, ".local", "share", "ccsubagents")
+	stateDir := globalStateDirForTest(home)
 	if err := os.MkdirAll(stateDir, stateDirPerm); err != nil {
 		t.Fatalf("create state dir: %v", err)
 	}
 
-	agentsDir := filepath.Join(home, ".local", "share", "ccsubagents", "agents")
+	agentsDir := globalAgentsDirForTest(home)
 	if err := os.MkdirAll(agentsDir, stateDirPerm); err != nil {
 		t.Fatalf("create agents dir: %v", err)
 	}

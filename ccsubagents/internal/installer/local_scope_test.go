@@ -168,7 +168,7 @@ func TestInstallLocal_TeamRerunPreservesFullManagedState(t *testing.T) {
 		t.Fatalf("seed mcp config: %v", err)
 	}
 
-	stateDir := filepath.Join(home, ".local", "share", "ccsubagents")
+	stateDir := globalStateDirForTest(home)
 	if err := os.MkdirAll(stateDir, stateDirPerm); err != nil {
 		t.Fatalf("create state dir: %v", err)
 	}

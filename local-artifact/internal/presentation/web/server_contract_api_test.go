@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/domain"
+	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/core/artifacts"
 )
 
 func TestAPISaveSupportsTextAndBlob(t *testing.T) {
@@ -32,7 +32,7 @@ func TestAPISaveSupportsTextAndBlob(t *testing.T) {
 	}
 
 	blobArtifact, blobPayload := h.mustGetByName(globalSubspaceSelector, "api/blob")
-	if blobArtifact.Kind != domain.ArtifactKindFile {
+	if blobArtifact.Kind != artifacts.ArtifactKindFile {
 		t.Fatalf("expected file kind, got %q", blobArtifact.Kind)
 	}
 	if blobArtifact.Filename != "blob.bin" {
@@ -65,8 +65,8 @@ func TestAPIDeleteSupportsMultipleNames(t *testing.T) {
 	assertStatus(t, rr, http.StatusOK)
 
 	type deleteResponse struct {
-		DeletedCount int               `json:"deletedCount"`
-		Artifacts    []domain.Artifact `json:"artifacts"`
+		DeletedCount int                  `json:"deletedCount"`
+		Artifacts    []artifacts.Artifact `json:"artifacts"`
 	}
 	res := decodeJSON[deleteResponse](t, rr)
 	if res.DeletedCount != 2 || len(res.Artifacts) != 2 {
@@ -125,7 +125,7 @@ func TestAPIDeleteSingleNotFoundKeepsLegacyPayload(t *testing.T) {
 
 func TestAPIContentReturnsPayloadAndMetadataHeaders(t *testing.T) {
 	h := newWebHarness(t)
-	saved, err := h.svc(globalSubspaceSelector).SaveText(context.Background(), domain.SaveTextInput{
+	saved, err := h.svc(globalSubspaceSelector).SaveText(context.Background(), artifacts.SaveTextInput{
 		Name:     "viewer/sample",
 		Text:     "preview text",
 		MimeType: "text/plain; charset=utf-8",

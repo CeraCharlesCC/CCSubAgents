@@ -15,13 +15,23 @@ type fileSnapshot struct {
 	data   []byte
 }
 
+type RollbackObserver interface {
+	OnSnapshot(path string, existed bool, mode os.FileMode, data []byte) error
+	OnCreatedDir(path string)
+}
+
 type Rollback struct {
 	snapshots   map[string]fileSnapshot
 	createdDirs []string
+	observer    RollbackObserver
 }
 
 func NewRollback() *Rollback {
 	return &Rollback{snapshots: map[string]fileSnapshot{}}
+}
+
+func NewRollbackWithObserver(observer RollbackObserver) *Rollback {
+	return &Rollback{snapshots: map[string]fileSnapshot{}, observer: observer}
 }
 
 func (r *Rollback) CaptureFile(path string) error {
@@ -33,6 +43,11 @@ func (r *Rollback) CaptureFile(path string) error {
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			r.snapshots[clean] = fileSnapshot{exists: false}
+			if r.observer != nil {
+				if err := r.observer.OnSnapshot(clean, false, 0, nil); err != nil {
+					return err
+				}
+			}
 			return nil
 		}
 		return fmt.Errorf("stat %s for rollback: %w", clean, err)
@@ -49,6 +64,11 @@ func (r *Rollback) CaptureFile(path string) error {
 		mode:   info.Mode().Perm(),
 		data:   data,
 	}
+	if r.observer != nil {
+		if err := r.observer.OnSnapshot(clean, true, info.Mode().Perm(), data); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -56,7 +76,11 @@ func (r *Rollback) TrackCreatedDir(path string) {
 	if strings.TrimSpace(path) == "" {
 		return
 	}
-	r.createdDirs = append(r.createdDirs, filepath.Clean(path))
+	clean := filepath.Clean(path)
+	r.createdDirs = append(r.createdDirs, clean)
+	if r.observer != nil {
+		r.observer.OnCreatedDir(clean)
+	}
 }
 
 func (r *Rollback) Restore() error {

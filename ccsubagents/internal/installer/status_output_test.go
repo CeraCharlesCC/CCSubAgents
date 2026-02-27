@@ -84,13 +84,14 @@ func TestInstallOrUpdate_ReportsInstallProgress(t *testing.T) {
 	}
 
 	status := out.String()
+	agentInstallLine := fmt.Sprintf("✓ Installed agent definitions (→ %s)", globalAgentsTildePathForTest(home))
 	assertStatusContainsInOrder(t, status, []string{
 		"ccsubagents v1.2.3",
 		"✓ Checked for existing installation (none found)",
 		"✓ Downloaded release assets (v1.2.3)",
 		"✓ Verified attestations",
 		"✓ Installed binaries (→ ~/.local/bin)",
-		"✓ Installed agent definitions (→ ~/.local/share/ccsubagents/agents)",
+		agentInstallLine,
 		"✓ Updated VS Code settings and MCP config",
 		"Install complete.",
 	})
@@ -104,7 +105,7 @@ func TestInstallOrUpdate_ReportsInstallProgress(t *testing.T) {
 
 func TestInstallOrUpdate_ReportsUpdateCleanupProgress(t *testing.T) {
 	home := t.TempDir()
-	agentsDir := filepath.Join(home, ".local", "share", "ccsubagents", "agents")
+	agentsDir := globalAgentsDirForTest(home)
 	if err := os.MkdirAll(agentsDir, stateDirPerm); err != nil {
 		t.Fatalf("create agents dir: %v", err)
 	}
@@ -116,7 +117,7 @@ func TestInstallOrUpdate_ReportsUpdateCleanupProgress(t *testing.T) {
 	var out bytes.Buffer
 	m := statusTestManager(home, successReleaseHTTPClient(t, "v2.0.0", zipBytes(t, map[string]string{"agents/new.agent.md": "fresh"}), zipBytes(t, bundleBinaryFiles("mcp-binary", "web-binary"))), &out)
 
-	stateDir := filepath.Join(home, ".local", "share", "ccsubagents")
+	stateDir := globalStateDirForTest(home)
 	if err := os.MkdirAll(stateDir, stateDirPerm); err != nil {
 		t.Fatalf("create state dir: %v", err)
 	}
@@ -142,13 +143,14 @@ func TestInstallOrUpdate_ReportsUpdateCleanupProgress(t *testing.T) {
 	}
 
 	status := out.String()
+	agentInstallLine := fmt.Sprintf("✓ Installed agent definitions (→ %s)", globalAgentsTildePathForTest(home))
 	assertStatusContainsInOrder(t, status, []string{
 		"ccsubagents v2.0.0",
 		"✓ Checked for existing installation (v1.9.9 found)",
 		"✓ Downloaded release assets (v2.0.0)",
 		"✓ Verified attestations",
 		"✓ Installed binaries (→ ~/.local/bin)",
-		"✓ Installed agent definitions (→ ~/.local/share/ccsubagents/agents)",
+		agentInstallLine,
 		"✓ Updated VS Code settings and MCP config",
 		"✓ Removed stale managed agent files",
 		"Update complete.",
@@ -192,7 +194,7 @@ func TestInstallOrUpdate_ReportsAlreadyLatestNoopForUpdate(t *testing.T) {
 	var out bytes.Buffer
 	m := statusTestManager(home, client, &out)
 
-	stateDir := filepath.Join(home, ".local", "share", "ccsubagents")
+	stateDir := globalStateDirForTest(home)
 	if err := os.MkdirAll(stateDir, stateDirPerm); err != nil {
 		t.Fatalf("create state dir: %v", err)
 	}
@@ -338,7 +340,7 @@ func TestUninstall_ReportsNoopWhenNoTrackedState(t *testing.T) {
 
 func TestUninstall_ReportsProgressOnTrackedState(t *testing.T) {
 	home := t.TempDir()
-	agentsDir := filepath.Join(home, ".local", "share", "ccsubagents", "agents")
+	agentsDir := globalAgentsDirForTest(home)
 	if err := os.MkdirAll(agentsDir, stateDirPerm); err != nil {
 		t.Fatalf("create agents dir: %v", err)
 	}
@@ -350,7 +352,7 @@ func TestUninstall_ReportsProgressOnTrackedState(t *testing.T) {
 	var out bytes.Buffer
 	m := statusTestManager(home, &http.Client{}, &out)
 
-	stateDir := filepath.Join(home, ".local", "share", "ccsubagents")
+	stateDir := globalStateDirForTest(home)
 	if err := os.MkdirAll(stateDir, stateDirPerm); err != nil {
 		t.Fatalf("create state dir: %v", err)
 	}

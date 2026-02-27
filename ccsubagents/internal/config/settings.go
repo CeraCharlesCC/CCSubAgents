@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/paths"
 	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/versiontag"
 )
 
@@ -32,13 +33,14 @@ const (
 )
 
 func ResolveSettingsPaths(home, cwd string) (string, string) {
-	globalPath := filepath.Join(home, ".local", "share", "ccsubagents", "settings.json")
-	cleanCwd := filepath.Clean(cwd)
-	localRoot := cleanCwd
-	if !strings.EqualFold(filepath.Base(cleanCwd), "ccsubagents") {
-		localRoot = filepath.Join(cleanCwd, "ccsubagents")
+	globalLayout := paths.Global(home)
+	if configOverride := strings.TrimSpace(os.Getenv(paths.EnvConfigDir)); configOverride != "" {
+		globalLayout.ConfigDir = filepath.Clean(configOverride)
 	}
-	localPath := filepath.Join(localRoot, "settings.json")
+	workspaceLayout := paths.Workspace(cwd)
+
+	globalPath := filepath.Join(globalLayout.ConfigDir, "settings.json")
+	localPath := filepath.Join(workspaceLayout.ConfigDir, "settings.json")
 	return globalPath, localPath
 }
 

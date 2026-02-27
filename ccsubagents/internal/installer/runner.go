@@ -24,6 +24,7 @@ const (
 	assetAgentsZip         = "agents.zip"
 	assetArtifactMCP       = "local-artifact-mcp"
 	assetArtifactWeb       = "local-artifact-web"
+	assetCCSubagentsd      = "ccsubagentsd"
 	localArtifactTagPrefix = "local-artifact/"
 
 	binaryInstallDirDefaultRel    = ".local/bin"
@@ -228,6 +229,10 @@ func exeSuffix(goos string) string {
 func localArtifactBinaryNames(goos string) (mcp, web string) {
 	suffix := exeSuffix(goos)
 	return assetArtifactMCP + suffix, assetArtifactWeb + suffix
+}
+
+func ccsubagentsdBinaryName(goos string) string {
+	return assetCCSubagentsd + exeSuffix(goos)
 }
 
 func localArtifactBundleAssetName(goos, goarch string) string {

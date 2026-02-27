@@ -9,7 +9,7 @@ import (
 
 func TestServerSaveResolveListAndGetPrevRefVersioning(t *testing.T) {
 	ctx := context.Background()
-	s := New(t.TempDir())
+	s := newDaemonBackedServer(t)
 
 	firstRespAny, rpcErr := s.toolSaveText(ctx, mustRawJSON(t, map[string]any{"name": "plan/task-123", "text": "first"}))
 	if rpcErr != nil {
@@ -86,7 +86,7 @@ func TestServerSaveResolveListAndGetPrevRefVersioning(t *testing.T) {
 
 func TestServerSaveTextRejectsEmptyOrWhitespaceText(t *testing.T) {
 	ctx := context.Background()
-	s := New(t.TempDir())
+	s := newDaemonBackedServer(t)
 
 	tests := []struct {
 		name string

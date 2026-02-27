@@ -9,15 +9,16 @@ import (
 	"log"
 	"sync"
 
-	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/domain"
-	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/infrastructure/filestore"
+	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/core/workspaces"
+	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/presentation/daemon"
 )
 
 type Server struct {
 	baseStoreRoot string
+	daemonClient  *daemon.Client
 
 	sessionMu sync.RWMutex
-	svc       *domain.Service
+	workspace daemon.WorkspaceSelector
 
 	initialized        bool
 	clientCapabilities map[string]any
@@ -34,11 +35,24 @@ type Server struct {
 }
 
 func New(baseStoreRoot string) *Server {
-	globalRepo := filestore.New(baseStoreRoot)
+	token, err := daemon.ReadToken(baseStoreRoot)
+	if err != nil {
+		log.Printf("event=daemon_token_read_failed error=%q", err.Error())
+	}
+	return NewWithClient(baseStoreRoot, daemon.NewDefaultClient(baseStoreRoot, token))
+}
+
+func NewWithClient(baseStoreRoot string, daemonClient *daemon.Client) *Server {
+	if daemonClient == nil {
+		daemonClient = daemon.NewUnavailableClient(errors.New("daemon client not configured"))
+	}
 	return &Server{
 		baseStoreRoot: baseStoreRoot,
-		svc:           domain.NewService(globalRepo),
-		pending:       map[string]chan jsonRPCResponse{},
+		daemonClient:  daemonClient,
+		workspace: daemon.WorkspaceSelector{
+			WorkspaceID: workspaces.GlobalWorkspaceID,
+		},
+		pending: map[string]chan jsonRPCResponse{},
 	}
 }
 

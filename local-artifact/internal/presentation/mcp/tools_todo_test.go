@@ -9,7 +9,7 @@ import (
 
 func TestToolsCall_TodoRegistryPathSupportsCanonicalAndAlias(t *testing.T) {
 	ctx := context.Background()
-	s := New(t.TempDir())
+	s := newDaemonBackedServer(t)
 
 	for _, toolName := range []string{toolArtifactTodo, "artifact.todo"} {
 		toolName := toolName
@@ -52,7 +52,7 @@ func TestToolsCall_TodoRegistryPathSupportsCanonicalAndAlias(t *testing.T) {
 
 func TestToolTodo_ReadMissingReturnsEmptyList(t *testing.T) {
 	ctx := context.Background()
-	s := New(t.TempDir())
+	s := newDaemonBackedServer(t)
 
 	respAny, rpcErr := s.toolTodo(ctx, mustRawJSON(t, map[string]any{
 		"operation": "read",
@@ -82,7 +82,7 @@ func TestToolTodo_ReadMissingReturnsEmptyList(t *testing.T) {
 
 func TestToolTodo_WriteThenReadRoundTrip(t *testing.T) {
 	ctx := context.Background()
-	s := New(t.TempDir())
+	s := newDaemonBackedServer(t)
 
 	writeRespAny, rpcErr := s.toolTodo(ctx, mustRawJSON(t, map[string]any{
 		"operation": "write",
@@ -138,7 +138,7 @@ func TestToolTodo_WriteThenReadRoundTrip(t *testing.T) {
 
 func TestToolTodo_WriteWithRefSelectorResolvesBaseName(t *testing.T) {
 	ctx := context.Background()
-	s := New(t.TempDir())
+	s := newDaemonBackedServer(t)
 
 	baseRespAny, rpcErr := s.toolSaveText(ctx, mustRawJSON(t, map[string]any{
 		"name": "plan/task-by-ref",
@@ -171,7 +171,7 @@ func TestToolTodo_WriteWithRefSelectorResolvesBaseName(t *testing.T) {
 
 func TestToolTodo_StaleExpectedPrevRefReturnsConflict(t *testing.T) {
 	ctx := context.Background()
-	s := New(t.TempDir())
+	s := newDaemonBackedServer(t)
 
 	firstAny, rpcErr := s.toolTodo(ctx, mustRawJSON(t, map[string]any{
 		"operation": "write",
@@ -215,7 +215,7 @@ func TestToolTodo_StaleExpectedPrevRefReturnsConflict(t *testing.T) {
 
 func TestToolTodo_WriteWithoutTodoListReturnsInvalidInput(t *testing.T) {
 	ctx := context.Background()
-	s := New(t.TempDir())
+	s := newDaemonBackedServer(t)
 
 	writeRespAny, rpcErr := s.toolTodo(ctx, mustRawJSON(t, map[string]any{
 		"operation": "write",
@@ -251,7 +251,7 @@ func TestToolTodo_WriteWithoutTodoListReturnsInvalidInput(t *testing.T) {
 
 func TestToolTodo_RejectsUnknownTopLevelField(t *testing.T) {
 	ctx := context.Background()
-	s := New(t.TempDir())
+	s := newDaemonBackedServer(t)
 
 	respAny, rpcErr := s.toolTodo(ctx, mustRawJSON(t, map[string]any{
 		"operation": "read",
@@ -275,7 +275,7 @@ func TestToolTodo_RejectsUnknownTopLevelField(t *testing.T) {
 
 func TestToolTodo_RejectsUnknownArtifactSelectorField(t *testing.T) {
 	ctx := context.Background()
-	s := New(t.TempDir())
+	s := newDaemonBackedServer(t)
 
 	respAny, rpcErr := s.toolTodo(ctx, mustRawJSON(t, map[string]any{
 		"operation": "read",
@@ -301,7 +301,7 @@ func TestToolTodo_RejectsUnknownArtifactSelectorField(t *testing.T) {
 
 func TestToolTodo_RejectsUnknownTodoItemField(t *testing.T) {
 	ctx := context.Background()
-	s := New(t.TempDir())
+	s := newDaemonBackedServer(t)
 
 	respAny, rpcErr := s.toolTodo(ctx, mustRawJSON(t, map[string]any{
 		"operation": "write",
@@ -332,7 +332,7 @@ func TestToolTodo_RejectsUnknownTodoItemField(t *testing.T) {
 
 func TestToolTodo_WriteRejectsOmittedRequiredTodoItemFields(t *testing.T) {
 	ctx := context.Background()
-	s := New(t.TempDir())
+	s := newDaemonBackedServer(t)
 
 	testCases := []struct {
 		name           string
@@ -384,7 +384,7 @@ func TestToolTodo_WriteRejectsOmittedRequiredTodoItemFields(t *testing.T) {
 
 func TestToolTodo_WriteRejectsNullTodoItemPayload(t *testing.T) {
 	ctx := context.Background()
-	s := New(t.TempDir())
+	s := newDaemonBackedServer(t)
 
 	respAny, rpcErr := s.toolTodo(ctx, mustRawJSON(t, map[string]any{
 		"operation": "write",
@@ -409,7 +409,7 @@ func TestToolTodo_WriteRejectsNullTodoItemPayload(t *testing.T) {
 
 func TestToolsCall_TodoUnknownFieldRejectionParity_CanonicalAndAlias(t *testing.T) {
 	ctx := context.Background()
-	s := New(t.TempDir())
+	s := newDaemonBackedServer(t)
 
 	const expected = "Invalid arguments: expected {operation, artifact, todoList?, expectedPrevRef?}"
 	messages := map[string]string{}
@@ -447,7 +447,7 @@ func TestToolsCall_TodoUnknownFieldRejectionParity_CanonicalAndAlias(t *testing.
 
 func TestToolTodo_ReadMalformedStoredTODOJSONReturnsError(t *testing.T) {
 	ctx := context.Background()
-	s := New(t.TempDir())
+	s := newDaemonBackedServer(t)
 
 	saveRespAny, rpcErr := s.toolSaveBlob(ctx, mustRawJSON(t, map[string]any{
 		"name":       "plan/task-malformed/todo",
@@ -480,7 +480,7 @@ func TestToolTodo_ReadMalformedStoredTODOJSONReturnsError(t *testing.T) {
 
 func TestToolTodo_ValidationErrors(t *testing.T) {
 	ctx := context.Background()
-	s := New(t.TempDir())
+	s := newDaemonBackedServer(t)
 
 	cases := []map[string]any{
 		{
@@ -524,7 +524,7 @@ func TestToolTodo_ValidationErrors(t *testing.T) {
 }
 
 func TestToolsList_ExposesTodoDefinitionWithStrictNestedSchemas(t *testing.T) {
-	toolsResp, rpcErr := New(t.TempDir()).handleToolsList(nil)
+	toolsResp, rpcErr := newDaemonBackedServer(t).handleToolsList(nil)
 	if rpcErr != nil {
 		t.Fatalf("tools/list error: %+v", rpcErr)
 	}

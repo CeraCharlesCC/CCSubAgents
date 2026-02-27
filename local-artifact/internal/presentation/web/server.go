@@ -22,8 +22,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/domain"
-	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/infrastructure/filestore"
+	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/core/artifacts"
+	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/core/workspaces"
+	artsqlite "github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/infrastructure/sqlite"
 )
 
 var subspaceHashPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
@@ -40,21 +41,64 @@ const csrfTokenBytes = 32
 
 type Server struct {
 	baseStoreRoot string
+	registry      workspaces.Registry
 	mu            sync.Mutex
-	serviceByKey  map[string]*domain.Service
+	serviceByKey  map[string]*artifacts.Service
+	closeByKey    map[string]func() error
+	resolver      ServiceResolver
 }
 
+type ServiceResolver func(selector string) (*artifacts.Service, error)
+
 func New(baseStoreRoot string) *Server {
+	return NewWithServiceResolver(baseStoreRoot, nil)
+}
+
+func NewWithServiceResolver(baseStoreRoot string, resolver ServiceResolver) *Server {
+	var registry workspaces.Registry
+	sqliteRegistry, err := artsqlite.NewWorkspaceRegistry(baseStoreRoot)
+	if err != nil {
+		registry = nil
+	} else {
+		registry = sqliteRegistry
+	}
 	return &Server{
 		baseStoreRoot: baseStoreRoot,
-		serviceByKey:  make(map[string]*domain.Service),
+		registry:      registry,
+		serviceByKey:  make(map[string]*artifacts.Service),
+		closeByKey:    make(map[string]func() error),
+		resolver:      resolver,
 	}
+}
+
+func (s *Server) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var firstErr error
+	for _, closeFn := range s.closeByKey {
+		if closeFn == nil {
+			continue
+		}
+		if err := closeFn(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if closer, ok := s.registry.(interface{ Close() error }); ok {
+		if err := closer.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+
+	s.serviceByKey = make(map[string]*artifacts.Service)
+	s.closeByKey = make(map[string]func() error)
+	return firstErr
 }
 
 func (s *Server) Serve(ctx context.Context, addr string) error {
 	httpServer := &http.Server{
 		Addr:    addr,
-		Handler: s.routes(),
+		Handler: s.Handler(),
 	}
 
 	errCh := make(chan error, 1)
@@ -74,6 +118,10 @@ func (s *Server) Serve(ctx context.Context, addr string) error {
 		}
 		return err
 	}
+}
+
+func (s *Server) Handler() http.Handler {
+	return s.routes()
 }
 
 func (s *Server) routes() http.Handler {
@@ -173,7 +221,18 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 	var items []pageItem
 	if subspace != "" {
-		svc := s.serviceForSubspace(subspace)
+		svc, svcErr := s.serviceForSubspace(subspace)
+		if svcErr != nil {
+			renderIndex(w, r, pageData{
+				Subspaces:   subspaces,
+				Subspace:    subspace,
+				Prefix:      prefix,
+				Limit:       limit,
+				Error:       svcErr.Error(),
+				GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+			})
+			return
+		}
 		arts, listErr := svc.List(r.Context(), prefix, limit)
 		if listErr != nil {
 			renderIndex(w, r, pageData{
@@ -251,8 +310,8 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 
 	if parsedSelectors.single {
 		if _, err := svc.Delete(r.Context(), parsedSelectors.selectors[0]); err != nil {
-			if errors.Is(err, domain.ErrNotFound) {
-				http.Redirect(w, r, redirectBase+"&err="+url.QueryEscape(domain.ErrNotFound.Error()), http.StatusSeeOther)
+			if errors.Is(err, artifacts.ErrNotFound) {
+				http.Redirect(w, r, redirectBase+"&err="+url.QueryEscape(artifacts.ErrNotFound.Error()), http.StatusSeeOther)
 				return
 			}
 			http.Redirect(w, r, redirectBase+"&err="+url.QueryEscape(err.Error()), http.StatusSeeOther)
@@ -267,7 +326,7 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	var opErr error
 	for _, sel := range parsedSelectors.selectors {
 		if _, err := svc.Delete(r.Context(), sel); err != nil {
-			if errors.Is(err, domain.ErrNotFound) {
+			if errors.Is(err, artifacts.ErrNotFound) {
 				notFoundCount++
 				continue
 			}
@@ -357,9 +416,9 @@ func (s *Server) handleInsert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var saved domain.Artifact
+	var saved artifacts.Artifact
 	if hasText {
-		saved, err = svc.SaveText(r.Context(), domain.SaveTextInput{
+		saved, err = svc.SaveText(r.Context(), artifacts.SaveTextInput{
 			Name:     name,
 			Text:     text,
 			MimeType: mimeType,
@@ -393,7 +452,7 @@ func (s *Server) handleInsert(w http.ResponseWriter, r *http.Request) {
 		if fileHeader != nil {
 			uploadFilename = sanitizeFilename(fileHeader.Filename)
 		}
-		saved, err = svc.SaveBlob(r.Context(), domain.SaveBlobInput{
+		saved, err = svc.SaveBlob(r.Context(), artifacts.SaveBlobInput{
 			Name:     name,
 			Data:     data,
 			MimeType: uploadMimeType,
@@ -454,8 +513,8 @@ func (s *Server) handleAPIContent(w http.ResponseWriter, r *http.Request) {
 
 	artifact, payload, err := svc.Get(r.Context(), selector)
 	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			writeJSON(w, http.StatusNotFound, map[string]any{"error": domain.ErrNotFound.Error()})
+		if errors.Is(err, artifacts.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": artifacts.ErrNotFound.Error()})
 			return
 		}
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
@@ -518,8 +577,8 @@ func (s *Server) handleAPIDelete(w http.ResponseWriter, r *http.Request) {
 	if parsedSelectors.single {
 		deletedItem, deleteErr := svc.Delete(r.Context(), parsedSelectors.selectors[0])
 		if deleteErr != nil {
-			if errors.Is(deleteErr, domain.ErrNotFound) {
-				writeJSON(w, http.StatusNotFound, map[string]any{"error": domain.ErrNotFound.Error()})
+			if errors.Is(deleteErr, artifacts.ErrNotFound) {
+				writeJSON(w, http.StatusNotFound, map[string]any{"error": artifacts.ErrNotFound.Error()})
 				return
 			}
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": deleteErr.Error()})
@@ -532,12 +591,12 @@ func (s *Server) handleAPIDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	deleted := make([]domain.Artifact, 0, len(parsedSelectors.selectors))
+	deleted := make([]artifacts.Artifact, 0, len(parsedSelectors.selectors))
 	notFoundCount := 0
 	for idx, sel := range parsedSelectors.selectors {
 		item, deleteErr := svc.Delete(r.Context(), sel)
 		if deleteErr != nil {
-			if errors.Is(deleteErr, domain.ErrNotFound) {
+			if errors.Is(deleteErr, artifacts.ErrNotFound) {
 				notFoundCount++
 				continue
 			}
@@ -560,7 +619,7 @@ func (s *Server) handleAPIDelete(w http.ResponseWriter, r *http.Request) {
 			"error":        "artifacts not found",
 			"deleted":      false,
 			"deletedCount": 0,
-			"artifacts":    []domain.Artifact{},
+			"artifacts":    []artifacts.Artifact{},
 		})
 		return
 	}
@@ -612,9 +671,9 @@ func (s *Server) handleAPISave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var saved domain.Artifact
+	var saved artifacts.Artifact
 	if hasText {
-		saved, err = svc.SaveText(r.Context(), domain.SaveTextInput{
+		saved, err = svc.SaveText(r.Context(), artifacts.SaveTextInput{
 			Name:     req.Name,
 			Text:     *req.Text,
 			MimeType: req.MimeType,
@@ -637,7 +696,7 @@ func (s *Server) handleAPISave(w http.ResponseWriter, r *http.Request) {
 				mimeType = "application/octet-stream"
 			}
 		}
-		saved, err = svc.SaveBlob(r.Context(), domain.SaveBlobInput{
+		saved, err = svc.SaveBlob(r.Context(), artifacts.SaveBlobInput{
 			Name:     req.Name,
 			Data:     data,
 			MimeType: mimeType,
@@ -670,7 +729,7 @@ func indexRedirectBase(subspace string, prefix string, limitRaw string) string {
 }
 
 type deleteSelectorRequest struct {
-	selectors []domain.Selector
+	selectors []artifacts.Selector
 	single    bool
 }
 
@@ -679,41 +738,41 @@ func parseDeleteSelectors(values url.Values) (deleteSelectorRequest, error) {
 	refs := trimUniqueNonEmpty(values["ref"])
 
 	if len(names) > 0 && len(refs) > 0 {
-		return deleteSelectorRequest{}, domain.ErrRefAndNameMutuallyExclusive
+		return deleteSelectorRequest{}, artifacts.ErrRefAndNameMutuallyExclusive
 	}
 
-	selectors := make([]domain.Selector, 0, len(names)+len(refs))
+	selectors := make([]artifacts.Selector, 0, len(names)+len(refs))
 	for _, name := range names {
-		selectors = append(selectors, domain.Selector{Name: name})
+		selectors = append(selectors, artifacts.Selector{Name: name})
 	}
 	for _, ref := range refs {
-		selectors = append(selectors, domain.Selector{Ref: ref})
+		selectors = append(selectors, artifacts.Selector{Ref: ref})
 	}
 
 	if len(selectors) == 0 {
-		return deleteSelectorRequest{}, domain.ErrRefOrName
+		return deleteSelectorRequest{}, artifacts.ErrRefOrName
 	}
 
 	return deleteSelectorRequest{selectors: selectors, single: len(selectors) == 1}, nil
 }
 
-func parseSingleSelector(values url.Values) (domain.Selector, error) {
+func parseSingleSelector(values url.Values) (artifacts.Selector, error) {
 	names := trimUniqueNonEmpty(values["name"])
 	refs := trimUniqueNonEmpty(values["ref"])
 
 	if len(names) > 0 && len(refs) > 0 {
-		return domain.Selector{}, domain.ErrRefAndNameMutuallyExclusive
+		return artifacts.Selector{}, artifacts.ErrRefAndNameMutuallyExclusive
 	}
 	if len(names)+len(refs) == 0 {
-		return domain.Selector{}, domain.ErrRefOrName
+		return artifacts.Selector{}, artifacts.ErrRefOrName
 	}
 	if len(names)+len(refs) > 1 {
-		return domain.Selector{}, errors.New("provide exactly one ref or name")
+		return artifacts.Selector{}, errors.New("provide exactly one ref or name")
 	}
 	if len(names) == 1 {
-		return domain.Selector{Name: names[0]}, nil
+		return artifacts.Selector{Name: names[0]}, nil
 	}
-	return domain.Selector{Ref: refs[0]}, nil
+	return artifacts.Selector{Ref: refs[0]}, nil
 }
 
 func sanitizeFilename(raw string) string {
@@ -735,7 +794,7 @@ func sanitizeFilename(raw string) string {
 	return strings.TrimSpace(name)
 }
 
-func artifactDownloadFilename(artifact domain.Artifact) string {
+func artifactDownloadFilename(artifact artifacts.Artifact) string {
 	if name := sanitizeFilename(artifact.Filename); name != "" {
 		return name
 	}
@@ -754,9 +813,9 @@ func attachmentDisposition(filename string) string {
 	return disposition
 }
 
-func prevalidateDeleteSelectors(ctx context.Context, svc *domain.Service, selectors []domain.Selector) error {
+func prevalidateDeleteSelectors(ctx context.Context, svc *artifacts.Service, selectors []artifacts.Selector) error {
 	for _, selector := range selectors {
-		if err := domain.ValidateSelector(selector); err != nil {
+		if err := artifacts.ValidateSelector(selector); err != nil {
 			return err
 		}
 		if selector.Ref != "" {
@@ -768,7 +827,7 @@ func prevalidateDeleteSelectors(ctx context.Context, svc *domain.Service, select
 		if selector.Name != "" {
 			_, err = svc.Resolve(ctx, selector.Name)
 		}
-		if err == nil || errors.Is(err, domain.ErrNotFound) {
+		if err == nil || errors.Is(err, artifacts.ErrNotFound) {
 			continue
 		}
 		return err
@@ -856,7 +915,7 @@ func validateCSRFToken(r *http.Request) error {
 	return nil
 }
 
-func (s *Server) serviceFromSelectedSubspace(rawSubspace string) (*domain.Service, error) {
+func (s *Server) serviceFromSelectedSubspace(rawSubspace string) (*artifacts.Service, error) {
 	subspace := normalizeSubspaceSelector(rawSubspace)
 	if !isValidSubspaceSelector(subspace) {
 		return nil, errors.New("subspace must be 64 lowercase hex or global")
@@ -868,10 +927,10 @@ func (s *Server) serviceFromSelectedSubspace(rawSubspace string) (*domain.Servic
 	if !ok {
 		return nil, errors.New("selected subspace not found")
 	}
-	return s.serviceForSubspace(subspace), nil
+	return s.serviceForSubspace(subspace)
 }
 
-func (s *Server) serviceFromQuerySubspace(rawSubspace string) (*domain.Service, error) {
+func (s *Server) serviceFromQuerySubspace(rawSubspace string) (*artifacts.Service, error) {
 	subspace := normalizeSubspaceSelector(rawSubspace)
 	if subspace == "" {
 		subspace = globalSubspaceSelector
@@ -879,7 +938,7 @@ func (s *Server) serviceFromQuerySubspace(rawSubspace string) (*domain.Service, 
 	return s.serviceFromSelectedSubspace(subspace)
 }
 
-func (s *Server) serviceForSubspace(selector string) *domain.Service {
+func (s *Server) serviceForSubspace(selector string) (*artifacts.Service, error) {
 	selector = normalizeSubspaceSelector(selector)
 	if selector == "" {
 		selector = globalSubspaceSelector
@@ -889,17 +948,41 @@ func (s *Server) serviceForSubspace(selector string) *domain.Service {
 	defer s.mu.Unlock()
 
 	if existing := s.serviceByKey[selector]; existing != nil {
-		return existing
+		return existing, nil
+	}
+	if s.resolver != nil {
+		svc, err := s.resolver(selector)
+		if err != nil {
+			return nil, err
+		}
+		if svc == nil {
+			return nil, errors.New("workspace service unavailable")
+		}
+		s.serviceByKey[selector] = svc
+		s.closeByKey[selector] = nil
+		return svc, nil
 	}
 
 	storeRoot := s.baseStoreRoot
 	if selector != globalSubspaceSelector {
 		storeRoot = filepath.Join(s.baseStoreRoot, selector)
 	}
-	repo := filestore.New(storeRoot)
-	svc := domain.NewService(repo)
+	repo, err := artsqlite.NewArtifactRepository(storeRoot)
+	if err != nil {
+		return nil, err
+	}
+	svc := artifacts.NewService(repo)
+	if s.registry != nil {
+		roots := []string{}
+		workspaceID := selector
+		if workspaceID == globalSubspaceSelector {
+			workspaceID = workspaces.GlobalWorkspaceID
+		}
+		_ = s.registry.EnsureWorkspace(context.Background(), workspaceID, roots, "web")
+	}
 	s.serviceByKey[selector] = svc
-	return svc
+	s.closeByKey[selector] = repo.Close
+	return svc, nil
 }
 
 func (s *Server) discoverSubspaces() ([]string, error) {

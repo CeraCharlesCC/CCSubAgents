@@ -3,18 +3,18 @@ package mcp
 import (
 	"bufio"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
-)
 
-type indexNames struct {
-	Names map[string]string `json:"names"`
-}
+	_ "modernc.org/sqlite"
+)
 
 type protocolMessage struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -55,7 +55,7 @@ func newProtocolHarness(t *testing.T, baseStoreRoot string) *protocolHarness {
 		cancel:    cancel,
 	}
 
-	s := New(baseStoreRoot)
+	s := newDaemonBackedServerAtRoot(t, baseStoreRoot)
 	go func() {
 		h.serveErr <- s.Serve(ctx, serverInR, serverOutW)
 	}()
@@ -110,20 +110,38 @@ func (h *protocolHarness) recv() protocolMessage {
 	return protocolMessage{}
 }
 
-func readIndexNames(t *testing.T, path string) map[string]string {
+func readActiveArtifactNames(t *testing.T, dbPath string) map[string]struct{} {
 	t.Helper()
-	b, err := os.ReadFile(path)
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		return map[string]struct{}{}
+	}
+	db, err := sql.Open("sqlite", "file:"+dbPath)
 	if err != nil {
-		t.Fatalf("read index %s: %v", path, err)
+		t.Fatalf("open db %s: %v", dbPath, err)
 	}
-	var idx indexNames
-	if err := json.Unmarshal(b, &idx); err != nil {
-		t.Fatalf("unmarshal index %s: %v", path, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	rows, err := db.Query(`SELECT name FROM artifacts WHERE deleted = 0;`)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "no such table: artifacts") {
+			return map[string]struct{}{}
+		}
+		t.Fatalf("query artifacts in %s: %v", dbPath, err)
 	}
-	if idx.Names == nil {
-		return map[string]string{}
+	defer rows.Close()
+
+	out := map[string]struct{}{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatalf("scan artifact name from %s: %v", dbPath, err)
+		}
+		out[name] = struct{}{}
 	}
-	return idx.Names
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate artifact names from %s: %v", dbPath, err)
+	}
+	return out
 }
 
 func TestNormalizeRootURIs_SortsAndDeduplicates(t *testing.T) {
@@ -222,11 +240,18 @@ func TestRootsListProtocol_SuccessUsesScopedStore(t *testing.T) {
 	}
 	hash := computeSubspaceHash(normalized)
 
-	if _, err := os.Stat(filepath.Join(storeRoot, hash, "names.json")); err != nil {
-		t.Fatalf("expected scoped store index to exist: %v", err)
+	hashDB := filepath.Join(storeRoot, hash, "meta.sqlite")
+	if _, err := os.Stat(hashDB); err != nil {
+		t.Fatalf("expected scoped store sqlite metadata to exist: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(storeRoot, "names.json")); !os.IsNotExist(err) {
-		t.Fatalf("expected global store index to be absent, got err=%v", err)
+	hashNames := readActiveArtifactNames(t, hashDB)
+	if _, ok := hashNames["tests/protocol-success"]; !ok {
+		t.Fatalf("expected scoped sqlite metadata to include artifact, got: %+v", hashNames)
+	}
+
+	globalNames := readActiveArtifactNames(t, filepath.Join(storeRoot, "meta.sqlite"))
+	if _, ok := globalNames["tests/protocol-success"]; ok {
+		t.Fatalf("expected scoped write not to appear in global metadata")
 	}
 }
 
@@ -328,8 +353,9 @@ func TestRootsListProtocol_FallbackOnMethodNotFoundAndInternalError(t *testing.T
 				t.Fatalf("unexpected tool response: %+v", toolResp)
 			}
 
-			if _, err := os.Stat(filepath.Join(storeRoot, "names.json")); err != nil {
-				t.Fatalf("expected global fallback store index to exist: %v", err)
+			globalNames := readActiveArtifactNames(t, filepath.Join(storeRoot, "meta.sqlite"))
+			if _, ok := globalNames["tests/protocol-fallback"]; !ok {
+				t.Fatalf("expected global fallback artifact in sqlite metadata, got: %+v", globalNames)
 			}
 		})
 	}
@@ -424,17 +450,17 @@ func TestRootsListChangedProtocol_ReResolvesToNewScopedStore(t *testing.T) {
 		t.Fatalf("expected distinct hashes, got %s", hashFirst)
 	}
 
-	firstNames := readIndexNames(t, filepath.Join(storeRoot, hashFirst, "names.json"))
+	firstNames := readActiveArtifactNames(t, filepath.Join(storeRoot, hashFirst, "meta.sqlite"))
 	if _, ok := firstNames["tests/roots-changed-first"]; !ok {
-		t.Fatalf("expected first artifact in first subspace index, got: %+v", firstNames)
+		t.Fatalf("expected first artifact in first subspace metadata, got: %+v", firstNames)
 	}
 	if _, ok := firstNames["tests/roots-changed-second"]; ok {
-		t.Fatalf("second artifact unexpectedly present in first subspace index: %+v", firstNames)
+		t.Fatalf("second artifact unexpectedly present in first subspace metadata: %+v", firstNames)
 	}
 
-	secondNames := readIndexNames(t, filepath.Join(storeRoot, hashSecond, "names.json"))
+	secondNames := readActiveArtifactNames(t, filepath.Join(storeRoot, hashSecond, "meta.sqlite"))
 	if _, ok := secondNames["tests/roots-changed-second"]; !ok {
-		t.Fatalf("expected second artifact in second subspace index, got: %+v", secondNames)
+		t.Fatalf("expected second artifact in second subspace metadata, got: %+v", secondNames)
 	}
 }
 
@@ -507,7 +533,7 @@ func TestRootsListChangedProtocol_RefreshErrorFallsBackToGlobal(t *testing.T) {
 				t.Fatalf("unexpected write response: %+v", writeResp)
 			}
 
-			globalNames := readIndexNames(t, filepath.Join(storeRoot, "names.json"))
+			globalNames := readActiveArtifactNames(t, filepath.Join(storeRoot, "meta.sqlite"))
 			if _, ok := globalNames["tests/roots-refresh-fallback"]; !ok {
 				t.Fatalf("expected fallback artifact in global index, got: %+v", globalNames)
 			}
@@ -549,7 +575,8 @@ func TestRootsCapabilityProtocol_NonObjectSkipsRootsList(t *testing.T) {
 	if string(first.ID) != "2" || first.Error != nil {
 		t.Fatalf("unexpected tool response: %+v", first)
 	}
-	if _, err := os.Stat(filepath.Join(storeRoot, "names.json")); err != nil {
-		t.Fatalf("expected global store index to exist: %v", err)
+	globalNames := readActiveArtifactNames(t, filepath.Join(storeRoot, "meta.sqlite"))
+	if _, ok := globalNames["tests/non-object-roots"]; !ok {
+		t.Fatalf("expected global fallback artifact in sqlite metadata, got: %+v", globalNames)
 	}
 }

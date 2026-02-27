@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/domain"
+	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/core/artifacts"
 )
 
 type Store struct {
@@ -37,22 +37,22 @@ func (s *Store) ensureDirs() error {
 	return nil
 }
 
-func (s *Store) Save(ctx context.Context, a domain.Artifact, data []byte, opts domain.SaveOptions) (domain.Artifact, error) {
+func (s *Store) Save(ctx context.Context, a artifacts.Artifact, data []byte, opts artifacts.SaveOptions) (artifacts.Artifact, error) {
 	_ = ctx
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if err := s.ensureDirs(); err != nil {
-		return domain.Artifact{}, fmt.Errorf("ensure dirs: %w", err)
+		return artifacts.Artifact{}, fmt.Errorf("ensure dirs: %w", err)
 	}
 
 	idx, err := s.loadIndexLocked()
 	if err != nil {
-		return domain.Artifact{}, err
+		return artifacts.Artifact{}, err
 	}
 	existingRef := strings.TrimSpace(idx.Names[a.Name])
 	if expected := strings.TrimSpace(opts.ExpectedPrevRef); expected != "" && expected != existingRef {
-		return domain.Artifact{}, fmt.Errorf("%w: expectedPrevRef=%q current=%q", domain.ErrConflict, expected, existingRef)
+		return artifacts.Artifact{}, fmt.Errorf("%w: expectedPrevRef=%q current=%q", artifacts.ErrConflict, expected, existingRef)
 	}
 	if existingRef != "" && existingRef != a.Ref {
 		a.PrevRef = existingRef
@@ -60,22 +60,22 @@ func (s *Store) Save(ctx context.Context, a domain.Artifact, data []byte, opts d
 
 	objPath := filepath.Join(s.root, "objects", a.Ref)
 	if err := atomicWriteFile(objPath, data, 0o644); err != nil {
-		return domain.Artifact{}, fmt.Errorf("write object: %w", err)
+		return artifacts.Artifact{}, fmt.Errorf("write object: %w", err)
 	}
 
 	metaBytes, err := json.Marshal(a)
 	if err != nil {
-		return domain.Artifact{}, fmt.Errorf("marshal meta: %w", err)
+		return artifacts.Artifact{}, fmt.Errorf("marshal meta: %w", err)
 	}
 	metaPath := filepath.Join(s.root, "meta", a.Ref+".json")
 	if err := atomicWriteFile(metaPath, metaBytes, 0o644); err != nil {
-		return domain.Artifact{}, fmt.Errorf("write meta: %w", err)
+		return artifacts.Artifact{}, fmt.Errorf("write meta: %w", err)
 	}
 
 	idx.Names[a.Name] = a.Ref
 	idx.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	if err := s.saveIndexLocked(idx); err != nil {
-		return domain.Artifact{}, err
+		return artifacts.Artifact{}, err
 	}
 
 	return a, nil
@@ -92,7 +92,7 @@ func (s *Store) Resolve(ctx context.Context, name string) (string, error) {
 	}
 	ref, ok := idx.Names[name]
 	if !ok || strings.TrimSpace(ref) == "" {
-		return "", domain.ErrNotFound
+		return "", artifacts.ErrNotFound
 	}
 
 	exists, err := s.artifactExistsLocked(ref)
@@ -105,13 +105,13 @@ func (s *Store) Resolve(ctx context.Context, name string) (string, error) {
 		if err := s.saveIndexLocked(idx); err != nil {
 			return "", err
 		}
-		return "", domain.ErrNotFound
+		return "", artifacts.ErrNotFound
 	}
 
 	return ref, nil
 }
 
-func (s *Store) Get(ctx context.Context, sel domain.Selector) (domain.Artifact, []byte, error) {
+func (s *Store) Get(ctx context.Context, sel artifacts.Selector) (artifacts.Artifact, []byte, error) {
 	_ = ctx
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -121,11 +121,11 @@ func (s *Store) Get(ctx context.Context, sel domain.Selector) (domain.Artifact, 
 	if ref == "" {
 		idx, err := s.loadIndexLocked()
 		if err != nil {
-			return domain.Artifact{}, nil, err
+			return artifacts.Artifact{}, nil, err
 		}
 		r, ok := idx.Names[resolvedByName]
 		if !ok || strings.TrimSpace(r) == "" {
-			return domain.Artifact{}, nil, domain.ErrNotFound
+			return artifacts.Artifact{}, nil, artifacts.ErrNotFound
 		}
 		ref = r
 	}
@@ -142,13 +142,13 @@ func (s *Store) Get(ctx context.Context, sel domain.Selector) (domain.Artifact, 
 					_ = s.saveIndexLocked(idx)
 				}
 			}
-			return domain.Artifact{}, nil, domain.ErrNotFound
+			return artifacts.Artifact{}, nil, artifacts.ErrNotFound
 		}
-		return domain.Artifact{}, nil, fmt.Errorf("read meta: %w", err)
+		return artifacts.Artifact{}, nil, fmt.Errorf("read meta: %w", err)
 	}
-	var a domain.Artifact
+	var a artifacts.Artifact
 	if err := json.Unmarshal(metaBytes, &a); err != nil {
-		return domain.Artifact{}, nil, fmt.Errorf("unmarshal meta: %w", err)
+		return artifacts.Artifact{}, nil, fmt.Errorf("unmarshal meta: %w", err)
 	}
 
 	objPath := filepath.Join(s.root, "objects", ref)
@@ -163,14 +163,14 @@ func (s *Store) Get(ctx context.Context, sel domain.Selector) (domain.Artifact, 
 					_ = s.saveIndexLocked(idx)
 				}
 			}
-			return domain.Artifact{}, nil, domain.ErrNotFound
+			return artifacts.Artifact{}, nil, artifacts.ErrNotFound
 		}
-		return domain.Artifact{}, nil, fmt.Errorf("read object: %w", err)
+		return artifacts.Artifact{}, nil, fmt.Errorf("read object: %w", err)
 	}
 	return a, data, nil
 }
 
-func (s *Store) List(ctx context.Context, prefix string, limit int) ([]domain.Artifact, error) {
+func (s *Store) List(ctx context.Context, prefix string, limit int) ([]artifacts.Artifact, error) {
 	_ = ctx
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -193,7 +193,7 @@ func (s *Store) List(ctx context.Context, prefix string, limit int) ([]domain.Ar
 		limit = 200
 	}
 
-	out := make([]domain.Artifact, 0, min(limit, len(names)))
+	out := make([]artifacts.Artifact, 0, min(limit, len(names)))
 	dirtyIndex := false
 	for _, name := range names {
 		if len(out) >= limit {
@@ -226,7 +226,7 @@ func (s *Store) List(ctx context.Context, prefix string, limit int) ([]domain.Ar
 			}
 			continue
 		}
-		var a domain.Artifact
+		var a artifacts.Artifact
 		if err := json.Unmarshal(metaBytes, &a); err != nil {
 			delete(idx.Names, name)
 			dirtyIndex = true
@@ -247,14 +247,55 @@ func (s *Store) List(ctx context.Context, prefix string, limit int) ([]domain.Ar
 	return out, nil
 }
 
-func (s *Store) Delete(ctx context.Context, sel domain.Selector) (domain.Artifact, error) {
+func (s *Store) ListVersions(ctx context.Context, name string, limit int) ([]artifacts.Artifact, error) {
+	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if limit <= 0 {
+		limit = 200
+	}
+
+	idx, err := s.loadIndexLocked()
+	if err != nil {
+		return nil, err
+	}
+	ref := strings.TrimSpace(idx.Names[name])
+	if ref == "" {
+		return nil, artifacts.ErrNotFound
+	}
+
+	out := make([]artifacts.Artifact, 0, limit)
+	for ref != "" && len(out) < limit {
+		metaPath := filepath.Join(s.root, "meta", ref+".json")
+		metaBytes, err := os.ReadFile(metaPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				break
+			}
+			return nil, fmt.Errorf("read meta: %w", err)
+		}
+		var a artifacts.Artifact
+		if err := json.Unmarshal(metaBytes, &a); err != nil {
+			return nil, fmt.Errorf("unmarshal meta: %w", err)
+		}
+		out = append(out, a)
+		ref = strings.TrimSpace(a.PrevRef)
+	}
+	if len(out) == 0 {
+		return nil, artifacts.ErrNotFound
+	}
+	return out, nil
+}
+
+func (s *Store) Delete(ctx context.Context, sel artifacts.Selector) (artifacts.Artifact, error) {
 	_ = ctx
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	idx, err := s.loadIndexLocked()
 	if err != nil {
-		return domain.Artifact{}, err
+		return artifacts.Artifact{}, err
 	}
 
 	ref := strings.TrimSpace(sel.Ref)
@@ -264,7 +305,7 @@ func (s *Store) Delete(ctx context.Context, sel domain.Selector) (domain.Artifac
 		name := strings.TrimSpace(sel.Name)
 		r, ok := idx.Names[name]
 		if !ok || strings.TrimSpace(r) == "" {
-			return domain.Artifact{}, domain.ErrNotFound
+			return artifacts.Artifact{}, artifacts.ErrNotFound
 		}
 		ref = r
 		namesToDelete = append(namesToDelete, name)
@@ -280,26 +321,26 @@ func (s *Store) Delete(ctx context.Context, sel domain.Selector) (domain.Artifac
 	metaPath := filepath.Join(s.root, "meta", ref+".json")
 	objPath := filepath.Join(s.root, "objects", ref)
 
-	var out domain.Artifact
+	var out artifacts.Artifact
 	metaBytes, metaErr := os.ReadFile(metaPath)
 	if metaErr == nil {
 		if err := json.Unmarshal(metaBytes, &out); err != nil {
-			return domain.Artifact{}, fmt.Errorf("unmarshal meta: %w", err)
+			return artifacts.Artifact{}, fmt.Errorf("unmarshal meta: %w", err)
 		}
 	} else if !os.IsNotExist(metaErr) {
-		return domain.Artifact{}, fmt.Errorf("read meta: %w", metaErr)
+		return artifacts.Artifact{}, fmt.Errorf("read meta: %w", metaErr)
 	}
 
 	objRemoved, metaRemoved := false, false
 	if err := os.Remove(objPath); err == nil {
 		objRemoved = true
 	} else if !os.IsNotExist(err) {
-		return domain.Artifact{}, fmt.Errorf("delete object: %w", err)
+		return artifacts.Artifact{}, fmt.Errorf("delete object: %w", err)
 	}
 	if err := os.Remove(metaPath); err == nil {
 		metaRemoved = true
 	} else if !os.IsNotExist(err) {
-		return domain.Artifact{}, fmt.Errorf("delete meta: %w", err)
+		return artifacts.Artifact{}, fmt.Errorf("delete meta: %w", err)
 	}
 
 	for _, name := range namesToDelete {
@@ -308,12 +349,12 @@ func (s *Store) Delete(ctx context.Context, sel domain.Selector) (domain.Artifac
 	if len(namesToDelete) > 0 {
 		idx.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 		if err := s.saveIndexLocked(idx); err != nil {
-			return domain.Artifact{}, err
+			return artifacts.Artifact{}, err
 		}
 	}
 
 	if len(namesToDelete) == 0 && !objRemoved && !metaRemoved && errors.Is(metaErr, os.ErrNotExist) {
-		return domain.Artifact{}, domain.ErrNotFound
+		return artifacts.Artifact{}, artifacts.ErrNotFound
 	}
 
 	if strings.TrimSpace(out.Ref) == "" {
