@@ -7,11 +7,13 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 
+	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/config"
 	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/daemonclient"
 	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/paths"
 )
@@ -20,7 +22,7 @@ var artifactRefPattern = regexp.MustCompile(`^\d{8}T\d{6}(?:\.\d{3})?Z-[0-9a-f]{
 
 func runArtifacts(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "Usage: ccsubagents artifacts <ls|get|put>")
+		fmt.Fprintln(stderr, "Usage: ccsubagents artifacts <ls|get|put|openwebui>")
 		return 2
 	}
 	home, err := os.UserHomeDir()
@@ -29,15 +31,60 @@ func runArtifacts(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		return 1
 	}
 	stateDir := paths.ResolveDaemonStateDir(home, os.Getenv)
-	client, err := daemonclient.NewDefaultClient(stateDir, os.Getenv)
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
+
+	var client *daemonclient.Client
+	getClient := func() (*daemonclient.Client, error) {
+		if client != nil {
+			return client, nil
+		}
+		resolved, err := daemonclient.NewDefaultClient(stateDir, os.Getenv)
+		if err != nil {
+			return nil, err
+		}
+		client = resolved
+		return client, nil
 	}
 
 	sub := strings.TrimSpace(args[0])
 	switch sub {
+	case "openwebui":
+		cwd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		settings, err := config.LoadMergedInstallSettings(home, cwd)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+
+		addr := "127.0.0.1:19130"
+		if envAddr := strings.TrimSpace(os.Getenv("LOCAL_ARTIFACT_WEB_UI_ADDR")); envAddr != "" {
+			addr = envAddr
+		} else if settings.WebUIPort != 0 {
+			addr = fmt.Sprintf("127.0.0.1:%d", settings.WebUIPort)
+		}
+
+		if settings.NoAuth {
+			fmt.Fprintf(stdout, "http://%s/\n", addr)
+			return 0
+		}
+
+		token := daemonclient.ResolveDaemonToken(stateDir, os.Getenv)
+
+		if token == "" {
+			fmt.Fprintf(stdout, "http://%s/\n", addr)
+			return 0
+		}
+		fmt.Fprintf(stdout, "http://%s/?token=%s\n", addr, url.QueryEscape(token))
+		return 0
 	case "ls":
+		client, err := getClient()
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
 		fs := flag.NewFlagSet("artifacts ls", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
 		prefix := fs.String("prefix", "", "name prefix")
@@ -61,6 +108,11 @@ func runArtifacts(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		}
 		return 0
 	case "get":
+		client, err := getClient()
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
 		fs := flag.NewFlagSet("artifacts get", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
 		outPath := fs.String("out", "-", "output path or - for stdout")
@@ -106,6 +158,11 @@ func runArtifacts(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		fmt.Fprintf(stdout, "wrote %s\n", *outPath)
 		return 0
 	case "put":
+		client, err := getClient()
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
 		fs := flag.NewFlagSet("artifacts put", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
 		mimeType := fs.String("mime-type", "", "content MIME type")

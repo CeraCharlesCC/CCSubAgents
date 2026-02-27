@@ -17,64 +17,89 @@ func writeSettingsFile(t *testing.T, path, content string) {
 	}
 }
 
-func TestResolveAutostartWebUI_LocalOverridesGlobal(t *testing.T) {
+func TestResolveMergedCCSubagentsSettings_LocalOverridesGlobal(t *testing.T) {
 	home := t.TempDir()
 	cwd := t.TempDir()
 
 	globalPath, localPath := resolveCCSubagentsSettingsPaths(home, cwd)
-	writeSettingsFile(t, globalPath, `{"autostart-webui": true}`)
-	writeSettingsFile(t, localPath, `{"autostart-webui": false}`)
+	writeSettingsFile(t, globalPath, `{"autostart-webui": true, "no-auth": false, "webui-port": 19131}`)
+	writeSettingsFile(t, localPath, `{"no-auth": true, "webui-port": 19130}`)
 
-	enabled, err := resolveMergedAutostartWebUI(home, cwd)
+	settings, err := resolveMergedCCSubagentsSettings(home, cwd)
 	if err != nil {
-		t.Fatalf("resolveMergedAutostartWebUI returned error: %v", err)
+		t.Fatalf("resolveMergedCCSubagentsSettings returned error: %v", err)
 	}
-	if enabled {
-		t.Fatalf("expected local override to disable autostart-webui")
+	if !settings.AutostartWebUI {
+		t.Fatalf("expected autostart-webui to remain true from global settings")
+	}
+	if !settings.NoAuth {
+		t.Fatalf("expected local override to enable no-auth")
+	}
+	if settings.WebUIPort != 19130 {
+		t.Fatalf("webui-port mismatch: got=%d want=%d", settings.WebUIPort, 19130)
 	}
 }
 
-func TestResolveAutostartWebUI_LocalEnablesWhenGlobalMissing(t *testing.T) {
+func TestResolveMergedCCSubagentsSettings_MissingFilesDefaults(t *testing.T) {
 	home := t.TempDir()
 	cwd := t.TempDir()
 
-	_, localPath := resolveCCSubagentsSettingsPaths(home, cwd)
-	writeSettingsFile(t, localPath, `{"autostart-webui": true}`)
-
-	enabled, err := resolveMergedAutostartWebUI(home, cwd)
+	settings, err := resolveMergedCCSubagentsSettings(home, cwd)
 	if err != nil {
-		t.Fatalf("resolveMergedAutostartWebUI returned error: %v", err)
+		t.Fatalf("resolveMergedCCSubagentsSettings returned error: %v", err)
 	}
-	if !enabled {
-		t.Fatalf("expected local settings to enable autostart-webui")
-	}
-}
-
-func TestResolveAutostartWebUI_MissingFilesDefaultFalse(t *testing.T) {
-	home := t.TempDir()
-	cwd := t.TempDir()
-
-	enabled, err := resolveMergedAutostartWebUI(home, cwd)
-	if err != nil {
-		t.Fatalf("expected missing files to be treated as empty settings, got %v", err)
-	}
-	if enabled {
+	if settings.AutostartWebUI {
 		t.Fatalf("expected default autostart-webui to be false")
 	}
+	if settings.NoAuth {
+		t.Fatalf("expected default no-auth to be false")
+	}
+	if settings.WebUIPort != 0 {
+		t.Fatalf("expected default webui-port to be unset (0), got %d", settings.WebUIPort)
+	}
 }
 
-func TestResolveAutostartWebUI_TypeMismatchFails(t *testing.T) {
+func TestResolveCCSubagentsSettingsPaths_ConfigDirOverride(t *testing.T) {
 	home := t.TempDir()
 	cwd := t.TempDir()
+	override := filepath.Join(t.TempDir(), "cfg")
+	t.Setenv(ccsubagentsConfigDirEnv, override)
 
-	globalPath, _ := resolveCCSubagentsSettingsPaths(home, cwd)
-	writeSettingsFile(t, globalPath, `{"autostart-webui": "yes"}`)
-
-	_, err := resolveMergedAutostartWebUI(home, cwd)
-	if err == nil {
-		t.Fatalf("expected type mismatch error")
+	globalPath, localPath := resolveCCSubagentsSettingsPaths(home, cwd)
+	if globalPath != filepath.Join(override, "settings.json") {
+		t.Fatalf("global path mismatch: got=%q want=%q", globalPath, filepath.Join(override, "settings.json"))
 	}
-	if !strings.Contains(err.Error(), "autostart-webui") {
-		t.Fatalf("expected autostart-webui type error, got %v", err)
+	if localPath != filepath.Join(cwd, "ccsubagents", "settings.json") {
+		t.Fatalf("local path mismatch: got=%q want=%q", localPath, filepath.Join(cwd, "ccsubagents", "settings.json"))
+	}
+}
+
+func TestResolveMergedCCSubagentsSettings_ValidationErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		key     string
+	}{
+		{name: "autostart type", content: `{"autostart-webui": "yes"}`, key: "autostart-webui"},
+		{name: "no-auth type", content: `{"no-auth": "true"}`, key: "no-auth"},
+		{name: "webui-port type", content: `{"webui-port": "19130"}`, key: "webui-port"},
+		{name: "webui-port range", content: `{"webui-port": 70000}`, key: "webui-port"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			cwd := t.TempDir()
+			globalPath, _ := resolveCCSubagentsSettingsPaths(home, cwd)
+			writeSettingsFile(t, globalPath, tc.content)
+
+			_, err := resolveMergedCCSubagentsSettings(home, cwd)
+			if err == nil {
+				t.Fatalf("expected validation error")
+			}
+			if !strings.Contains(err.Error(), tc.key) {
+				t.Fatalf("expected %s context in error, got %v", tc.key, err)
+			}
+		})
 	}
 }

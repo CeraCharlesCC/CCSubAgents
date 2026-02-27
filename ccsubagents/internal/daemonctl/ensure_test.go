@@ -157,3 +157,99 @@ func TestResolveDaemonPath_FallsBackToDefaultLocalBin(t *testing.T) {
 		t.Fatalf("expected default local-bin daemon path %q, got %q", defaultPath, got)
 	}
 }
+
+func TestEnsureToken_DisableAuthPreservesTokenFile(t *testing.T) {
+	stateDir := t.TempDir()
+	tokenPath := filepath.Join(stateDir, "daemon", "daemon.token")
+	if err := os.MkdirAll(filepath.Dir(tokenPath), 0o755); err != nil {
+		t.Fatalf("create token dir: %v", err)
+	}
+	if err := os.WriteFile(tokenPath, []byte("stale-token"), 0o600); err != nil {
+		t.Fatalf("seed token file: %v", err)
+	}
+
+	token, err := ensureToken(stateDir, true)
+	if err != nil {
+		t.Fatalf("ensureToken disable auth returned error: %v", err)
+	}
+	if token != "" {
+		t.Fatalf("expected empty token when auth is disabled, got %q", token)
+	}
+
+	b, err := os.ReadFile(tokenPath)
+	if err != nil {
+		t.Fatalf("read token file: %v", err)
+	}
+	if strings.TrimSpace(string(b)) != "stale-token" {
+		t.Fatalf("expected token file to stay unchanged while auth transition is pending, got %q", string(b))
+	}
+}
+
+func TestClearToken_EmptiesTokenFile(t *testing.T) {
+	stateDir := t.TempDir()
+	tokenPath := filepath.Join(stateDir, "daemon", "daemon.token")
+	if err := os.MkdirAll(filepath.Dir(tokenPath), 0o755); err != nil {
+		t.Fatalf("create token dir: %v", err)
+	}
+	if err := os.WriteFile(tokenPath, []byte("stale-token"), 0o600); err != nil {
+		t.Fatalf("seed token file: %v", err)
+	}
+
+	if err := clearToken(stateDir); err != nil {
+		t.Fatalf("clearToken returned error: %v", err)
+	}
+
+	b, err := os.ReadFile(tokenPath)
+	if err != nil {
+		t.Fatalf("read token file: %v", err)
+	}
+	if strings.TrimSpace(string(b)) != "" {
+		t.Fatalf("expected token file to be empty after clearToken, got %q", string(b))
+	}
+}
+
+func TestEnsureToken_AuthEnabledGeneratesWhenMissing(t *testing.T) {
+	stateDir := t.TempDir()
+	token, err := ensureToken(stateDir, false)
+	if err != nil {
+		t.Fatalf("ensureToken returned error: %v", err)
+	}
+	if strings.TrimSpace(token) == "" {
+		t.Fatalf("expected non-empty generated token")
+	}
+
+	b, err := os.ReadFile(filepath.Join(stateDir, "daemon", "daemon.token"))
+	if err != nil {
+		t.Fatalf("read token file: %v", err)
+	}
+	if strings.TrimSpace(string(b)) != token {
+		t.Fatalf("persisted token mismatch: got=%q want=%q", strings.TrimSpace(string(b)), token)
+	}
+}
+
+func TestEnsureToken_AuthEnabledRegeneratesWhenFileEmpty(t *testing.T) {
+	stateDir := t.TempDir()
+	tokenPath := filepath.Join(stateDir, "daemon", "daemon.token")
+	if err := os.MkdirAll(filepath.Dir(tokenPath), 0o755); err != nil {
+		t.Fatalf("create token dir: %v", err)
+	}
+	if err := os.WriteFile(tokenPath, []byte("   \n"), 0o600); err != nil {
+		t.Fatalf("seed empty token file: %v", err)
+	}
+
+	token, err := ensureToken(stateDir, false)
+	if err != nil {
+		t.Fatalf("ensureToken returned error: %v", err)
+	}
+	if strings.TrimSpace(token) == "" {
+		t.Fatalf("expected regenerated non-empty token")
+	}
+
+	b, err := os.ReadFile(tokenPath)
+	if err != nil {
+		t.Fatalf("read token file: %v", err)
+	}
+	if strings.TrimSpace(string(b)) == "" {
+		t.Fatalf("expected token file to be overwritten with regenerated token")
+	}
+}
