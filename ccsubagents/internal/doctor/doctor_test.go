@@ -42,3 +42,77 @@ func TestRun_ReportsActiveTransactionJournal(t *testing.T) {
 		t.Fatalf("expected active transaction output, got %q", out.String())
 	}
 }
+
+func TestRun_UsesDaemonStateDirForDaemonDiagnostics(t *testing.T) {
+	home := t.TempDir()
+	cwd := t.TempDir()
+	workspaceState := filepath.Join(cwd, "ccsubagents")
+	if err := os.MkdirAll(workspaceState, 0o755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+
+	daemonState := paths.ResolveDaemonStateDir(home, func(string) string { return "" })
+	wantTokenPath := filepath.Join(daemonState, "daemon", "daemon.token")
+
+	var out bytes.Buffer
+	_, err := Run(context.Background(), Options{
+		Home: home,
+		CWD:  cwd,
+		Out:  &out,
+		Getenv: func(string) string {
+			return ""
+		},
+		LookPath: func(string) (string, error) {
+			return "", os.ErrNotExist
+		},
+	})
+	if err != nil {
+		t.Fatalf("doctor run failed: %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "paths.state="+workspaceState+" ("+string(paths.SourceWorkspace)+")") {
+		t.Fatalf("expected workspace state in paths output, got %q", got)
+	}
+	if !strings.Contains(got, "daemon.state="+daemonState) {
+		t.Fatalf("expected daemon state output, got %q", got)
+	}
+	if !strings.Contains(got, "daemon.token=missing (stat "+wantTokenPath+":") {
+		t.Fatalf("expected daemon token path under daemon state dir, got %q", got)
+	}
+	if strings.Contains(got, filepath.Join(workspaceState, "daemon", "daemon.token")) {
+		t.Fatalf("daemon token unexpectedly resolved to workspace state dir, got %q", got)
+	}
+}
+
+func TestRun_DaemonStateDirEnvOverrideAffectsDaemonDiagnostics(t *testing.T) {
+	home := t.TempDir()
+	cwd := t.TempDir()
+	override := filepath.Join(t.TempDir(), "daemon-state")
+	wantTokenPath := filepath.Join(override, "daemon", "daemon.token")
+
+	var out bytes.Buffer
+	_, err := Run(context.Background(), Options{
+		Home: home,
+		CWD:  cwd,
+		Out:  &out,
+		Getenv: func(key string) string {
+			if key == "LOCAL_ARTIFACT_STATE_DIR" {
+				return override
+			}
+			return ""
+		},
+		LookPath: func(string) (string, error) {
+			return "", os.ErrNotExist
+		},
+	})
+	if err != nil {
+		t.Fatalf("doctor run failed: %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "daemon.state="+override) {
+		t.Fatalf("expected overridden daemon state output, got %q", got)
+	}
+	if !strings.Contains(got, "daemon.token=missing (stat "+wantTokenPath+":") {
+		t.Fatalf("expected daemon token path under overridden daemon state dir, got %q", got)
+	}
+}

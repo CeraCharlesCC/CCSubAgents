@@ -36,10 +36,12 @@ func Run(ctx context.Context, opts Options) (issues int, err error) {
 	}
 
 	resolved := paths.Resolve(opts.Home, opts.CWD, getenv)
+	daemonStateDir := paths.ResolveDaemonStateDir(opts.Home, getenv)
 	fmt.Fprintf(out, "paths.config=%s (%s)\n", resolved.ConfigDir.Value, resolved.ConfigDir.Source)
 	fmt.Fprintf(out, "paths.state=%s (%s)\n", resolved.StateDir.Value, resolved.StateDir.Source)
 	fmt.Fprintf(out, "paths.log=%s (%s)\n", resolved.LogDir.Value, resolved.LogDir.Source)
 	fmt.Fprintf(out, "paths.blob=%s (%s)\n", resolved.BlobDir.Value, resolved.BlobDir.Source)
+	fmt.Fprintf(out, "daemon.state=%s\n", daemonStateDir)
 
 	for _, bin := range []string{"local-artifact-mcp", "local-artifact-web", "ccsubagentsd"} {
 		path, findErr := lookPath(bin)
@@ -51,7 +53,7 @@ func Run(ctx context.Context, opts Options) (issues int, err error) {
 		fmt.Fprintf(out, "binary.%s=%s\n", bin, path)
 	}
 
-	tokenPath := filepath.Join(resolved.StateDir.Value, "daemon", "daemon.token")
+	tokenPath := filepath.Join(daemonStateDir, "daemon", "daemon.token")
 	if info, statErr := os.Stat(tokenPath); statErr != nil {
 		issues++
 		fmt.Fprintf(out, "daemon.token=missing (%v)\n", statErr)
@@ -59,7 +61,7 @@ func Run(ctx context.Context, opts Options) (issues int, err error) {
 		fmt.Fprintf(out, "daemon.token=%s mode=%#o\n", tokenPath, info.Mode().Perm())
 	}
 
-	client, clientErr := daemonclient.NewDefaultClient(resolved.StateDir.Value, getenv)
+	client, clientErr := daemonclient.NewDefaultClient(daemonStateDir, getenv)
 	if clientErr != nil {
 		issues++
 		fmt.Fprintf(out, "daemon.client=unavailable (%v)\n", clientErr)
