@@ -3,6 +3,8 @@ package daemonctl
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -80,5 +82,78 @@ func TestWaitForStop_RejectsTransientHealthError(t *testing.T) {
 	var remoteErr *daemonclient.RemoteError
 	if !errors.As(err, &remoteErr) || remoteErr.Code != daemonclient.CodeInternal {
 		t.Fatalf("expected wrapped internal remote error, got %v", err)
+	}
+}
+
+func TestResolveDaemonPath_PrefersSiblingBinary(t *testing.T) {
+	base := t.TempDir()
+	exePath := filepath.Join(base, "ccsubagents")
+	sibling := filepath.Join(base, "ccsubagentsd")
+	if err := os.WriteFile(sibling, []byte("daemon"), 0o755); err != nil {
+		t.Fatalf("seed sibling daemon: %v", err)
+	}
+
+	got := resolveDaemonPath(exePath, t.TempDir(), "linux",
+		func(string) string { return "" },
+		func(string) (string, error) { return "/usr/local/bin/ccsubagentsd", nil },
+	)
+	if got != sibling {
+		t.Fatalf("expected sibling daemon path %q, got %q", sibling, got)
+	}
+}
+
+func TestResolveDaemonPath_UsesConfiguredBinDirWhenSiblingMissing(t *testing.T) {
+	home := t.TempDir()
+	binDir := filepath.Join(home, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("create configured bin dir: %v", err)
+	}
+	configured := filepath.Join(binDir, "ccsubagentsd")
+	if err := os.WriteFile(configured, []byte("daemon"), 0o755); err != nil {
+		t.Fatalf("seed configured daemon: %v", err)
+	}
+
+	got := resolveDaemonPath(filepath.Join(t.TempDir(), "ccsubagents"), home, "linux",
+		func(key string) string {
+			if key == "LOCAL_ARTIFACT_BIN_DIR" {
+				return "~/bin"
+			}
+			return ""
+		},
+		func(string) (string, error) { return "", errors.New("missing") },
+	)
+	if got != configured {
+		t.Fatalf("expected configured daemon path %q, got %q", configured, got)
+	}
+}
+
+func TestResolveDaemonPath_UsesLookPathWhenNoLocalCandidates(t *testing.T) {
+	found := "/opt/tools/ccsubagentsd"
+	got := resolveDaemonPath(filepath.Join(t.TempDir(), "ccsubagents"), t.TempDir(), "linux",
+		func(string) string { return "" },
+		func(string) (string, error) { return found, nil },
+	)
+	if got != found {
+		t.Fatalf("expected lookPath daemon %q, got %q", found, got)
+	}
+}
+
+func TestResolveDaemonPath_FallsBackToDefaultLocalBin(t *testing.T) {
+	home := t.TempDir()
+	localBin := filepath.Join(home, ".local", "bin")
+	if err := os.MkdirAll(localBin, 0o755); err != nil {
+		t.Fatalf("create local bin dir: %v", err)
+	}
+	defaultPath := filepath.Join(localBin, "ccsubagentsd")
+	if err := os.WriteFile(defaultPath, []byte("daemon"), 0o755); err != nil {
+		t.Fatalf("seed default daemon: %v", err)
+	}
+
+	got := resolveDaemonPath(filepath.Join(t.TempDir(), "ccsubagents"), home, "linux",
+		func(string) string { return "" },
+		func(string) (string, error) { return "", errors.New("missing") },
+	)
+	if got != defaultPath {
+		t.Fatalf("expected default local-bin daemon path %q, got %q", defaultPath, got)
 	}
 }

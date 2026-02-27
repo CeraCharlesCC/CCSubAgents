@@ -94,7 +94,8 @@ func startProcess(stateDir, storeRoot, token string, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("resolve executable path: %w", err)
 	}
-	daemonPath := filepath.Join(filepath.Dir(exePath), daemonBinaryName())
+	home, _ := os.UserHomeDir()
+	daemonPath := resolveDaemonPath(exePath, home, runtime.GOOS, os.Getenv, exec.LookPath)
 	cmd := exec.Command(daemonPath)
 	cmd.Stdout = stderr
 	cmd.Stderr = stderr
@@ -140,10 +141,89 @@ func ensureToken(stateDir string) (string, error) {
 }
 
 func daemonBinaryName() string {
-	if runtime.GOOS == "windows" {
+	return daemonBinaryNameForOS(runtime.GOOS)
+}
+
+func daemonBinaryNameForOS(goos string) string {
+	if goos == "windows" {
 		return "ccsubagentsd.exe"
 	}
 	return "ccsubagentsd"
+}
+
+func resolveDaemonPath(exePath, home, goos string, getenv func(string) string, lookPath func(string) (string, error)) string {
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	if lookPath == nil {
+		lookPath = exec.LookPath
+	}
+
+	name := daemonBinaryNameForOS(goos)
+	sibling := filepath.Join(filepath.Dir(exePath), name)
+	if pathExists(sibling) {
+		return sibling
+	}
+
+	configuredBinDir := resolveConfiguredPath(home, strings.TrimSpace(getenv("LOCAL_ARTIFACT_BIN_DIR")))
+	if configuredBinDir != "" {
+		configuredPath := filepath.Join(configuredBinDir, name)
+		if pathExists(configuredPath) {
+			return configuredPath
+		}
+	}
+
+	if found, err := lookPath(name); err == nil && strings.TrimSpace(found) != "" {
+		return found
+	}
+
+	if home != "" && goos != "windows" {
+		defaultPath := filepath.Join(home, ".local", "bin", name)
+		if pathExists(defaultPath) {
+			return defaultPath
+		}
+		if configuredBinDir == "" {
+			return defaultPath
+		}
+	}
+
+	if configuredBinDir != "" {
+		return filepath.Join(configuredBinDir, name)
+	}
+
+	return sibling
+}
+
+func pathExists(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return !info.IsDir()
+}
+
+func resolveConfiguredPath(home, value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	if trimmed == "~" {
+		return filepath.Clean(home)
+	}
+	if strings.HasPrefix(trimmed, "~/") || strings.HasPrefix(trimmed, "~\\") {
+		remainder := strings.TrimLeft(trimmed[2:], `/\`)
+		if remainder == "" {
+			return filepath.Clean(home)
+		}
+		return filepath.Join(home, remainder)
+	}
+	if filepath.IsAbs(trimmed) {
+		return filepath.Clean(trimmed)
+	}
+	if os.PathSeparator == '\\' && (strings.HasPrefix(trimmed, `\`) || strings.HasPrefix(trimmed, "/")) {
+		return filepath.Clean(trimmed)
+	}
+	return filepath.Join(home, trimmed)
 }
 
 func defaultDaemonSocket(stateDir string) string {

@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/config"
@@ -118,7 +119,8 @@ func startCCSubagentsd(stderr io.Writer, storeRoot, stateDir, token string) erro
 		return fmt.Errorf("resolve executable path: %w", err)
 	}
 
-	daemonPath := ccsubagentsdPath(exePath, runtime.GOOS)
+	home, _ := os.UserHomeDir()
+	daemonPath := ccsubagentsdPath(exePath, home, runtime.GOOS, os.Getenv, exec.LookPath)
 	cmd := exec.Command(daemonPath)
 	cmd.Stdout = stderr
 	cmd.Stderr = stderr
@@ -180,10 +182,80 @@ func localArtifactWebPath(exePath, goos string) string {
 	return filepath.Join(filepath.Dir(exePath), name)
 }
 
-func ccsubagentsdPath(exePath, goos string) string {
+func ccsubagentsdPath(exePath, home, goos string, getenv func(string) string, lookPath func(string) (string, error)) string {
 	name := "ccsubagentsd"
 	if goos == "windows" {
 		name += ".exe"
 	}
-	return filepath.Join(filepath.Dir(exePath), name)
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	if lookPath == nil {
+		lookPath = exec.LookPath
+	}
+
+	sibling := filepath.Join(filepath.Dir(exePath), name)
+	if pathExists(sibling) {
+		return sibling
+	}
+
+	configuredBinDir := resolveConfiguredPath(home, strings.TrimSpace(getenv("LOCAL_ARTIFACT_BIN_DIR")))
+	if configuredBinDir != "" {
+		configuredPath := filepath.Join(configuredBinDir, name)
+		if pathExists(configuredPath) {
+			return configuredPath
+		}
+	}
+
+	if found, err := lookPath(name); err == nil && strings.TrimSpace(found) != "" {
+		return found
+	}
+
+	if home != "" && goos != "windows" {
+		defaultPath := filepath.Join(home, ".local", "bin", name)
+		if pathExists(defaultPath) {
+			return defaultPath
+		}
+		if configuredBinDir == "" {
+			return defaultPath
+		}
+	}
+
+	if configuredBinDir != "" {
+		return filepath.Join(configuredBinDir, name)
+	}
+
+	return sibling
+}
+
+func pathExists(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return !info.IsDir()
+}
+
+func resolveConfiguredPath(home, value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	if trimmed == "~" {
+		return filepath.Clean(home)
+	}
+	if strings.HasPrefix(trimmed, "~/") || strings.HasPrefix(trimmed, "~\\") {
+		remainder := strings.TrimLeft(trimmed[2:], `/\`)
+		if remainder == "" {
+			return filepath.Clean(home)
+		}
+		return filepath.Join(home, remainder)
+	}
+	if filepath.IsAbs(trimmed) {
+		return filepath.Clean(trimmed)
+	}
+	if os.PathSeparator == '\\' && (strings.HasPrefix(trimmed, `\`) || strings.HasPrefix(trimmed, "/")) {
+		return filepath.Clean(trimmed)
+	}
+	return filepath.Join(home, trimmed)
 }
