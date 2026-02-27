@@ -12,6 +12,7 @@ tools:
     'execute/awaitTerminal',
     'execute/killTerminal',
     'execute/runInTerminal',
+    'vscode/askQuestions',
     'artifact-mcp/get_artifact',
     'artifact-mcp/resolve_artifact',
     'artifact-mcp/get_artifact_list',

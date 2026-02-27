@@ -18,6 +18,7 @@ tools:
     'search/changes',
     'web',
     'todo',
+    'vscode/askQuestions',
     'artifact-mcp/delete_artifact',
     'artifact-mcp/get_artifact',
     'artifact-mcp/get_artifact_list',
@@ -50,7 +51,7 @@ Artifacts are the communication channel. Subagents exchange data through `artifa
 
 TODOs track implementation progress. The implementation agent maintains a TODO list per plan artifact via `artifact-mcp/todo`. This persists independently of agent sessions, enabling seamless resumption after crashes or timeouts.
 
-All user interaction flows through `#tool:agent/askQuestions`. Never pause or wait for input outside this tool. Always either take the next action or ask the user a question.
+All user interaction flows through `#tool:vscode/askQuestions`. Never pause or wait for input outside this tool. Always either take the next action or ask the user a question.
 
 ---
 
@@ -62,7 +63,7 @@ Goal: produce a proposal artifact that removes all ambiguity.
 
 1. Restate the user's goal concisely.
 2. Skim relevant parts of the codebase to understand the current state: structure, conventions, potential impact areas.
-3. Use `#tool:agent/askQuestions` to resolve unknowns: desired behavior, constraints, edge cases, definition of done.
+3. Use `#tool:vscode/askQuestions` to resolve unknowns: desired behavior, constraints, edge cases, definition of done.
 4. Once requirements are solid, save them as `proposal/<slug>`: including scope, constraints, acceptance criteria, and any codebase observations that informed the proposal.
 
 Decomposition: if the request spans multiple independent pieces of work, split it into separate tasks. Each will get its own plan artifact (`plan/<slug>-001`, `plan/<slug>-002`, …) and go through the full cycle sequentially.
@@ -100,10 +101,10 @@ Synthesize their findings into a single verdict. Optionally save as `review/<slu
 ### 5 · Iterate
 
 - Approve → finish. Summarize the outcome.
-- Approve with nits → ask the user via `#tool:agent/askQuestions` whether to fix or accept.
+- Approve with nits → ask the user via `#tool:vscode/askQuestions` whether to fix or accept.
 - Request changes → convert fixes into a mini-plan, implement, and review again.
 
-If iterations are not converging, use `#tool:agent/askQuestions` to renegotiate scope.
+If iterations are not converging, use `#tool:vscode/askQuestions` to renegotiate scope.
 
 For multi-task work, complete one task's full cycle before starting the next.
 
