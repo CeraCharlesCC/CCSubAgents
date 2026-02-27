@@ -2,12 +2,14 @@ package mcp
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
 
-	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/domain"
+	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/core/artifacts"
+	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/presentation/daemon"
 )
 
 type resolveArgs struct {
@@ -36,8 +38,7 @@ func (s *Server) toolResolve(ctx context.Context, argsRaw json.RawMessage) (any,
 		return toolError("Invalid arguments: expected {name}"), nil
 	}
 
-	svc := s.service(ctx)
-	ref, err := svc.Resolve(ctx, args.Name)
+	resolved, err := s.daemon().Resolve(ctx, daemon.ResolveRequest{Workspace: s.currentWorkspace(ctx), Name: args.Name})
 	if err != nil {
 		return toolErrorFromErr(err), nil
 	}
@@ -45,9 +46,9 @@ func (s *Server) toolResolve(ctx context.Context, argsRaw json.RawMessage) (any,
 	nameEsc := url.PathEscape(strings.TrimSpace(args.Name))
 	out := map[string]any{
 		"name":      strings.TrimSpace(args.Name),
-		"ref":       ref,
-		"uriByName": domain.URIByName(nameEsc),
-		"uriByRef":  "artifact://ref/" + ref,
+		"ref":       resolved.Ref,
+		"uriByName": artifacts.URIByName(nameEsc),
+		"uriByRef":  "artifact://ref/" + resolved.Ref,
 	}
 
 	return toolResult{
@@ -62,10 +63,17 @@ func (s *Server) toolGet(ctx context.Context, argsRaw json.RawMessage) (any, *js
 		return toolError("Invalid arguments: expected {ref?, name?, mode?}"), nil
 	}
 
-	svc := s.service(ctx)
-	a, data, err := svc.Get(ctx, domain.Selector{Ref: args.Ref, Name: args.Name})
+	getOut, err := s.daemon().Get(ctx, daemon.GetRequest{
+		Workspace: s.currentWorkspace(ctx),
+		Selector:  daemon.Selector{Ref: args.Ref, Name: args.Name},
+	})
 	if err != nil {
 		return toolErrorFromErr(err), nil
+	}
+	a := getOut.Artifact
+	data, err := base64.StdEncoding.DecodeString(getOut.DataBase64)
+	if err != nil {
+		return toolError("internal error: invalid daemon payload"), nil
 	}
 
 	mode := strings.TrimSpace(args.Mode)
@@ -77,8 +85,8 @@ func (s *Server) toolGet(ctx context.Context, argsRaw json.RawMessage) (any, *js
 	meta := toSaveOut(a, nameEsc)
 
 	lowerMime := strings.ToLower(a.MimeType)
-	isText := strings.HasPrefix(lowerMime, "text/") || a.Kind == domain.ArtifactKindText
-	isImage := strings.HasPrefix(lowerMime, "image/") || a.Kind == domain.ArtifactKindImage
+	isText := strings.HasPrefix(lowerMime, "text/") || a.Kind == artifacts.ArtifactKindText
+	isImage := strings.HasPrefix(lowerMime, "image/") || a.Kind == artifacts.ArtifactKindImage
 
 	if mode == modeMeta {
 		return toolResult{Content: []any{textContent("metadata only")}, StructuredContent: meta}, nil
@@ -123,14 +131,13 @@ func (s *Server) toolList(ctx context.Context, argsRaw json.RawMessage) (any, *j
 		}
 	}
 
-	svc := s.service(ctx)
-	arts, err := svc.List(ctx, args.Prefix, args.Limit)
+	listOut, err := s.daemon().List(ctx, daemon.ListRequest{Workspace: s.currentWorkspace(ctx), Prefix: args.Prefix, Limit: args.Limit})
 	if err != nil {
 		return toolErrorFromErr(err), nil
 	}
 
-	items := make([]saveOut, 0, len(arts))
-	for _, a := range arts {
+	items := make([]saveOut, 0, len(listOut.Items))
+	for _, a := range listOut.Items {
 		items = append(items, toSaveOut(a, url.PathEscape(a.Name)))
 	}
 	out := map[string]any{"items": items}
@@ -149,11 +156,14 @@ func (s *Server) toolDelete(ctx context.Context, argsRaw json.RawMessage) (any, 
 		}
 	}
 
-	svc := s.service(ctx)
-	a, err := svc.Delete(ctx, domain.Selector{Ref: args.Ref, Name: args.Name})
+	deleteOut, err := s.daemon().Delete(ctx, daemon.DeleteRequest{
+		Workspace: s.currentWorkspace(ctx),
+		Selector:  daemon.Selector{Ref: args.Ref, Name: args.Name},
+	})
 	if err != nil {
 		return toolErrorFromErr(err), nil
 	}
+	a := deleteOut.Artifact
 
 	out := map[string]any{
 		"deleted":  true,
@@ -163,7 +173,7 @@ func (s *Server) toolDelete(ctx context.Context, argsRaw json.RawMessage) (any, 
 	if name := strings.TrimSpace(a.Name); name != "" {
 		nameEsc := url.PathEscape(name)
 		out["name"] = name
-		out["uriByName"] = domain.URIByName(nameEsc)
+		out["uriByName"] = artifacts.URIByName(nameEsc)
 	}
 
 	return toolResult{

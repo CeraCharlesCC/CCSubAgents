@@ -3,6 +3,8 @@ package installer
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +17,8 @@ import (
 
 	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/config"
 	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/files"
+	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/integration/txn"
+	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/paths"
 	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/release"
 	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/state"
 )
@@ -40,7 +44,15 @@ func (r *Runner) localTrackedStateDir() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("determine home directory: %w", err)
 	}
-	return filepath.Join(home, ".local", "share", "ccsubagents"), nil
+	getenv := r.getenv
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	layout := paths.Global(home)
+	if stateOverride := strings.TrimSpace(getenv(paths.EnvStateDir)); stateOverride != "" {
+		layout.StateDir = filepath.Clean(stateOverride)
+	}
+	return layout.StateDir, nil
 }
 
 func (r *Runner) installLocal(ctx context.Context) error {
@@ -202,6 +214,7 @@ func (r *Runner) uninstallLocal(ctx context.Context) error {
 	allowedBinaries := []string{
 		filepath.Join(managedDir, mcpBinaryName),
 		filepath.Join(managedDir, webBinaryName),
+		filepath.Join(managedDir, ccsubagentsdBinaryName(runtime.GOOS)),
 	}
 
 	for _, path := range record.Managed.Files {
@@ -334,7 +347,30 @@ func (r *Runner) installOrUpdateLocal(ctx context.Context, cfg localInstallConfi
 		return err
 	}
 
-	rollback := files.NewRollback()
+	h := sha256.Sum256([]byte(filepath.Clean(cfg.location.installRoot)))
+	scopeID := "local-" + hex.EncodeToString(h[:8])
+	commandName := "local-install"
+	if cfg.isUpdate {
+		commandName = "local-update"
+	}
+	blobDir := filepath.Join(cfg.stateDir, "blob")
+	getenv := r.getenv
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	if stateOverride := strings.TrimSpace(getenv(paths.EnvBlobDir)); stateOverride != "" {
+		blobDir = filepath.Clean(stateOverride)
+	}
+	txSession, err := txn.Begin(cfg.stateDir, blobDir, scopeID, commandName, []string{"mutations"})
+	if err != nil {
+		return err
+	}
+	defer txSession.Close()
+	if err := txSession.MarkApplied("mutations"); err != nil {
+		return err
+	}
+
+	rollback := txSession.NewRollback("mutations")
 	mutations := files.NewMutationTracker(rollback, stateDirPerm)
 	defer func() {
 		if retErr == nil {
@@ -343,6 +379,7 @@ func (r *Runner) installOrUpdateLocal(ctx context.Context, cfg localInstallConfi
 		if rollbackErr := rollback.Restore(); rollbackErr != nil {
 			retErr = fmt.Errorf("%w (rollback failed: %v)", retErr, rollbackErr)
 		}
+		_ = txSession.Rollback()
 	}()
 
 	managedDir := filepath.Join(cfg.location.installRoot, config.LocalManagedDirRelativePath)
@@ -441,6 +478,12 @@ func (r *Runner) installOrUpdateLocal(ctx context.Context, cfg localInstallConfi
 		ReleaseID:   rel.ID,
 		ReleaseTag:  rel.TagName,
 		InstalledAt: r.now().UTC().Format(time.RFC3339),
+		AppliedSteps: []state.AppliedStep{{
+			ID:         "local.mutations",
+			InputsHash: hashInputs(map[string]any{"command": commandName, "release": rel.TagName, "installRoot": cfg.location.installRoot}),
+			Outputs:    map[string]any{"managedDir": filepath.Join(cfg.location.installRoot, config.LocalManagedDirRelativePath)},
+			AppliedAt:  r.now().UTC().Format(time.RFC3339),
+		}},
 		IgnoreEdits: ignoreEdits,
 	}
 	managedFiles := append(append([]string{}, binaryPaths...), extractedFiles...)
@@ -467,6 +510,9 @@ func (r *Runner) installOrUpdateLocal(ctx context.Context, cfg localInstallConfi
 	cfg.state.SetLocalInstall(record)
 
 	if err := state.SaveTrackedState(cfg.stateDir, *cfg.state); err != nil {
+		return err
+	}
+	if err := txSession.Commit(); err != nil {
 		return err
 	}
 	r.reportStepOK("Updated tracked installation state", "saved")

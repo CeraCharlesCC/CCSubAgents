@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/domain"
+	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/core/artifacts"
 )
 
 func TestHandleInsertTextSuccess(t *testing.T) {
@@ -42,7 +42,7 @@ func TestHandleInsertFileSuccess(t *testing.T) {
 	assertStatus(t, rr, http.StatusSeeOther)
 
 	art, payload := h.mustGetByName(globalSubspaceSelector, "files/blob")
-	if art.Kind != domain.ArtifactKindFile {
+	if art.Kind != artifacts.ArtifactKindFile {
 		t.Fatalf("expected file kind, got %q", art.Kind)
 	}
 	if art.Filename != "blob.bin" {

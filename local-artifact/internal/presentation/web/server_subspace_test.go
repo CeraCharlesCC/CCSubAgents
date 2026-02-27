@@ -11,15 +11,21 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/domain"
+	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/core/artifacts"
 )
 
 func TestServiceForSubspaceReusesServicePerSelector(t *testing.T) {
 	root := t.TempDir()
 	s := New(root)
 
-	first := s.serviceForSubspace(globalSubspaceSelector)
-	second := s.serviceForSubspace(globalSubspaceSelector)
+	first, err := s.serviceForSubspace(globalSubspaceSelector)
+	if err != nil {
+		t.Fatalf("first serviceForSubspace error: %v", err)
+	}
+	second, err := s.serviceForSubspace(globalSubspaceSelector)
+	if err != nil {
+		t.Fatalf("second serviceForSubspace error: %v", err)
+	}
 	if first == nil || second == nil {
 		t.Fatalf("expected non-nil services")
 	}
@@ -128,7 +134,11 @@ func TestAPIArtifactsAndDeleteSupportGlobalSubspace(t *testing.T) {
 	root := t.TempDir()
 	s := New(root)
 
-	if _, err := s.serviceForSubspace(globalSubspaceSelector).SaveText(context.Background(), domain.SaveTextInput{Name: "global/item", Text: "ok"}); err != nil {
+	globalSvc, err := s.serviceForSubspace(globalSubspaceSelector)
+	if err != nil {
+		t.Fatalf("global serviceForSubspace error: %v", err)
+	}
+	if _, err := globalSvc.SaveText(context.Background(), artifacts.SaveTextInput{Name: "global/item", Text: "ok"}); err != nil {
 		t.Fatalf("seed global artifact: %v", err)
 	}
 
@@ -147,7 +157,7 @@ func TestAPIArtifactsAndDeleteSupportGlobalSubspace(t *testing.T) {
 	}
 
 	var listRes struct {
-		Items []domain.Artifact `json:"items"`
+		Items []artifacts.Artifact `json:"items"`
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &listRes); err != nil {
 		t.Fatalf("decode list response: %v", err)
@@ -170,7 +180,7 @@ func TestAPIArtifactsAndDeleteSupportGlobalSubspace(t *testing.T) {
 		t.Fatalf("verify list status=%d body=%s", verifyRR.Code, verifyRR.Body.String())
 	}
 	var verifyRes struct {
-		Items []domain.Artifact `json:"items"`
+		Items []artifacts.Artifact `json:"items"`
 	}
 	if err := json.Unmarshal(verifyRR.Body.Bytes(), &verifyRes); err != nil {
 		t.Fatalf("decode verify response: %v", err)

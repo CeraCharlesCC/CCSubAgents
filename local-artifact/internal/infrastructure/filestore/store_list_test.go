@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/domain"
+	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/core/artifacts"
 )
 
 func TestStoreList_FillsLimitAfterSkippingInvalidEntries(t *testing.T) {
@@ -78,22 +78,22 @@ func TestStoreList_DropsMissingObjectAndCleansAlias(t *testing.T) {
 	}
 
 	_, err = store.Resolve(ctx, "a/missing-object")
-	if !errors.Is(err, domain.ErrNotFound) {
+	if !errors.Is(err, artifacts.ErrNotFound) {
 		t.Fatalf("expected resolve missing-object to be not found, got %v", err)
 	}
 }
 
 func saveArtifact(t *testing.T, store *Store, ref string, name string, data []byte) {
 	t.Helper()
-	_, err := store.Save(context.Background(), domain.Artifact{
+	_, err := store.Save(context.Background(), artifacts.Artifact{
 		Ref:       ref,
 		Name:      name,
-		Kind:      domain.ArtifactKindText,
+		Kind:      artifacts.ArtifactKindText,
 		MimeType:  "text/plain; charset=utf-8",
 		SizeBytes: int64(len(data)),
 		SHA256:    "test-sha",
 		CreatedAt: time.Now().UTC(),
-	}, data, domain.SaveOptions{})
+	}, data, artifacts.SaveOptions{})
 	if err != nil {
 		t.Fatalf("save %s: %v", name, err)
 	}

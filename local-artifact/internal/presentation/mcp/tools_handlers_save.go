@@ -6,7 +6,8 @@ import (
 	"encoding/json"
 	"net/url"
 
-	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/domain"
+	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/core/artifacts"
+	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/presentation/daemon"
 )
 
 type saveTextArgs struct {
@@ -33,14 +34,14 @@ type saveOut struct {
 	PrevRef   string `json:"prevRef,omitempty"`
 }
 
-func toSaveOut(a domain.Artifact, nameEscaped string) saveOut {
+func toSaveOut(a artifacts.Artifact, nameEscaped string) saveOut {
 	return saveOut{
 		Name:      a.Name,
 		Ref:       a.Ref,
 		Kind:      string(a.Kind),
 		MimeType:  a.MimeType,
 		Filename:  a.Filename,
-		URIByName: domain.URIByName(nameEscaped),
+		URIByName: artifacts.URIByName(nameEscaped),
 		URIByRef:  a.URIByRef(),
 		PrevRef:   a.PrevRef,
 	}
@@ -52,8 +53,12 @@ func (s *Server) toolSaveText(ctx context.Context, argsRaw json.RawMessage) (any
 		return toolError("Invalid arguments: expected {name, text, mimeType?}"), nil
 	}
 
-	svc := s.service(ctx)
-	a, err := svc.SaveText(ctx, domain.SaveTextInput{Name: args.Name, Text: args.Text, MimeType: args.MimeType})
+	a, err := s.daemon().SaveText(ctx, daemon.SaveTextRequest{
+		Workspace: s.currentWorkspace(ctx),
+		Name:      args.Name,
+		Text:      args.Text,
+		MimeType:  args.MimeType,
+	})
 	if err != nil {
 		return toolErrorFromErr(err), nil
 	}
@@ -64,7 +69,7 @@ func (s *Server) toolSaveText(ctx context.Context, argsRaw json.RawMessage) (any
 	return toolResult{
 		Content: []any{
 			textContent("saved"),
-			resourceLink(a.Name, domain.URIByName(nameEsc), a.MimeType, a.SizeBytes),
+			resourceLink(a.Name, artifacts.URIByName(nameEsc), a.MimeType, a.SizeBytes),
 		},
 		StructuredContent: out,
 	}, nil
@@ -81,8 +86,13 @@ func (s *Server) toolSaveBlob(ctx context.Context, argsRaw json.RawMessage) (any
 		return toolError("dataBase64 is not valid base64"), nil
 	}
 
-	svc := s.service(ctx)
-	a, err := svc.SaveBlob(ctx, domain.SaveBlobInput{Name: args.Name, Data: data, MimeType: args.MimeType, Filename: args.Filename})
+	a, err := s.daemon().SaveBlob(ctx, daemon.SaveBlobRequest{
+		Workspace:  s.currentWorkspace(ctx),
+		Name:       args.Name,
+		DataBase64: base64.StdEncoding.EncodeToString(data),
+		MimeType:   args.MimeType,
+		Filename:   args.Filename,
+	})
 	if err != nil {
 		return toolErrorFromErr(err), nil
 	}
@@ -93,7 +103,7 @@ func (s *Server) toolSaveBlob(ctx context.Context, argsRaw json.RawMessage) (any
 	return toolResult{
 		Content: []any{
 			textContent("saved"),
-			resourceLink(a.Name, domain.URIByName(nameEsc), a.MimeType, a.SizeBytes),
+			resourceLink(a.Name, artifacts.URIByName(nameEsc), a.MimeType, a.SizeBytes),
 		},
 		StructuredContent: out,
 	}, nil

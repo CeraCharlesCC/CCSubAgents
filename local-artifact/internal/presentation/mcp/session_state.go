@@ -3,8 +3,10 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
-	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/domain"
+	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/core/workspaces"
+	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/presentation/daemon"
 )
 
 type initializeParams struct {
@@ -26,12 +28,26 @@ func (s *Server) handleInitialize(params json.RawMessage) (any, *jsonRPCError) {
 	return initializeResponse(), nil
 }
 
-func (s *Server) service(ctx context.Context) *domain.Service {
+func (s *Server) currentWorkspace(ctx context.Context) daemon.WorkspaceSelector {
 	s.resolveSessionStore(ctx, false)
 
 	s.sessionMu.RLock()
-	defer s.sessionMu.RUnlock()
-	return s.svc
+	current := s.workspace
+	s.sessionMu.RUnlock()
+	if current.WorkspaceID != "" || len(current.Roots) > 0 {
+		return current
+	}
+	return daemon.WorkspaceSelector{WorkspaceID: workspaces.GlobalWorkspaceID}
+}
+
+func (s *Server) daemon() *daemon.Client {
+	s.sessionMu.RLock()
+	client := s.daemonClient
+	s.sessionMu.RUnlock()
+	if client != nil {
+		return client
+	}
+	return daemon.NewUnavailableClient(errors.New("daemon client unavailable"))
 }
 
 func (s *Server) isInitialized() bool {
@@ -52,9 +68,9 @@ func (s *Server) isSessionResolved() bool {
 	return s.sessionResolved
 }
 
-func (s *Server) setSessionService(svc *domain.Service, resolved bool) {
+func (s *Server) setSessionWorkspace(workspace daemon.WorkspaceSelector, resolved bool) {
 	s.sessionMu.Lock()
 	defer s.sessionMu.Unlock()
-	s.svc = svc
+	s.workspace = workspace
 	s.sessionResolved = resolved
 }

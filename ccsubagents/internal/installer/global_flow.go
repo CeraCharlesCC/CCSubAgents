@@ -2,6 +2,9 @@ package installer
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -13,6 +16,8 @@ import (
 
 	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/config"
 	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/files"
+	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/integration/txn"
+	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/paths"
 	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/release"
 	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/state"
 	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/versiontag"
@@ -394,10 +399,18 @@ func (r *Runner) extractDownloadedBundle(tmpDir string, downloaded map[string]st
 		return nil, fmt.Errorf("create local-artifact bundle extraction dir: %w", err)
 	}
 	mcpBinaryName, webBinaryName := localArtifactBinaryNames(goos)
+	daemonBinaryName := ccsubagentsdBinaryName(goos)
 
 	bundleBinaries, err := files.ExtractBundleBinaries(bundleZipPath, bundleDir, []string{mcpBinaryName, webBinaryName}, binaryFilePerm)
 	if err != nil {
 		return nil, fmt.Errorf("extract %s: %w", bundleAssetName, err)
+	}
+	if daemonBinary, daemonErr := files.ExtractBundleBinaries(bundleZipPath, bundleDir, []string{daemonBinaryName}, binaryFilePerm); daemonErr == nil {
+		for name, path := range daemonBinary {
+			bundleBinaries[name] = path
+		}
+	} else if !strings.Contains(strings.ToLower(daemonErr.Error()), "archive missing required file") {
+		return nil, fmt.Errorf("extract %s: %w", bundleAssetName, daemonErr)
 	}
 	r.reportDetail("extracted bundle %s", bundleAssetName)
 	return bundleBinaries, nil
@@ -410,10 +423,19 @@ type fileSnapshotter interface {
 func (r *Runner) installExtractedBinaries(ctx context.Context, bundleBinaries map[string]string, destinationDir string, mutations fileSnapshotter, permissionHintDir, goos string) ([]string, error) {
 	mcpBinaryName, webBinaryName := localArtifactBinaryNames(goos)
 	binaryNames := []string{mcpBinaryName, webBinaryName}
+	daemonBinaryName := ccsubagentsdBinaryName(goos)
+	if _, ok := bundleBinaries[daemonBinaryName]; ok {
+		binaryNames = append(binaryNames, daemonBinaryName)
+	}
 
 	binaryPaths := []string{
 		filepath.Join(destinationDir, mcpBinaryName),
 		filepath.Join(destinationDir, webBinaryName),
+	}
+	if len(binaryNames) > len(binaryPaths) {
+		for _, binaryName := range binaryNames[len(binaryPaths):] {
+			binaryPaths = append(binaryPaths, filepath.Join(destinationDir, binaryName))
+		}
 	}
 
 	installer := r.installBinary
@@ -455,9 +477,20 @@ func (r *Runner) installOrUpdate(ctx context.Context, isUpdate bool) (retErr err
 	if err != nil {
 		return fmt.Errorf("determine home directory: %w", err)
 	}
+	getenv := r.getenv
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	layout := paths.Global(home)
+	if stateOverride := strings.TrimSpace(getenv(paths.EnvStateDir)); stateOverride != "" {
+		layout.StateDir = filepath.Clean(stateOverride)
+	}
+	if blobOverride := strings.TrimSpace(getenv(paths.EnvBlobDir)); blobOverride != "" {
+		layout.BlobDir = filepath.Clean(blobOverride)
+	}
 	paths := resolveInstallPaths(home)
 
-	stateDir := filepath.Join(home, ".local", "share", "ccsubagents")
+	stateDir := layout.StateDir
 	if err := os.MkdirAll(stateDir, stateDirPerm); err != nil {
 		return fmt.Errorf("create state directory %s: %w", stateDir, err)
 	}
@@ -532,7 +565,16 @@ func (r *Runner) installOrUpdate(ctx context.Context, isUpdate bool) (retErr err
 		return err
 	}
 
-	rollback := files.NewRollback()
+	txSession, err := txn.Begin(stateDir, layout.BlobDir, "global", commandNameForInstallOrUpdate(isUpdate), []string{"mutations"})
+	if err != nil {
+		return err
+	}
+	defer txSession.Close()
+	if err := txSession.MarkApplied("mutations"); err != nil {
+		return err
+	}
+
+	rollback := txSession.NewRollback("mutations")
 	mutations := files.NewMutationTracker(rollback, stateDirPerm)
 	defer func() {
 		if retErr == nil {
@@ -541,9 +583,10 @@ func (r *Runner) installOrUpdate(ctx context.Context, isUpdate bool) (retErr err
 		if rollbackErr := rollback.Restore(); rollbackErr != nil {
 			retErr = fmt.Errorf("%w (rollback failed: %v)", retErr, rollbackErr)
 		}
+		_ = txSession.Rollback()
 	}()
 
-	agentsDir := filepath.Join(home, ".local", "share", "ccsubagents", "agents")
+	agentsDir := filepath.Join(layout.StateDir, "agents")
 	if err := mutations.EnsureDir(filepath.Dir(agentsDir)); err != nil {
 		return err
 	}
@@ -629,6 +672,12 @@ func (r *Runner) installOrUpdate(ctx context.Context, isUpdate bool) (retErr err
 			Files: files.UniqueSorted(append(append([]string{}, binaryPaths...), extractedFiles...)),
 			Dirs:  files.UniqueSorted(append(mutations.CreatedDirectories(), extractedDirs...)),
 		},
+		AppliedSteps: []state.AppliedStep{{
+			ID:         "global.mutations",
+			InputsHash: hashInputs(map[string]any{"command": commandNameForInstallOrUpdate(isUpdate), "release": rel.TagName, "targets": configTargets}),
+			Outputs:    map[string]any{"binaryDir": paths.binaryDir, "agentsDir": agentsDir},
+			AppliedAt:  r.now().UTC().Format(time.RFC3339),
+		}},
 		JSONEdits: state.TrackedJSONOpsFromEdits(settingsEdits, mcpEdits),
 	}
 	if previousState != nil {
@@ -656,6 +705,9 @@ func (r *Runner) installOrUpdate(ctx context.Context, isUpdate bool) (retErr err
 	if err := state.SaveTrackedState(stateDir, tracked); err != nil {
 		return err
 	}
+	if err := txSession.Commit(); err != nil {
+		return err
+	}
 	r.reportDetail("saved tracked state: %s", filepath.Join(stateDir, state.TrackedFileName))
 	r.reportCompletion(commandNameForInstallOrUpdate(isUpdate))
 	r.reportGlobalPathWarning(home)
@@ -672,9 +724,17 @@ func (r *Runner) uninstall(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("determine home directory: %w", err)
 	}
+	getenv := r.getenv
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	layout := paths.Global(home)
+	if stateOverride := strings.TrimSpace(getenv(paths.EnvStateDir)); stateOverride != "" {
+		layout.StateDir = filepath.Clean(stateOverride)
+	}
 	paths := resolveInstallPaths(home)
 
-	stateDir := filepath.Join(home, ".local", "share", "ccsubagents")
+	stateDir := layout.StateDir
 	tracked, err := state.LoadTrackedState(stateDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -690,7 +750,7 @@ func (r *Runner) uninstall(ctx context.Context) error {
 		r.reportStepOK("Checked tracked installation state", fmt.Sprintf("%s found", tracked.ReleaseTag))
 	}
 
-	agentsDir := filepath.Join(home, ".local", "share", "ccsubagents", "agents")
+	agentsDir := filepath.Join(layout.StateDir, "agents")
 	allowedConfigParentDirs := []string{
 		filepath.Dir(paths.stable.settingsPath),
 		filepath.Dir(paths.stable.mcpPath),
@@ -711,7 +771,7 @@ func (r *Runner) uninstall(ctx context.Context) error {
 	}
 	allowedConfigParentDirs = files.UniqueSorted(allowedConfigParentDirs)
 	mcpBinaryName, webBinaryName := localArtifactBinaryNames(runtime.GOOS)
-	allowedBinaries := []string{filepath.Join(paths.binaryDir, mcpBinaryName), filepath.Join(paths.binaryDir, webBinaryName)}
+	allowedBinaries := []string{filepath.Join(paths.binaryDir, mcpBinaryName), filepath.Join(paths.binaryDir, webBinaryName), filepath.Join(paths.binaryDir, ccsubagentsdBinaryName(runtime.GOOS))}
 
 	for _, path := range tracked.Managed.Files {
 		if err := ctx.Err(); err != nil {
@@ -791,4 +851,10 @@ func (r *Runner) uninstall(ctx context.Context) error {
 	r.reportCompletion("Uninstall")
 
 	return nil
+}
+
+func hashInputs(v any) string {
+	b, _ := json.Marshal(v)
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
 }

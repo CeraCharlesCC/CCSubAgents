@@ -114,6 +114,12 @@ func (s *Server) handleToolsCall(ctx context.Context, params json.RawMessage) (a
 	if !ok {
 		return toolError(fmt.Sprintf("unknown tool: %s", p.Name)), nil
 	}
+	if err := validateToolArguments(entry.Metadata.CanonicalName, p.Arguments); err != nil {
+		if entry.Metadata.CanonicalName == toolArtifactTodo {
+			return toolError(todoInvalidArgumentsMessage), nil
+		}
+		return toolError("Invalid arguments: " + err.Error()), nil
+	}
 
 	return entry.Handler(s, ctx, p.Arguments)
 }

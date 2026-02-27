@@ -8,19 +8,27 @@ import (
 )
 
 const (
-	TrackedSchemaVersion = 2
+	TrackedSchemaVersion = 3
 	TrackedFileName      = "tracked.json"
 )
 
+type AppliedStep struct {
+	ID         string         `json:"id"`
+	InputsHash string         `json:"inputsHash"`
+	Outputs    map[string]any `json:"outputs,omitempty"`
+	AppliedAt  string         `json:"appliedAt"`
+}
+
 type TrackedState struct {
-	Version     int            `json:"version"`
-	Repo        string         `json:"repo"`
-	ReleaseID   int64          `json:"releaseId"`
-	ReleaseTag  string         `json:"releaseTag"`
-	InstalledAt string         `json:"installedAt"`
-	Managed     ManagedState   `json:"managed"`
-	JSONEdits   TrackedJSONOps `json:"jsonEdits"`
-	Local       []LocalInstall `json:"local,omitempty"`
+	Version      int            `json:"version"`
+	Repo         string         `json:"repo"`
+	ReleaseID    int64          `json:"releaseId"`
+	ReleaseTag   string         `json:"releaseTag"`
+	InstalledAt  string         `json:"installedAt"`
+	Managed      ManagedState   `json:"managed"`
+	AppliedSteps []AppliedStep  `json:"appliedSteps,omitempty"`
+	JSONEdits    TrackedJSONOps `json:"jsonEdits"`
+	Local        []LocalInstall `json:"local,omitempty"`
 }
 
 type LocalInstallMode string
@@ -31,16 +39,17 @@ const (
 )
 
 type LocalInstall struct {
-	InstallRoot string           `json:"installRoot"`
-	Mode        LocalInstallMode `json:"mode,omitempty"`
-	BinaryOnly  bool             `json:"binaryOnly,omitempty"`
-	Repo        string           `json:"repo"`
-	ReleaseID   int64            `json:"releaseId"`
-	ReleaseTag  string           `json:"releaseTag"`
-	InstalledAt string           `json:"installedAt"`
-	Managed     ManagedState     `json:"managed"`
-	JSONEdits   TrackedJSONOps   `json:"jsonEdits"`
-	IgnoreEdits []IgnoreEdit     `json:"ignoreEdits,omitempty"`
+	InstallRoot  string           `json:"installRoot"`
+	Mode         LocalInstallMode `json:"mode,omitempty"`
+	BinaryOnly   bool             `json:"binaryOnly,omitempty"`
+	Repo         string           `json:"repo"`
+	ReleaseID    int64            `json:"releaseId"`
+	ReleaseTag   string           `json:"releaseTag"`
+	InstalledAt  string           `json:"installedAt"`
+	Managed      ManagedState     `json:"managed"`
+	AppliedSteps []AppliedStep    `json:"appliedSteps,omitempty"`
+	JSONEdits    TrackedJSONOps   `json:"jsonEdits"`
+	IgnoreEdits  []IgnoreEdit     `json:"ignoreEdits,omitempty"`
 }
 
 type IgnoreEdit struct {
@@ -189,7 +198,8 @@ func (state *TrackedState) GlobalInstallSnapshot() *TrackedState {
 			Files: slices.Clone(state.Managed.Files),
 			Dirs:  slices.Clone(state.Managed.Dirs),
 		},
-		JSONEdits: state.JSONEdits.Clone(),
+		AppliedSteps: slices.Clone(state.AppliedSteps),
+		JSONEdits:    state.JSONEdits.Clone(),
 	}
 }
 
@@ -238,6 +248,7 @@ func (state *TrackedState) ClearGlobalInstall() {
 	state.ReleaseTag = ""
 	state.InstalledAt = ""
 	state.Managed = ManagedState{}
+	state.AppliedSteps = nil
 	state.JSONEdits = TrackedJSONOps{}
 }
 

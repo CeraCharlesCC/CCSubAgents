@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/domain"
+	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/core/artifacts"
 )
 
 func TestSanitizeFilenameRejectsPathTraversalMarkers(t *testing.T) {
@@ -49,21 +49,21 @@ func TestParseDeleteSelectors(t *testing.T) {
 			values: url.Values{
 				"name": {" plan/task-1 "},
 			},
-			want: deleteSelectorRequest{selectors: []domain.Selector{{Name: "plan/task-1"}}, single: true},
+			want: deleteSelectorRequest{selectors: []artifacts.Selector{{Name: "plan/task-1"}}, single: true},
 		},
 		{
 			name: "names dedupe and trim",
 			values: url.Values{
 				"name": {" a ", "a", "", "b ", "a"},
 			},
-			want: deleteSelectorRequest{selectors: []domain.Selector{{Name: "a"}, {Name: "b"}}, single: false},
+			want: deleteSelectorRequest{selectors: []artifacts.Selector{{Name: "a"}, {Name: "b"}}, single: false},
 		},
 		{
 			name: "refs dedupe and trim",
 			values: url.Values{
 				"ref": {" r1 ", "r1", "r2", "  "},
 			},
-			want: deleteSelectorRequest{selectors: []domain.Selector{{Ref: "r1"}, {Ref: "r2"}}, single: false},
+			want: deleteSelectorRequest{selectors: []artifacts.Selector{{Ref: "r1"}, {Ref: "r2"}}, single: false},
 		},
 		{
 			name: "mixed name and ref",
@@ -71,12 +71,12 @@ func TestParseDeleteSelectors(t *testing.T) {
 				"name": {"x"},
 				"ref":  {"y"},
 			},
-			wantErr: domain.ErrRefAndNameMutuallyExclusive,
+			wantErr: artifacts.ErrRefAndNameMutuallyExclusive,
 		},
 		{
 			name:    "empty selectors",
 			values:  url.Values{},
-			wantErr: domain.ErrRefOrName,
+			wantErr: artifacts.ErrRefOrName,
 		},
 	}
 
@@ -106,7 +106,7 @@ func TestParseSingleSelector(t *testing.T) {
 	tests := []struct {
 		name        string
 		values      url.Values
-		want        domain.Selector
+		want        artifacts.Selector
 		wantErr     error
 		wantErrText string
 	}{
@@ -115,19 +115,19 @@ func TestParseSingleSelector(t *testing.T) {
 			values: url.Values{
 				"name": {" plan/item "},
 			},
-			want: domain.Selector{Name: "plan/item"},
+			want: artifacts.Selector{Name: "plan/item"},
 		},
 		{
 			name: "single ref",
 			values: url.Values{
 				"ref": {" 20260216T120000Z-aaaaaaaaaaaaaaaa "},
 			},
-			want: domain.Selector{Ref: "20260216T120000Z-aaaaaaaaaaaaaaaa"},
+			want: artifacts.Selector{Ref: "20260216T120000Z-aaaaaaaaaaaaaaaa"},
 		},
 		{
 			name:    "none provided",
 			values:  url.Values{},
-			wantErr: domain.ErrRefOrName,
+			wantErr: artifacts.ErrRefOrName,
 		},
 		{
 			name: "multiple names",
@@ -142,7 +142,7 @@ func TestParseSingleSelector(t *testing.T) {
 				"name": {"a"},
 				"ref":  {"r"},
 			},
-			wantErr: domain.ErrRefAndNameMutuallyExclusive,
+			wantErr: artifacts.ErrRefAndNameMutuallyExclusive,
 		},
 	}
 

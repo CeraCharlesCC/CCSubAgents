@@ -426,6 +426,7 @@ func TestIsAllowedManagedPath(t *testing.T) {
 	allowedBinaries := []string{
 		filepath.Join(binaryDir, assetArtifactMCP),
 		filepath.Join(binaryDir, assetArtifactWeb),
+		filepath.Join(binaryDir, ccsubagentsdBinaryName(runtime.GOOS)),
 	}
 
 	if !files.IsAllowedManagedPath(filepath.Join(agentsDir, "one.agent.md"), agentsDir, allowedBinaries) {
@@ -436,6 +437,51 @@ func TestIsAllowedManagedPath(t *testing.T) {
 	}
 	if files.IsAllowedManagedPath(filepath.Join(string(os.PathSeparator), "tmp", "oops"), agentsDir, allowedBinaries) {
 		t.Fatalf("expected unrelated path to be denied")
+	}
+}
+
+func TestUninstall_RemovesTrackedCCSubagentsdBinary(t *testing.T) {
+	home := t.TempDir()
+	m := &Runner{
+		httpClient: &http.Client{},
+		now:        func() time.Time { return time.Unix(0, 0).UTC() },
+		homeDir:    func() (string, error) { return home, nil },
+		lookPath:   func(string) (string, error) { return "/usr/bin/gh", nil },
+		runCommand: func(context.Context, string, ...string) ([]byte, error) { return nil, nil },
+	}
+
+	binaryDir := filepath.Join(home, binaryInstallDirDefaultRel)
+	if err := os.MkdirAll(binaryDir, stateDirPerm); err != nil {
+		t.Fatalf("mkdir binary dir: %v", err)
+	}
+	daemonBinary := filepath.Join(binaryDir, ccsubagentsdBinaryName(runtime.GOOS))
+	if err := os.WriteFile(daemonBinary, []byte("daemon"), stateFilePerm); err != nil {
+		t.Fatalf("seed daemon binary: %v", err)
+	}
+
+	stateDir := filepath.Join(home, ".local", "share", "ccsubagents")
+	if err := os.MkdirAll(stateDir, stateDirPerm); err != nil {
+		t.Fatalf("mkdir state dir: %v", err)
+	}
+	tracked := state.TrackedState{
+		Version:     state.TrackedSchemaVersion,
+		Repo:        release.Repo,
+		ReleaseID:   1,
+		ReleaseTag:  "v1.0.0",
+		InstalledAt: "2026-01-01T00:00:00Z",
+		Managed: state.ManagedState{
+			Files: []string{daemonBinary},
+		},
+	}
+	if err := state.SaveTrackedState(stateDir, tracked); err != nil {
+		t.Fatalf("seed tracked state: %v", err)
+	}
+
+	if err := m.uninstall(context.Background()); err != nil {
+		t.Fatalf("uninstall should succeed: %v", err)
+	}
+	if _, err := os.Stat(daemonBinary); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected daemon binary removed, stat err: %v", err)
 	}
 }
 
@@ -785,6 +831,63 @@ func TestInstallOrUpdate_TracksBothDestinationTargets(t *testing.T) {
 		if artifact["command"] != toHomeTildePath(home, filepath.Join(paths.binaryDir, mcpBinaryName)) {
 			t.Fatalf("unexpected command for %s: %#v", mcpPath, artifact)
 		}
+	}
+}
+
+func TestInstallOrUpdate_TracksDaemonBinaryAndUninstallRemovesIt(t *testing.T) {
+	home := t.TempDir()
+	agentsArchive := zipBytes(t, map[string]string{"agents/example.agent.md": "content"})
+	mcpBinaryName, webBinaryName := localArtifactBinaryNames(runtime.GOOS)
+	daemonBinaryName := ccsubagentsdBinaryName(runtime.GOOS)
+	bundleArchive := zipBytes(t, map[string]string{
+		mcpBinaryName:    "mcp-binary",
+		webBinaryName:    "web-binary",
+		daemonBinaryName: "daemon-binary",
+	})
+
+	m := &Runner{
+		httpClient: successReleaseHTTPClient(t, "v1.2.3", agentsArchive, bundleArchive),
+		now:        func() time.Time { return time.Unix(0, 0).UTC() },
+		homeDir:    func() (string, error) { return home, nil },
+		lookPath:   func(string) (string, error) { return "/usr/bin/gh", nil },
+		runCommand: func(context.Context, string, ...string) ([]byte, error) { return []byte("ok"), nil },
+		installBinary: func(src, dst string) error {
+			data, err := os.ReadFile(src)
+			if err != nil {
+				return err
+			}
+			return os.WriteFile(dst, data, binaryFilePerm)
+		},
+	}
+
+	if err := m.installOrUpdate(context.Background(), false); err != nil {
+		t.Fatalf("install should succeed: %v", err)
+	}
+
+	paths := resolveInstallPaths(home)
+	daemonPath := filepath.Join(paths.binaryDir, daemonBinaryName)
+	stateDir := filepath.Join(home, ".local", "share", "ccsubagents")
+	tracked, err := state.LoadTrackedState(stateDir)
+	if err != nil {
+		t.Fatalf("load tracked state: %v", err)
+	}
+
+	foundDaemon := false
+	for _, managed := range tracked.Managed.Files {
+		if managed == daemonPath {
+			foundDaemon = true
+			break
+		}
+	}
+	if !foundDaemon {
+		t.Fatalf("expected tracked managed files to include daemon binary %q, got %#v", daemonPath, tracked.Managed.Files)
+	}
+
+	if err := m.uninstall(context.Background()); err != nil {
+		t.Fatalf("uninstall should succeed: %v", err)
+	}
+	if _, err := os.Stat(daemonPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected daemon binary removed by uninstall, stat err: %v", err)
 	}
 }
 
