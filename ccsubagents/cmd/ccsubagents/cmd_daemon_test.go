@@ -48,3 +48,45 @@ func TestIsAlreadyStoppedRemoteError(t *testing.T) {
 		})
 	}
 }
+
+func TestIsStoppedStatusError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "missing unix socket means stopped",
+			err:  &daemonclient.RemoteError{Code: daemonclient.CodeServiceUnavailable, Message: "dial unix /tmp/ccsubagentsd.sock: connect: no such file or directory"},
+			want: true,
+		},
+		{
+			name: "connection refused means stopped",
+			err:  &daemonclient.RemoteError{Code: daemonclient.CodeServiceUnavailable, Message: "dial tcp 127.0.0.1:19131: connect: connection refused"},
+			want: true,
+		},
+		{
+			name: "already unavailable means stopped",
+			err:  &daemonclient.RemoteError{Code: daemonclient.CodeServiceUnavailable, Message: "daemon already unavailable"},
+			want: true,
+		},
+		{
+			name: "unauthorized must not be treated as stopped",
+			err:  &daemonclient.RemoteError{Code: daemonclient.CodeUnauthorized, Message: "missing or invalid token"},
+			want: false,
+		},
+		{
+			name: "plain errors are not stopped",
+			err:  errors.New("boom"),
+			want: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isStoppedStatusError(tc.err); got != tc.want {
+				t.Fatalf("isStoppedStatusError(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
