@@ -358,18 +358,14 @@
     }
 
     .workspace {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr);
-      gap: 0.8rem;
-      align-items: start;
-      transition: grid-template-columns 240ms ease;
-    }
-
-    .workspace.has-active-viewer {
-      grid-template-columns: minmax(0, 1.1fr) minmax(380px, 0.9fr);
+      display: flex;
+      flex-direction: row;
+      gap: 1rem;
+      align-items: flex-start;
     }
 
     .data-pane {
+      flex: 1;
       min-width: 0;
     }
 
@@ -419,7 +415,7 @@
 
     tr.selectable {
       cursor: pointer;
-      transition: background-color 90ms ease;
+      transition: background-color 150ms ease, color 150ms ease;
     }
 
     tr.selectable:hover td {
@@ -431,7 +427,8 @@
     }
 
     tr.selectable.selected td:first-child {
-      box-shadow: inset 3px 0 0 var(--selected-line);
+      box-shadow: inset 4px 0 0 var(--selected-line);
+      font-weight: 500;
     }
 
     tr.selectable:focus-visible td {
@@ -445,29 +442,31 @@
     }
 
     .viewer-shell {
-      min-width: 0;
+      width: 0;
       opacity: 0;
-      transform: translateX(10px);
+      transform: translateX(20px);
       pointer-events: none;
-      max-height: 0;
       overflow: hidden;
-      transition: opacity 180ms ease, transform 220ms ease, max-height 240ms ease;
+      transition: width 350ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 250ms ease, transform 350ms cubic-bezier(0.2, 0.8, 0.2, 1);
     }
 
     .workspace.has-active-viewer .viewer-shell {
+      width: 45%;
       opacity: 1;
-      transform: none;
+      transform: translateX(0);
       pointer-events: auto;
-      max-height: 200vh;
     }
 
     .viewer {
       border: 1px solid var(--line);
       border-radius: 10px;
       background: var(--input-bg);
-      padding: 0.72rem;
+      padding: 0.85rem;
       position: sticky;
-      top: 0.9rem;
+      top: 1rem;
+      width: 100%;
+      min-width: 380px;
+      box-shadow: 0 4px 14px var(--shadow);
     }
 
     .viewer-head {
@@ -501,16 +500,17 @@
 
     .viewer-meta-grid dt {
       margin: 0;
-      font-size: 0.74rem;
+      font-size: 0.78rem;
       color: var(--muted);
+      font-weight: 550;
       text-transform: uppercase;
       letter-spacing: 0.04em;
     }
 
     .viewer-meta-grid dd {
-      margin: 0.18rem 0 0;
+      margin: 0.2rem 0 0;
       font-family: var(--mono);
-      font-size: 0.8rem;
+      font-size: 0.85rem;
       overflow-wrap: anywhere;
     }
 
@@ -549,10 +549,10 @@
     .viewer-content pre {
       margin: 0;
       font-family: var(--mono);
-      font-size: 0.84rem;
+      font-size: 0.9rem;
       white-space: pre-wrap;
       overflow-wrap: anywhere;
-      line-height: 1.62;
+      line-height: 1.65;
       letter-spacing: 0.01em;
       animation: preview-fade-in 180ms ease;
     }
@@ -610,12 +610,17 @@
     }
 
     @media (max-width: 1100px) {
-      .workspace.has-active-viewer {
-        grid-template-columns: minmax(0, 1fr);
+      .workspace {
+        flex-direction: column;
+      }
+
+      .workspace.has-active-viewer .viewer-shell {
+        width: 100%;
       }
 
       .viewer {
         position: static;
+        min-width: 0;
       }
 
       .viewer-meta-grid {
@@ -1062,12 +1067,12 @@
         if (activeRows.length > 1) {
           previewRequestID += 1;
           viewerContent.classList.remove('loading');
-          setViewerOpen(false);
+          setViewerOpen(true);
           setViewerDetails(null, '');
           setViewerCopyState('', 'Copy content');
           clearCopyStatus();
-          viewerMeta.textContent = 'Select a single artifact to preview.';
-          showViewerPlaceholder('Multiple artifacts selected.', false);
+          viewerMeta.textContent = activeRows.length + ' artifacts selected.';
+          showViewerPlaceholder('Multiple artifacts selected. Use bulk actions or select a single artifact to preview.', false);
           return;
         }
 
