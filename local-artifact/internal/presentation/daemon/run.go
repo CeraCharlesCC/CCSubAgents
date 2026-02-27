@@ -31,6 +31,17 @@ type RunConfig struct {
 	Stderr      io.Writer
 }
 
+type apiAlreadyListeningError struct {
+	socket string
+}
+
+func (e *apiAlreadyListeningError) Error() string {
+	if e == nil {
+		return "daemon already listening"
+	}
+	return fmt.Sprintf("daemon already listening on %s", e.socket)
+}
+
 func (c *RunConfig) normalize() {
 	c.StoreRoot = strings.TrimSpace(c.StoreRoot)
 	c.StateDir = strings.TrimSpace(c.StateDir)
@@ -84,19 +95,25 @@ func Run(ctx context.Context, cfg RunConfig) error {
 
 	apiListener, apiAddress, err := listenAPI(cfg)
 	if err != nil {
-		return err
+		var alreadyErr *apiAlreadyListeningError
+		if strings.TrimSpace(cfg.WebAddr) == "" || !errors.As(err, &alreadyErr) {
+			return err
+		}
+		fmt.Fprintf(cfg.Stderr, "ccsubagentsd api already active on unix://%s; starting web-only mode\n", alreadyErr.socket)
 	}
-	defer apiListener.Close()
-
-	apiHTTPServer := &http.Server{Handler: apiHandler}
-	apiErrCh := make(chan error, 1)
+	var apiHTTPServer *http.Server
+	var apiErrCh chan error
 	shutdownErrCh := make(chan error, 1)
 	var shutdownOnce sync.Once
-	go func() {
-		apiErrCh <- apiHTTPServer.Serve(apiListener)
-	}()
-
-	fmt.Fprintf(cfg.Stderr, "ccsubagentsd api listening on %s\n", apiAddress)
+	if apiListener != nil {
+		defer apiListener.Close()
+		apiHTTPServer = &http.Server{Handler: apiHandler}
+		apiErrCh = make(chan error, 1)
+		go func() {
+			apiErrCh <- apiHTTPServer.Serve(apiListener)
+		}()
+		fmt.Fprintf(cfg.Stderr, "ccsubagentsd api listening on %s\n", apiAddress)
+	}
 
 	var webHTTPServer *http.Server
 	var webErrCh chan error
@@ -105,9 +122,12 @@ func Run(ctx context.Context, cfg RunConfig) error {
 			go func() {
 				shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
-				err := apiHTTPServer.Shutdown(shutdownCtx)
-				if err == nil || errors.Is(err, http.ErrServerClosed) {
-					err = nil
+				var err error
+				if apiHTTPServer != nil {
+					err = apiHTTPServer.Shutdown(shutdownCtx)
+					if err == nil || errors.Is(err, http.ErrServerClosed) {
+						err = nil
+					}
 				}
 				if webHTTPServer != nil {
 					if webErr := webHTTPServer.Shutdown(shutdownCtx); webErr != nil && !errors.Is(webErr, http.ErrServerClosed) && err == nil {
@@ -215,7 +235,7 @@ func cleanupStaleSocket(socket string) error {
 	conn, err := net.DialTimeout("unix", socket, 200*time.Millisecond)
 	if err == nil {
 		_ = conn.Close()
-		return fmt.Errorf("daemon already listening on %s", socket)
+		return &apiAlreadyListeningError{socket: socket}
 	}
 	if err := os.Remove(socket); err != nil && !os.IsNotExist(err) {
 		return err

@@ -2,7 +2,10 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"io"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -133,4 +136,205 @@ func TestRun_ShutdownEndpointStopsDaemon(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("daemon did not stop after shutdown request")
 	}
+}
+
+func TestRun_WebOnlyModeWhenAPISocketAlreadyActive(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix socket-based test")
+	}
+
+	storeRoot := filepath.Join(t.TempDir(), "store")
+	stateDir := filepath.Join(t.TempDir(), "state")
+	socketDir, err := os.MkdirTemp("/tmp", "ccsubagentsd-webonly-")
+	if err != nil {
+		t.Fatalf("create socket temp dir: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(socketDir)
+	})
+	socket := filepath.Join(socketDir, "daemon.sock")
+
+	primaryErrCh := make(chan error, 1)
+	go func() {
+		primaryErrCh <- Run(context.Background(), RunConfig{
+			StoreRoot:   storeRoot,
+			StateDir:    stateDir,
+			APISocket:   socket,
+			DisableAuth: true,
+			Stderr:      io.Discard,
+		})
+	}()
+
+	client := NewUnixSocketClient(socket, "")
+	waitForDaemonReady(t, client, primaryErrCh)
+
+	webAddr := reserveLoopbackAddr(t)
+	secondaryErrCh := make(chan error, 1)
+	go func() {
+		secondaryErrCh <- Run(context.Background(), RunConfig{
+			StoreRoot:   storeRoot,
+			StateDir:    stateDir,
+			APISocket:   socket,
+			WebAddr:     webAddr,
+			DisableAuth: true,
+			Stderr:      io.Discard,
+		})
+	}()
+
+	waitForWebHealth(t, webAddr)
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "http://"+webAddr+"/daemon/v1/control/shutdown", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatalf("build shutdown request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("shutdown web-only daemon: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("shutdown status mismatch: got=%d want=%d", resp.StatusCode, http.StatusAccepted)
+	}
+
+	select {
+	case err := <-secondaryErrCh:
+		if err != nil {
+			t.Fatalf("web-only daemon returned error: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("web-only daemon did not stop after shutdown request")
+	}
+
+	if err := client.Health(context.Background()); err != nil {
+		t.Fatalf("primary daemon should still be healthy after web-only shutdown: %v", err)
+	}
+
+	if _, err := client.Shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown primary daemon: %v", err)
+	}
+	select {
+	case err := <-primaryErrCh:
+		if err != nil {
+			t.Fatalf("primary daemon returned error: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("primary daemon did not stop after shutdown")
+	}
+}
+
+func TestRun_WithoutWebAddrStillErrorsWhenAPISocketAlreadyActive(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix socket-based test")
+	}
+
+	storeRoot := filepath.Join(t.TempDir(), "store")
+	stateDir := filepath.Join(t.TempDir(), "state")
+	socketDir, err := os.MkdirTemp("/tmp", "ccsubagentsd-api-busy-")
+	if err != nil {
+		t.Fatalf("create socket temp dir: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(socketDir)
+	})
+	socket := filepath.Join(socketDir, "daemon.sock")
+
+	primaryErrCh := make(chan error, 1)
+	go func() {
+		primaryErrCh <- Run(context.Background(), RunConfig{
+			StoreRoot:   storeRoot,
+			StateDir:    stateDir,
+			APISocket:   socket,
+			DisableAuth: true,
+			Stderr:      io.Discard,
+		})
+	}()
+
+	client := NewUnixSocketClient(socket, "")
+	waitForDaemonReady(t, client, primaryErrCh)
+
+	err = Run(context.Background(), RunConfig{
+		StoreRoot:   storeRoot,
+		StateDir:    stateDir,
+		APISocket:   socket,
+		DisableAuth: true,
+		Stderr:      io.Discard,
+	})
+	var listeningErr *apiAlreadyListeningError
+	if !errors.As(err, &listeningErr) {
+		t.Fatalf("expected apiAlreadyListeningError, got %v", err)
+	}
+
+	if _, err := client.Shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown primary daemon: %v", err)
+	}
+	select {
+	case err := <-primaryErrCh:
+		if err != nil {
+			t.Fatalf("primary daemon returned error: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("primary daemon did not stop after shutdown")
+	}
+}
+
+func waitForDaemonReady(t *testing.T, client *Client, daemonErrCh <-chan error) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		healthCtx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		healthErr := client.Health(healthCtx)
+		cancel()
+		if healthErr == nil {
+			return
+		}
+		select {
+		case runErr := <-daemonErrCh:
+			t.Fatalf("daemon exited before healthy: %v", runErr)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("daemon did not become healthy before timeout: %v", healthErr)
+		}
+		time.Sleep(75 * time.Millisecond)
+	}
+}
+
+func waitForWebHealth(t *testing.T, webAddr string) {
+	t.Helper()
+	client := &http.Client{Timeout: 1 * time.Second}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+webAddr+"/daemon/v1/health", nil)
+		if err != nil {
+			t.Fatalf("build health request: %v", err)
+		}
+		resp, err := client.Do(req)
+		if err == nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			if err != nil {
+				t.Fatalf("web daemon did not become healthy before timeout: %v", err)
+			}
+			t.Fatalf("web daemon health status mismatch before timeout: got=%d want=%d", resp.StatusCode, http.StatusOK)
+		}
+		time.Sleep(75 * time.Millisecond)
+	}
+}
+
+func reserveLoopbackAddr(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve loopback addr: %v", err)
+	}
+	addr := ln.Addr().String()
+	if err := ln.Close(); err != nil {
+		t.Fatalf("close reserved listener: %v", err)
+	}
+	return addr
 }
