@@ -92,7 +92,7 @@ func TestRunArtifactsOpenWebUI_WithTokenWhenAuthEnabled(t *testing.T) {
 	t.Setenv("LOCAL_ARTIFACT_DAEMON_TOKEN", "")
 	t.Setenv("CCSUBAGENTS_CONFIG_DIR", filepath.Join(home, "config"))
 
-	writeTestFile(t, filepath.Join(cwd, "ccsubagents", "settings.json"), `{"no-auth": false, "webui-port": 19132}`)
+	writeTestFile(t, filepath.Join(cwd, "ccsubagents", "settings.json"), `{"no-auth": false, "webui-port": 19130}`)
 	writeTestFile(t, filepath.Join(stateDir, "daemon", "daemon.token"), "abc123")
 
 	var stdout bytes.Buffer
@@ -101,7 +101,7 @@ func TestRunArtifactsOpenWebUI_WithTokenWhenAuthEnabled(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("runArtifacts exit code = %d, stderr=%q", code, stderr.String())
 	}
-	if got := stdout.String(); got != "http://127.0.0.1:19132/?token=abc123\n" {
-		t.Fatalf("openwebui URL mismatch: got=%q want=%q", got, "http://127.0.0.1:19132/?token=abc123\\n")
+	if got := stdout.String(); got != "http://127.0.0.1:19130/?token=abc123\n" {
+		t.Fatalf("openwebui URL mismatch: got=%q want=%q", got, "http://127.0.0.1:19130/?token=abc123\\n")
 	}
 }

@@ -109,10 +109,10 @@ func TestResolveWebAddr_UsesCCSubagentsWebUIPortWhenEnvUnset(t *testing.T) {
 	withWorkingDir(t, cwd)
 
 	t.Setenv(webAddrEnv, "")
-	writeSettingsFile(t, filepath.Join(cwd, "ccsubagents", "settings.json"), `{"webui-port": 19132}`)
+	writeSettingsFile(t, filepath.Join(cwd, "ccsubagents", "settings.json"), `{"webui-port": 19130}`)
 
-	if got := ResolveWebAddr(); got != "127.0.0.1:19132" {
-		t.Fatalf("ResolveWebAddr settings override mismatch: got=%q want=%q", got, "127.0.0.1:19132")
+	if got := ResolveWebAddr(); got != "127.0.0.1:19130" {
+		t.Fatalf("ResolveWebAddr settings override mismatch: got=%q want=%q", got, "127.0.0.1:19130")
 	}
 }
 

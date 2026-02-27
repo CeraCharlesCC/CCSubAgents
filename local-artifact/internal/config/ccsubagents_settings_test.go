@@ -23,7 +23,7 @@ func TestResolveMergedCCSubagentsSettings_LocalOverridesGlobal(t *testing.T) {
 
 	globalPath, localPath := resolveCCSubagentsSettingsPaths(home, cwd)
 	writeSettingsFile(t, globalPath, `{"autostart-webui": true, "no-auth": false, "webui-port": 19131}`)
-	writeSettingsFile(t, localPath, `{"no-auth": true, "webui-port": 19132}`)
+	writeSettingsFile(t, localPath, `{"no-auth": true, "webui-port": 19130}`)
 
 	settings, err := resolveMergedCCSubagentsSettings(home, cwd)
 	if err != nil {
@@ -35,8 +35,8 @@ func TestResolveMergedCCSubagentsSettings_LocalOverridesGlobal(t *testing.T) {
 	if !settings.NoAuth {
 		t.Fatalf("expected local override to enable no-auth")
 	}
-	if settings.WebUIPort != 19132 {
-		t.Fatalf("webui-port mismatch: got=%d want=%d", settings.WebUIPort, 19132)
+	if settings.WebUIPort != 19130 {
+		t.Fatalf("webui-port mismatch: got=%d want=%d", settings.WebUIPort, 19130)
 	}
 }
 

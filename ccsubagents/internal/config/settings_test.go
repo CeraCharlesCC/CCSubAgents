@@ -22,7 +22,7 @@ func TestLoadMergedInstallSettings_NoAuthAndWebUIPortMerge(t *testing.T) {
 	cwd := t.TempDir()
 	globalPath, localPath := ResolveSettingsPaths(home, cwd)
 
-	writeTestSettingsFile(t, globalPath, `{"no-auth": true, "webui-port": 19132, "autostart-webui": true}`)
+	writeTestSettingsFile(t, globalPath, `{"no-auth": true, "webui-port": 19130, "autostart-webui": true}`)
 	writeTestSettingsFile(t, localPath, `{"no-auth": false, "webui-port": 19133}`)
 
 	settings, err := LoadMergedInstallSettings(home, cwd)
