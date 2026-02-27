@@ -68,16 +68,26 @@ func ensureDaemonAvailable(ctx context.Context, storeRoot, stateDir string, disa
 	}
 
 	token := ""
+	fallbackToken := ""
 	if !disableAuth {
 		resolvedToken, err := daemon.ResolveOrCreateToken(stateDir, config.ResolveDaemonToken(stateDir))
 		if err != nil {
 			return nil, err
 		}
 		token = resolvedToken
+	} else {
+		fallbackToken = readPersistedDaemonToken(stateDir)
 	}
 	client := buildDaemonClient(stateDir, token)
 	if err := daemonReady(ctx, client); err == nil {
 		return client, nil
+	}
+	var fallbackClient *daemon.Client
+	if fallbackToken != "" {
+		fallbackClient = buildDaemonClient(stateDir, fallbackToken)
+		if err := daemonReady(ctx, fallbackClient); err == nil {
+			return fallbackClient, nil
+		}
 	}
 
 	if err := startCCSubagentsd(stderr, storeRoot, stateDir, token); err != nil {
@@ -88,6 +98,11 @@ func ensureDaemonAvailable(ctx context.Context, storeRoot, stateDir string, disa
 	for {
 		if err := daemonReady(ctx, client); err == nil {
 			return client, nil
+		}
+		if fallbackClient != nil {
+			if err := daemonReady(ctx, fallbackClient); err == nil {
+				return fallbackClient, nil
+			}
 		}
 		if time.Now().After(deadline) {
 			return nil, errors.New("timed out waiting for ccsubagentsd readiness")
@@ -238,6 +253,14 @@ func pathExists(path string) bool {
 		return false
 	}
 	return !info.IsDir()
+}
+
+func readPersistedDaemonToken(stateDir string) string {
+	b, err := os.ReadFile(filepath.Join(stateDir, "daemon", "daemon.token"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
 }
 
 func resolveConfiguredPath(home, value string) string {
