@@ -54,13 +54,11 @@ Reply with a structured review:
 
 - Verdict: APPROVE / APPROVE WITH NITS / REQUEST CHANGES
 - Plan artifact reviewed (name and ref)
-- Summary of what was changed (files, scope)
 - What looks good
 - Acceptance criteria status: each criterion marked met or unmet, with notes
 - Blocking issues: if any, what, where, why, and suggested fix
 - Non-blocking suggestions, if any
 - Impact gaps: areas in the codebase affected by these changes that may need attention
 - Checks run or recommended
-- Assumptions or questions, if any
 
 When suggesting a code change, describe it in words or include a small diff snippet. DO NOT apply edits yourself.

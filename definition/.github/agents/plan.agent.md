@@ -72,7 +72,7 @@ Cover these areas in whatever structure feels natural:
 - Edge cases and risks: performance, security, backwards compatibility
 - Test plan: what tests to add or update
 - Open questions / assumptions: anything flagged for the parent
-- Critical files (1–8) for implementing this plan, if they exist:
+- Critical files for implementing this plan, if they exist:
     - path/to/file - Brief reason (e.g. "Core logic to modify", "Pattern to follow")
 
 ## Delivery
