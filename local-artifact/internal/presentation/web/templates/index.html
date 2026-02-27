@@ -51,55 +51,67 @@
   </script>
   <style>
     :root {
-      --bg: #f5f3ef;
-      --card: #fffaf3;
-      --ink: #1d1b17;
-      --muted: #6a6153;
-      --accent: #0b6e4f;
-      --danger: #a12727;
-      --line: #ded6c9;
+      --bg: #f6f4ef;
+      --card: #fefbf5;
+      --ink: #27231d;
+      --muted: #6d6558;
+      --accent: #2f7b63;
+      --danger: #a23838;
+      --line: #d7d0c2;
       --mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
       --sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
-      --bg-grad-a: #ece5d7;
-      --bg-grad-b: #ddd2bc;
-      --shadow: rgba(43, 40, 34, 0.07);
-      --input-bg: #fff;
+      --bg-grad-a: #ece6da;
+      --bg-grad-b: #e1d8c4;
+      --shadow: rgba(44, 39, 32, 0.06);
+      --input-bg: #fffdf9;
       --ok-bg: #e9f8f2;
       --ok-ink: #115a42;
       --ok-border: #b8e4d4;
       --err-bg: #fbeceb;
       --err-ink: #7e2020;
       --err-border: #efc4c4;
-      --selected-bg: #ebf5f1;
-      --selected-line: #5f9c84;
+      --selected-bg: #e7f0ea;
+      --selected-hover: #eef4ef;
+      --selected-line: #5b927f;
+      --focus-ring: #7ba894;
+      --viewer-content-bg: #fbf8f2;
+      --button-soft-bg: #f2ede3;
+      --button-soft-ink: #3b352d;
+      --button-soft-border: #cfc6b6;
       --scroll-track: #ece6dc;
       --scroll-thumb: #b7ac9a;
       --scroll-thumb-hover: #9f937f;
     }
 
     :root[data-theme="dark"] {
-      --bg: #171513;
-      --card: #221f1b;
-      --ink: #f3eee6;
-      --muted: #b8ad9a;
-      --accent: #57bf99;
-      --danger: #d96969;
+      --bg: #181614;
+      --card: #24201c;
+      --ink: #efe8dc;
+      --muted: #b3a792;
+      --accent: #66b89a;
+      --danger: #dc7b7b;
       --line: #3b352e;
-      --bg-grad-a: #2a241f;
-      --bg-grad-b: #1f1a16;
-      --shadow: rgba(0, 0, 0, 0.35);
-      --input-bg: #1b1814;
+      --bg-grad-a: #2c2620;
+      --bg-grad-b: #231e19;
+      --shadow: rgba(0, 0, 0, 0.33);
+      --input-bg: #1f1b17;
       --ok-bg: #1c2b24;
       --ok-ink: #b8ecd7;
       --ok-border: #2f5b47;
       --err-bg: #331f1f;
       --err-ink: #f0c8c8;
       --err-border: #644040;
-      --selected-bg: #27342e;
-      --selected-line: #6bb391;
-      --scroll-track: #26211c;
-      --scroll-thumb: #6d6253;
-      --scroll-thumb-hover: #857866;
+      --selected-bg: #2a3832;
+      --selected-hover: #33443d;
+      --selected-line: #77b49a;
+      --focus-ring: #8cc2aa;
+      --viewer-content-bg: #201d18;
+      --button-soft-bg: #2a2520;
+      --button-soft-ink: #e5dccd;
+      --button-soft-border: #4d463d;
+      --scroll-track: #27221d;
+      --scroll-thumb: #6b6050;
+      --scroll-thumb-hover: #847866;
     }
 
     * {
@@ -139,6 +151,7 @@
         var(--bg);
       color: var(--ink);
       font-family: var(--sans);
+      line-height: 1.45;
       min-height: 100vh;
     }
 
@@ -290,6 +303,13 @@
       background: var(--danger);
     }
 
+    button.subtle,
+    .theme-toggle {
+      border: 1px solid var(--button-soft-border);
+      background: var(--button-soft-bg);
+      color: var(--button-soft-ink);
+    }
+
     button:hover:not(:disabled) {
       filter: brightness(1.05);
       transform: translateY(-1px);
@@ -301,9 +321,6 @@
     }
 
     .theme-toggle {
-      border: 1px solid var(--line);
-      background: transparent;
-      color: var(--ink);
       white-space: nowrap;
     }
 
@@ -330,6 +347,7 @@
       display: flex;
       align-items: center;
       gap: 0.6rem;
+      flex-wrap: wrap;
       margin: 0.25rem 0 0.7rem;
     }
 
@@ -401,11 +419,11 @@
 
     tr.selectable {
       cursor: pointer;
-      transition: background-color 140ms ease;
+      transition: background-color 90ms ease;
     }
 
     tr.selectable:hover td {
-      background: color-mix(in srgb, var(--selected-bg) 65%, var(--card) 35%);
+      background: var(--selected-hover);
     }
 
     tr.selectable.selected td {
@@ -417,8 +435,13 @@
     }
 
     tr.selectable:focus-visible td {
-      outline: 2px solid var(--selected-line);
-      outline-offset: -2px;
+      outline: 1px solid var(--focus-ring);
+      outline-offset: -1px;
+    }
+
+    body.shift-active tr.selectable,
+    body.shift-active tr.selectable td {
+      transition: none;
     }
 
     .viewer-shell {
@@ -491,12 +514,29 @@
       overflow-wrap: anywhere;
     }
 
+    .viewer-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .viewer-copy-status {
+      min-height: 1.2em;
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
+
+    .viewer-copy-status.error {
+      color: var(--danger);
+    }
+
     .viewer-content {
       border: 1px solid var(--line);
       border-radius: 8px;
       min-height: 240px;
       padding: 0.62rem;
-      background: var(--card);
+      background: var(--viewer-content-bg);
       overflow: auto;
       max-height: min(53vh, 600px);
       transition: opacity 120ms ease;
@@ -509,10 +549,11 @@
     .viewer-content pre {
       margin: 0;
       font-family: var(--mono);
-      font-size: 0.82rem;
+      font-size: 0.84rem;
       white-space: pre-wrap;
       overflow-wrap: anywhere;
-      line-height: 1.5;
+      line-height: 1.62;
+      letter-spacing: 0.01em;
       animation: preview-fade-in 180ms ease;
     }
 
@@ -654,10 +695,11 @@
             <div id="selected-inputs"></div>
             <div class="bulk-controls">
               <button class="delete" id="delete-selected" type="submit" disabled>Delete selected</button>
+              <button class="subtle" id="clear-selection" type="button" disabled>Clear selection</button>
               <span class="selection-count" id="selection-count">0 selected</span>
             </div>
           </form>
-          <p class="workflow-hint">Click a row to focus it. Use <code>Shift</code> for ranges and <code>Ctrl/Cmd</code> for multi-select.</p>
+          <p class="workflow-hint">Click rows to select. Use <code>Shift</code> for ranges, <code>Ctrl/Cmd</code> to toggle, and <code>Esc</code> to clear.</p>
 
           <div class="table-wrap">
             <table>
@@ -699,6 +741,10 @@
               <div>
                 <strong>Data viewer</strong>
                 <span class="hint" id="viewer-meta">Select one artifact to preview.</span>
+              </div>
+              <div class="viewer-actions">
+                <button type="button" class="subtle" id="viewer-copy" disabled>Copy content</button>
+                <span class="viewer-copy-status" id="viewer-copy-status" aria-live="polite"></span>
               </div>
             </div>
             <dl class="viewer-meta-grid">
@@ -794,8 +840,11 @@
       const selectedInputs = document.getElementById('selected-inputs');
       const countNode = document.getElementById('selection-count');
       const deleteButton = document.getElementById('delete-selected');
+      const clearSelectionButton = document.getElementById('clear-selection');
       const viewerMeta = document.getElementById('viewer-meta');
       const viewerContent = document.getElementById('viewer-content');
+      const viewerCopyButton = document.getElementById('viewer-copy');
+      const viewerCopyStatus = document.getElementById('viewer-copy-status');
       const viewerName = document.getElementById('viewer-name');
       const viewerRef = document.getElementById('viewer-ref');
       const viewerMime = document.getElementById('viewer-mime');
@@ -804,6 +853,8 @@
       const viewerCreated = document.getElementById('viewer-created');
       let activeImageObjectURL = '';
       let previewRequestID = 0;
+      let copyPayload = '';
+      let copyStatusTimeoutID = 0;
       const previewSupportText = 'Supported: text/plain, text/markdown, image/*, application/json, application/ld+json.';
 
       if (!selectedInputs || !countNode || !deleteButton) {
@@ -837,6 +888,70 @@
         if (viewerShell) {
           viewerShell.setAttribute('aria-hidden', isOpen ? 'false' : 'true');
         }
+      }
+
+      function setShiftActive(isActive) {
+        document.body.classList.toggle('shift-active', !!isActive);
+      }
+
+      function clearCopyStatus() {
+        if (!viewerCopyStatus) {
+          return;
+        }
+        if (copyStatusTimeoutID !== 0) {
+          window.clearTimeout(copyStatusTimeoutID);
+          copyStatusTimeoutID = 0;
+        }
+        viewerCopyStatus.textContent = '';
+        viewerCopyStatus.classList.remove('error');
+      }
+
+      function showCopyStatus(message, isError) {
+        if (!viewerCopyStatus) {
+          return;
+        }
+        clearCopyStatus();
+        viewerCopyStatus.textContent = message;
+        viewerCopyStatus.classList.toggle('error', !!isError);
+        copyStatusTimeoutID = window.setTimeout(function () {
+          clearCopyStatus();
+        }, 1800);
+      }
+
+      function setViewerCopyState(payload, buttonLabel) {
+        copyPayload = payload || '';
+        if (!viewerCopyButton) {
+          return;
+        }
+        viewerCopyButton.disabled = copyPayload === '';
+        viewerCopyButton.textContent = buttonLabel || 'Copy content';
+      }
+
+      function writeClipboardText(text) {
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+          return navigator.clipboard.writeText(text);
+        }
+        return new Promise(function (resolve, reject) {
+          const helper = document.createElement('textarea');
+          helper.value = text;
+          helper.setAttribute('readonly', 'true');
+          helper.style.position = 'fixed';
+          helper.style.top = '-1000px';
+          document.body.appendChild(helper);
+          helper.select();
+          try {
+            const copied = document.execCommand('copy');
+            document.body.removeChild(helper);
+            if (copied) {
+              resolve();
+            } else {
+              reject(new Error('copy failed'));
+            }
+          } catch (error) {
+            document.body.removeChild(helper);
+            reject(error);
+          }
+        });
       }
 
       function setViewerDetails(row, mimeTypeOverride) {
@@ -938,6 +1053,8 @@
           viewerContent.classList.remove('loading');
           setViewerOpen(false);
           setViewerDetails(null, '');
+          setViewerCopyState('', 'Copy content');
+          clearCopyStatus();
           viewerMeta.textContent = 'Select one artifact to preview.';
           showViewerPlaceholder(previewSupportText, false);
           return;
@@ -947,6 +1064,8 @@
           viewerContent.classList.remove('loading');
           setViewerOpen(false);
           setViewerDetails(null, '');
+          setViewerCopyState('', 'Copy content');
+          clearCopyStatus();
           viewerMeta.textContent = 'Select a single artifact to preview.';
           showViewerPlaceholder('Multiple artifacts selected.', false);
           return;
@@ -958,6 +1077,8 @@
           viewerContent.classList.remove('loading');
           setViewerOpen(false);
           setViewerDetails(null, '');
+          setViewerCopyState('', 'Copy content');
+          clearCopyStatus();
           viewerMeta.textContent = 'Select one artifact to preview.';
           showViewerPlaceholder('No artifact selected.', false);
           return;
@@ -970,6 +1091,8 @@
         if (ref === '') {
           viewerContent.classList.remove('loading');
           viewerMeta.textContent = 'Preview unavailable';
+          setViewerCopyState('', 'Copy content');
+          clearCopyStatus();
           showViewerPlaceholder('Missing ref for selected artifact.', true);
           return;
         }
@@ -979,6 +1102,8 @@
         query.set('ref', ref);
         const requestID = previewRequestID + 1;
         previewRequestID = requestID;
+        setViewerCopyState(ref, 'Copy ref');
+        clearCopyStatus();
         viewerMeta.textContent = (name || ref) + ' | loading...';
         viewerContent.classList.add('loading');
         if (!viewerHasRenderableContent()) {
@@ -1019,6 +1144,7 @@
             setViewerDetails(row, result.rawMimeType);
             viewerMeta.textContent = (name || ref) + ' | ' + result.rawMimeType;
             if (mimeType.indexOf('image/') === 0) {
+              setViewerCopyState(ref, 'Copy ref');
               showViewerImage(result.blob, name || ref);
               return;
             }
@@ -1028,6 +1154,7 @@
               mimeType.indexOf('text/plain') === 0 ||
               mimeType.indexOf('text/markdown') === 0;
             if (!supportsTextPreview) {
+              setViewerCopyState(ref, 'Copy ref');
               showViewerPlaceholder('Preview not supported for MIME type: ' + result.rawMimeType, false);
               return;
             }
@@ -1039,6 +1166,7 @@
                 try {
                   const pretty = JSON.stringify(JSON.parse(text), null, 2);
                   showViewerText(pretty);
+                  setViewerCopyState(pretty, 'Copy content');
                   return;
                 } catch (error) {
                 }
@@ -1048,8 +1176,10 @@
                 mimeType.indexOf('text/markdown') === 0
               ) {
                 showViewerText(text);
+                setViewerCopyState(text, 'Copy content');
                 return;
               }
+              setViewerCopyState(ref, 'Copy ref');
             });
           })
           .catch(function (error) {
@@ -1059,6 +1189,7 @@
             viewerContent.classList.remove('loading');
             setViewerDetails(row, row.dataset.mime || '');
             viewerMeta.textContent = 'Preview error';
+            setViewerCopyState(ref, 'Copy ref');
             showViewerPlaceholder(error && error.message ? error.message : 'failed to load preview', true);
           });
       }
@@ -1089,8 +1220,17 @@
 
         const selectedCount = activeRows.length;
         deleteButton.disabled = selectedCount === 0;
+        if (clearSelectionButton) {
+          clearSelectionButton.disabled = selectedCount === 0;
+        }
         countNode.textContent = selectedCount + ' selected';
         updateViewerBySelection();
+      }
+
+      function clearSelection() {
+        selected.clear();
+        anchorIndex = null;
+        updateSelectionUI();
       }
 
       function applySelectionEvent(idx, event) {
@@ -1134,9 +1274,46 @@
         });
       }
 
+      if (clearSelectionButton) {
+        clearSelectionButton.addEventListener('click', function () {
+          clearSelection();
+        });
+      }
+
+      if (viewerCopyButton) {
+        viewerCopyButton.addEventListener('click', function () {
+          if (copyPayload === '') {
+            return;
+          }
+          writeClipboardText(copyPayload)
+            .then(function () {
+              showCopyStatus('Copied.', false);
+            })
+            .catch(function () {
+              showCopyStatus('Copy failed.', true);
+            });
+        });
+      }
+
+      document.addEventListener('keydown', function (event) {
+        if (event.key === 'Shift') {
+          setShiftActive(true);
+        }
+      });
+
+      document.addEventListener('keyup', function (event) {
+        if (event.key === 'Shift') {
+          setShiftActive(false);
+        }
+      });
+
+      window.addEventListener('blur', function () {
+        setShiftActive(false);
+      });
+
       rows.forEach(function (row) {
         row.addEventListener('mousedown', function (event) {
-          if (event.shiftKey) {
+          if (event.button === 0) {
             event.preventDefault();
           }
         });
@@ -1188,9 +1365,7 @@
           }
 
           if (event.key === 'Escape') {
-            selected.clear();
-            anchorIndex = null;
-            updateSelectionUI();
+            clearSelection();
           }
         });
       });
