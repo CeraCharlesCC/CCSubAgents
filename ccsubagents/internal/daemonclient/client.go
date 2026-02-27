@@ -19,6 +19,7 @@ import (
 const (
 	defaultDaemonAddr      = "127.0.0.1:19131"
 	defaultMaxResponseSize = 12 << 20
+	daemonTokenEnv         = "LOCAL_ARTIFACT_DAEMON_TOKEN"
 )
 
 type Client struct {
@@ -66,13 +67,7 @@ func NewDefaultClient(stateDir string, getenv func(string) string) (*Client, err
 	if getenv == nil {
 		getenv = os.Getenv
 	}
-	token := strings.TrimSpace(getenv("LOCAL_ARTIFACT_DAEMON_TOKEN"))
-	if token == "" {
-		b, err := os.ReadFile(filepath.Join(stateDir, "daemon", "daemon.token"))
-		if err == nil {
-			token = strings.TrimSpace(string(b))
-		}
-	}
+	token := ResolveDaemonToken(stateDir, getenv)
 	if runtime.GOOS == "windows" {
 		addr := strings.TrimSpace(getenv("LOCAL_ARTIFACT_DAEMON_ADDR"))
 		if addr == "" {
@@ -85,6 +80,22 @@ func NewDefaultClient(stateDir string, getenv func(string) string) (*Client, err
 		socket = filepath.Join(stateDir, "daemon", "ccsubagentsd.sock")
 	}
 	return NewUnixSocketClient(socket, token), nil
+}
+
+func ResolveDaemonToken(stateDir string, getenv func(string) string) string {
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	token := strings.TrimSpace(getenv(daemonTokenEnv))
+	if token != "" {
+		return token
+	}
+
+	b, err := os.ReadFile(filepath.Join(stateDir, "daemon", "daemon.token"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
 }
 
 func (c *Client) Health(ctx context.Context) error {

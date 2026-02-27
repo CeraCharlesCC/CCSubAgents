@@ -11,6 +11,16 @@ import (
 	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/paths"
 )
 
+func assertMissingDaemonTokenPath(t *testing.T, output, tokenPath string) {
+	t.Helper()
+	if !strings.Contains(output, "daemon.token=missing (") {
+		t.Fatalf("expected missing daemon token output, got %q", output)
+	}
+	if !strings.Contains(output, tokenPath) {
+		t.Fatalf("expected daemon token path %q in output, got %q", tokenPath, output)
+	}
+}
+
 func TestRun_ReportsActiveTransactionJournal(t *testing.T) {
 	home := t.TempDir()
 	cwd := t.TempDir()
@@ -76,9 +86,7 @@ func TestRun_UsesDaemonStateDirForDaemonDiagnostics(t *testing.T) {
 	if !strings.Contains(got, "daemon.state="+daemonState) {
 		t.Fatalf("expected daemon state output, got %q", got)
 	}
-	if !strings.Contains(got, "daemon.token=missing (stat "+wantTokenPath+":") {
-		t.Fatalf("expected daemon token path under daemon state dir, got %q", got)
-	}
+	assertMissingDaemonTokenPath(t, got, wantTokenPath)
 	if strings.Contains(got, filepath.Join(workspaceState, "daemon", "daemon.token")) {
 		t.Fatalf("daemon token unexpectedly resolved to workspace state dir, got %q", got)
 	}
@@ -112,7 +120,5 @@ func TestRun_DaemonStateDirEnvOverrideAffectsDaemonDiagnostics(t *testing.T) {
 	if !strings.Contains(got, "daemon.state="+override) {
 		t.Fatalf("expected overridden daemon state output, got %q", got)
 	}
-	if !strings.Contains(got, "daemon.token=missing (stat "+wantTokenPath+":") {
-		t.Fatalf("expected daemon token path under overridden daemon state dir, got %q", got)
-	}
+	assertMissingDaemonTokenPath(t, got, wantTokenPath)
 }

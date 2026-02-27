@@ -71,18 +71,7 @@ func runArtifacts(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 			return 0
 		}
 
-		token := strings.TrimSpace(os.Getenv("LOCAL_ARTIFACT_DAEMON_TOKEN"))
-		if token == "" {
-			tokenBytes, err := os.ReadFile(filepath.Join(stateDir, "daemon", "daemon.token"))
-			if err != nil {
-				if !os.IsNotExist(err) {
-					fmt.Fprintln(stderr, err)
-					return 1
-				}
-			} else {
-				token = strings.TrimSpace(string(tokenBytes))
-			}
-		}
+		token := daemonclient.ResolveDaemonToken(stateDir, os.Getenv)
 
 		if token == "" {
 			fmt.Fprintf(stdout, "http://%s/\n", addr)

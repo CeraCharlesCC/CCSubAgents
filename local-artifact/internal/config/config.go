@@ -38,11 +38,18 @@ func ResolveStoreRoot() (string, error) {
 }
 
 func ResolveWebAddr() string {
+	settings, err := ResolveCCSubagentsSettings()
+	if err != nil {
+		return ResolveWebAddrWithSettings(CCSubagentsSettings{})
+	}
+	return ResolveWebAddrWithSettings(settings)
+}
+
+func ResolveWebAddrWithSettings(settings CCSubagentsSettings) string {
 	if addr := strings.TrimSpace(os.Getenv(webAddrEnv)); addr != "" {
 		return addr
 	}
-	settings, err := ResolveCCSubagentsSettings()
-	if err == nil && settings.WebUIPort != 0 {
+	if settings.WebUIPort != 0 {
 		return fmt.Sprintf("127.0.0.1:%d", settings.WebUIPort)
 	}
 	return defaultWebAddr

@@ -76,7 +76,7 @@ func TestRunArtifactsOpenWebUI_NoAuthIgnoresToken(t *testing.T) {
 		t.Fatalf("runArtifacts exit code = %d, stderr=%q", code, stderr.String())
 	}
 	if got := stdout.String(); got != "http://127.0.0.1:19130/\n" {
-		t.Fatalf("openwebui URL mismatch: got=%q want=%q", got, "http://127.0.0.1:19130/\\n")
+		t.Fatalf("openwebui URL mismatch: got=%q want=%q", got, "http://127.0.0.1:19130/\n")
 	}
 }
 
@@ -102,6 +102,6 @@ func TestRunArtifactsOpenWebUI_WithTokenWhenAuthEnabled(t *testing.T) {
 		t.Fatalf("runArtifacts exit code = %d, stderr=%q", code, stderr.String())
 	}
 	if got := stdout.String(); got != "http://127.0.0.1:19130/?token=abc123\n" {
-		t.Fatalf("openwebui URL mismatch: got=%q want=%q", got, "http://127.0.0.1:19130/?token=abc123\\n")
+		t.Fatalf("openwebui URL mismatch: got=%q want=%q", got, "http://127.0.0.1:19130/?token=abc123\n")
 	}
 }

@@ -32,7 +32,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	addr := config.ResolveWebAddr()
+	addr := config.ResolveWebAddrWithSettings(ccSettings)
 	token := config.ResolveDaemonToken(stateDir)
 	if ccSettings.NoAuth {
 		token = ""
