@@ -17,6 +17,9 @@ import (
 func TestServiceForSubspaceReusesServicePerSelector(t *testing.T) {
 	root := t.TempDir()
 	s := New(root)
+	t.Cleanup(func() {
+		_ = s.Close()
+	})
 
 	first, err := s.serviceForSubspace(globalSubspaceSelector)
 	if err != nil {
@@ -95,6 +98,9 @@ func TestDiscoverSubspacesIncludesGlobalAndSortedHashes(t *testing.T) {
 	}
 
 	s := New(root)
+	t.Cleanup(func() {
+		_ = s.Close()
+	})
 	got, err := s.discoverSubspaces()
 	if err != nil {
 		t.Fatalf("discoverSubspaces error: %v", err)
@@ -109,6 +115,9 @@ func TestDiscoverSubspacesIncludesGlobalAndSortedHashes(t *testing.T) {
 func TestServiceFromQuerySubspaceSupportsGlobal(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "missing-store-root")
 	s := New(root)
+	t.Cleanup(func() {
+		_ = s.Close()
+	})
 
 	if _, err := s.serviceFromQuerySubspace(globalSubspaceSelector); err != nil {
 		t.Fatalf("expected global subspace to resolve, got error: %v", err)
@@ -133,6 +142,9 @@ func TestServiceFromQuerySubspaceSupportsGlobal(t *testing.T) {
 func TestAPIArtifactsAndDeleteSupportGlobalSubspace(t *testing.T) {
 	root := t.TempDir()
 	s := New(root)
+	t.Cleanup(func() {
+		_ = s.Close()
+	})
 
 	globalSvc, err := s.serviceForSubspace(globalSubspaceSelector)
 	if err != nil {
@@ -203,6 +215,9 @@ func TestAPISubspacesIncludesGlobalAndSortedHashes(t *testing.T) {
 	}
 
 	s := New(root)
+	t.Cleanup(func() {
+		_ = s.Close()
+	})
 	req := httptest.NewRequest(http.MethodGet, "/api/subspaces", nil)
 	rr := httptest.NewRecorder()
 	s.handleAPISubspaces(rr, req)
@@ -232,6 +247,9 @@ func TestAPISubspacesReturnsInternalServerErrorOnDiscoverFailure(t *testing.T) {
 	}
 
 	s := New(filePath)
+	t.Cleanup(func() {
+		_ = s.Close()
+	})
 	req := httptest.NewRequest(http.MethodGet, "/api/subspaces", nil)
 	rr := httptest.NewRecorder()
 	s.handleAPISubspaces(rr, req)

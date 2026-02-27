@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"io"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -79,7 +80,14 @@ func TestRun_ShutdownEndpointStopsDaemon(t *testing.T) {
 
 	storeRoot := filepath.Join(t.TempDir(), "store")
 	stateDir := filepath.Join(t.TempDir(), "state")
-	socket := filepath.Join(t.TempDir(), "ccsubagentsd.sock")
+	socketDir, err := os.MkdirTemp("/tmp", "ccsubagentsd-test-")
+	if err != nil {
+		t.Fatalf("create socket temp dir: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(socketDir)
+	})
+	socket := filepath.Join(socketDir, "daemon.sock")
 	token := "test-shutdown-token"
 
 	errCh := make(chan error, 1)
@@ -96,8 +104,16 @@ func TestRun_ShutdownEndpointStopsDaemon(t *testing.T) {
 	client := NewUnixSocketClient(socket, token)
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		if err := client.Health(context.Background()); err == nil {
+		healthCtx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		healthErr := client.Health(healthCtx)
+		cancel()
+		if healthErr == nil {
 			break
+		}
+		select {
+		case runErr := <-errCh:
+			t.Fatalf("daemon exited before healthy: %v", runErr)
+		default:
 		}
 		if time.Now().After(deadline) {
 			t.Fatal("daemon did not become healthy before timeout")
