@@ -142,7 +142,7 @@ Commands:
   uninstall    Remove installed files and revert configuration changes
   doctor       Run diagnostics for paths, daemon, binaries, and transaction state
   daemon       Manage daemon lifecycle (status, start, stop)
-  artifacts    Manage daemon artifacts (ls, get, put)
+  artifacts    Manage daemon artifacts (ls, get, put, openwebui)
 
 Lifecycle options (install/update/uninstall):
   --scope=local|global         Installation scope (default: install->local, update/uninstall->global)
@@ -162,6 +162,7 @@ Examples:
   ccsubagents artifacts ls --workspace-id=global
   ccsubagents artifacts get plan/demo --out=./demo.txt
   ccsubagents artifacts put plan/demo ./demo.txt --mime-type=text/plain
+  ccsubagents artifacts openwebui
 `
 
 	_, _ = io.WriteString(w, usage)

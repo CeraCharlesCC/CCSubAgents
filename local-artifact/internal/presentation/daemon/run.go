@@ -20,14 +20,15 @@ import (
 )
 
 type RunConfig struct {
-	StoreRoot string
-	StateDir  string
-	LogDir    string
-	APISocket string
-	APIAddr   string
-	WebAddr   string
-	Token     string
-	Stderr    io.Writer
+	StoreRoot   string
+	StateDir    string
+	LogDir      string
+	APISocket   string
+	APIAddr     string
+	WebAddr     string
+	Token       string
+	DisableAuth bool
+	Stderr      io.Writer
 }
 
 func (c *RunConfig) normalize() {
@@ -60,9 +61,17 @@ func Run(ctx context.Context, cfg RunConfig) error {
 		return errors.New("store root is required")
 	}
 
-	token, err := ResolveOrCreateToken(cfg.StateDir, cfg.Token)
-	if err != nil {
-		return err
+	token := ""
+	if cfg.DisableAuth {
+		if err := clearTokenFile(cfg.StateDir); err != nil {
+			return err
+		}
+	} else {
+		resolvedToken, err := ResolveOrCreateToken(cfg.StateDir, cfg.Token)
+		if err != nil {
+			return err
+		}
+		token = resolvedToken
 	}
 	engine, err := NewEngine(cfg.StoreRoot)
 	if err != nil {
@@ -126,7 +135,11 @@ func Run(ctx context.Context, cfg RunConfig) error {
 			webErrCh <- webHTTPServer.ListenAndServe()
 		}()
 		fmt.Fprintf(cfg.Stderr, "ccsubagentsd web listening on http://%s\n", cfg.WebAddr)
-		fmt.Fprintln(cfg.Stderr, webBootstrapHint(cfg.WebAddr, cfg.StateDir))
+		if token == "" {
+			fmt.Fprintf(cfg.Stderr, "ccsubagentsd web bootstrap: open http://%s/\n", cfg.WebAddr)
+		} else {
+			fmt.Fprintln(cfg.Stderr, webBootstrapHint(cfg.WebAddr, cfg.StateDir))
+		}
 	}
 	daemonServer.SetShutdownFunc(shutdownServers)
 
@@ -150,6 +163,14 @@ func Run(ctx context.Context, cfg RunConfig) error {
 		}
 		return err
 	}
+}
+
+func clearTokenFile(stateDir string) error {
+	tokenPath := tokenFilePath(stateDir)
+	if err := os.MkdirAll(filepath.Dir(tokenPath), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(tokenPath, []byte(""), 0o600)
 }
 
 func listenAPI(cfg RunConfig) (net.Listener, string, error) {

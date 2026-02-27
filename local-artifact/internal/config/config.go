@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -39,6 +40,10 @@ func ResolveStoreRoot() (string, error) {
 func ResolveWebAddr() string {
 	if addr := strings.TrimSpace(os.Getenv(webAddrEnv)); addr != "" {
 		return addr
+	}
+	settings, err := ResolveCCSubagentsSettings()
+	if err == nil && settings.WebUIPort != 0 {
+		return fmt.Sprintf("127.0.0.1:%d", settings.WebUIPort)
 	}
 	return defaultWebAddr
 }

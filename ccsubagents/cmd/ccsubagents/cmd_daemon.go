@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/config"
 	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/daemonclient"
 	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/daemonctl"
 	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/paths"
@@ -46,8 +47,18 @@ func runDaemon(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "daemon status: ok\nstate dir: %s\n", stateDir)
 		return 0
 	case "start":
+		cwd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		settings, err := config.LoadMergedInstallSettings(home, cwd)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
 		storeRoot := resolveStoreRoot(home)
-		if err := daemonctl.StartAndWait(context.Background(), stateDir, storeRoot, stderr); err != nil {
+		if err := daemonctl.StartAndWait(context.Background(), stateDir, storeRoot, settings.NoAuth, stderr); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}

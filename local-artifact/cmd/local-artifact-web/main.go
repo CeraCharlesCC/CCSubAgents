@@ -26,9 +26,17 @@ func main() {
 		fmt.Fprintln(os.Stderr, "cannot determine daemon log dir:", err)
 		os.Exit(1)
 	}
+	ccSettings, err := config.ResolveCCSubagentsSettings()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cannot resolve ccsubagents settings:", err)
+		os.Exit(1)
+	}
 
 	addr := config.ResolveWebAddr()
 	token := config.ResolveDaemonToken(stateDir)
+	if ccSettings.NoAuth {
+		token = ""
+	}
 
 	apiSocket := config.ResolveDaemonSocket(stateDir)
 	apiAddr := config.ResolveDaemonAddr()
@@ -37,14 +45,15 @@ func main() {
 	}
 
 	if err := daemon.Run(context.Background(), daemon.RunConfig{
-		StoreRoot: root,
-		StateDir:  stateDir,
-		LogDir:    logDir,
-		APISocket: apiSocket,
-		APIAddr:   apiAddr,
-		WebAddr:   addr,
-		Token:     token,
-		Stderr:    os.Stderr,
+		StoreRoot:   root,
+		StateDir:    stateDir,
+		LogDir:      logDir,
+		APISocket:   apiSocket,
+		APIAddr:     apiAddr,
+		WebAddr:     addr,
+		Token:       token,
+		DisableAuth: ccSettings.NoAuth,
+		Stderr:      os.Stderr,
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, "web daemon error:", err)
 		os.Exit(1)

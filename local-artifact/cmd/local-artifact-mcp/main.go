@@ -35,18 +35,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	autostartWebUI, err := config.ResolveAutostartWebUI()
+	ccSettings, err := config.ResolveCCSubagentsSettings()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "cannot resolve ccsubagents settings:", err)
 		os.Exit(1)
 	}
-	if autostartWebUI {
+	if ccSettings.AutostartWebUI {
 		if err := startLocalArtifactWeb(os.Stderr); err != nil {
 			fmt.Fprintln(os.Stderr, "warning: failed to autostart local-artifact-web:", err)
 		}
 	}
 
-	client, err := ensureDaemonAvailable(context.Background(), root, stateDir, os.Stderr)
+	client, err := ensureDaemonAvailable(context.Background(), root, stateDir, ccSettings.NoAuth, os.Stderr)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "cannot start ccsubagentsd:", err)
 		os.Exit(1)
@@ -62,14 +62,18 @@ func main() {
 	}
 }
 
-func ensureDaemonAvailable(ctx context.Context, storeRoot, stateDir string, stderr io.Writer) (*daemon.Client, error) {
+func ensureDaemonAvailable(ctx context.Context, storeRoot, stateDir string, disableAuth bool, stderr io.Writer) (*daemon.Client, error) {
 	if stderr == nil {
 		stderr = os.Stderr
 	}
 
-	token, err := daemon.ResolveOrCreateToken(stateDir, config.ResolveDaemonToken(stateDir))
-	if err != nil {
-		return nil, err
+	token := ""
+	if !disableAuth {
+		resolvedToken, err := daemon.ResolveOrCreateToken(stateDir, config.ResolveDaemonToken(stateDir))
+		if err != nil {
+			return nil, err
+		}
+		token = resolvedToken
 	}
 	client := buildDaemonClient(stateDir, token)
 	if err := daemonReady(ctx, client); err == nil {

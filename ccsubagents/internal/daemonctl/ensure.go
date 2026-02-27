@@ -25,11 +25,11 @@ var newDefaultHealthClient = func(stateDir string) (daemonHealthClient, error) {
 	return daemonclient.NewDefaultClient(stateDir, os.Getenv)
 }
 
-func StartAndWait(ctx context.Context, stateDir, storeRoot string, stderr io.Writer) error {
+func StartAndWait(ctx context.Context, stateDir, storeRoot string, disableAuth bool, stderr io.Writer) error {
 	if stderr == nil {
 		stderr = os.Stderr
 	}
-	token, err := ensureToken(stateDir)
+	token, err := ensureToken(stateDir, disableAuth)
 	if err != nil {
 		return err
 	}
@@ -118,13 +118,26 @@ func startProcess(stateDir, storeRoot, token string, stderr io.Writer) error {
 	return nil
 }
 
-func ensureToken(stateDir string) (string, error) {
+func ensureToken(stateDir string, disableAuth bool) (string, error) {
 	tokenPath := filepath.Join(stateDir, "daemon", "daemon.token")
-	if b, err := os.ReadFile(tokenPath); err == nil {
+	if disableAuth {
+		if err := os.MkdirAll(filepath.Dir(tokenPath), 0o755); err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(tokenPath, []byte(""), 0o600); err != nil {
+			return "", err
+		}
+		return "", nil
+	}
+
+	b, err := os.ReadFile(tokenPath)
+	if err == nil {
 		token := strings.TrimSpace(string(b))
 		if token != "" {
 			return token, nil
 		}
+	} else if !os.IsNotExist(err) {
+		return "", err
 	}
 	if err := os.MkdirAll(filepath.Dir(tokenPath), 0o755); err != nil {
 		return "", err
