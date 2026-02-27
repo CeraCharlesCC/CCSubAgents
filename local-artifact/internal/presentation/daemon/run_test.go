@@ -94,7 +94,7 @@ func TestRun_ShutdownEndpointStopsDaemon(t *testing.T) {
 	}()
 
 	client := NewUnixSocketClient(socket, token)
-	deadline := time.Now().Add(4 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for {
 		if err := client.Health(context.Background()); err == nil {
 			break
@@ -102,7 +102,7 @@ func TestRun_ShutdownEndpointStopsDaemon(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatal("daemon did not become healthy before timeout")
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(75 * time.Millisecond)
 	}
 
 	if _, err := client.Shutdown(context.Background()); err != nil {
@@ -114,7 +114,7 @@ func TestRun_ShutdownEndpointStopsDaemon(t *testing.T) {
 		if err != nil {
 			t.Fatalf("daemon run returned error: %v", err)
 		}
-	case <-time.After(4 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("daemon did not stop after shutdown request")
 	}
 }

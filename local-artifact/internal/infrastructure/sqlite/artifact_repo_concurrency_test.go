@@ -15,6 +15,9 @@ func TestArtifactRepository_ConcurrentExpectedPrevRefOneConflict(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new repo: %v", err)
 	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
 	ctx := context.Background()
 
 	seedData := []byte("seed")

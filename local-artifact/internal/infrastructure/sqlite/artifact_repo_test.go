@@ -37,6 +37,9 @@ func TestArtifactRepository_SaveGetResolveListDeleteListVersions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new repo: %v", err)
 	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
 	ctx := context.Background()
 
 	firstData := []byte("first")
@@ -131,6 +134,9 @@ func TestArtifactRepository_ListVersions_UsesParentChainOrderForSameSecondWrites
 	if err != nil {
 		t.Fatalf("new repo: %v", err)
 	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
 	ctx := context.Background()
 	createdAt := time.Date(2026, 2, 16, 12, 0, 0, 0, time.UTC)
 

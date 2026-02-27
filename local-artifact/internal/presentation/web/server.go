@@ -44,6 +44,7 @@ type Server struct {
 	registry      workspaces.Registry
 	mu            sync.Mutex
 	serviceByKey  map[string]*artifacts.Service
+	closeByKey    map[string]func() error
 	resolver      ServiceResolver
 }
 
@@ -65,8 +66,33 @@ func NewWithServiceResolver(baseStoreRoot string, resolver ServiceResolver) *Ser
 		baseStoreRoot: baseStoreRoot,
 		registry:      registry,
 		serviceByKey:  make(map[string]*artifacts.Service),
+		closeByKey:    make(map[string]func() error),
 		resolver:      resolver,
 	}
+}
+
+func (s *Server) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var firstErr error
+	for _, closeFn := range s.closeByKey {
+		if closeFn == nil {
+			continue
+		}
+		if err := closeFn(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if closer, ok := s.registry.(interface{ Close() error }); ok {
+		if err := closer.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+
+	s.serviceByKey = make(map[string]*artifacts.Service)
+	s.closeByKey = make(map[string]func() error)
+	return firstErr
 }
 
 func (s *Server) Serve(ctx context.Context, addr string) error {
@@ -933,6 +959,7 @@ func (s *Server) serviceForSubspace(selector string) (*artifacts.Service, error)
 			return nil, errors.New("workspace service unavailable")
 		}
 		s.serviceByKey[selector] = svc
+		s.closeByKey[selector] = nil
 		return svc, nil
 	}
 
@@ -954,6 +981,7 @@ func (s *Server) serviceForSubspace(selector string) (*artifacts.Service, error)
 		_ = s.registry.EnsureWorkspace(context.Background(), workspaceID, roots, "web")
 	}
 	s.serviceByKey[selector] = svc
+	s.closeByKey[selector] = repo.Close
 	return svc, nil
 }
 

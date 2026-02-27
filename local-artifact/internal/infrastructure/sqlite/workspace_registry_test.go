@@ -11,6 +11,9 @@ func TestWorkspaceRegistry_EnsureAndList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new registry: %v", err)
 	}
+	t.Cleanup(func() {
+		_ = registry.Close()
+	})
 	ctx := context.Background()
 
 	if err := registry.EnsureWorkspace(ctx, "global", []string{"file:///repo/a"}, "mcp"); err != nil {

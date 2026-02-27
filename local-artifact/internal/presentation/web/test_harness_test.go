@@ -23,9 +23,13 @@ type webHarness struct {
 
 func newWebHarness(t *testing.T) *webHarness {
 	t.Helper()
+	s := New(t.TempDir())
+	t.Cleanup(func() {
+		_ = s.Close()
+	})
 	return &webHarness{
 		t: t,
-		s: New(t.TempDir()),
+		s: s,
 	}
 }
 

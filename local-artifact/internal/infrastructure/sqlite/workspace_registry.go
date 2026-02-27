@@ -25,6 +25,13 @@ func NewWorkspaceRegistry(baseRoot string) (*WorkspaceRegistry, error) {
 	return &WorkspaceRegistry{db: db}, nil
 }
 
+func (r *WorkspaceRegistry) Close() error {
+	if r == nil || r.db == nil {
+		return nil
+	}
+	return r.db.Close()
+}
+
 func (r *WorkspaceRegistry) EnsureWorkspace(ctx context.Context, workspaceID string, roots []string, owner string) error {
 	workspaceID = strings.TrimSpace(workspaceID)
 	if workspaceID == "" {

@@ -1,8 +1,10 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -44,7 +46,7 @@ func TestResolveStateDir_FallsBackToCCSubagentsOverride(t *testing.T) {
 
 func TestResolveStateDir_DefaultMatchesPlatformParityLayout(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHomeEnv(t, home)
 	t.Setenv(stateDirEnv, "")
 	t.Setenv(ccStateDirEnv, "")
 
@@ -56,4 +58,25 @@ func TestResolveStateDir_DefaultMatchesPlatformParityLayout(t *testing.T) {
 	if got != want {
 		t.Fatalf("default state mismatch: got=%q want=%q", got, want)
 	}
+}
+
+func setTestHomeEnv(t *testing.T, home string) {
+	t.Helper()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	if runtime.GOOS != "windows" {
+		return
+	}
+
+	volume := filepath.VolumeName(home)
+	if volume == "" {
+		volume = os.Getenv("HOMEDRIVE")
+	}
+	t.Setenv("HOMEDRIVE", volume)
+
+	homePath := strings.TrimPrefix(home, volume)
+	if homePath == "" {
+		homePath = string(os.PathSeparator)
+	}
+	t.Setenv("HOMEPATH", homePath)
 }

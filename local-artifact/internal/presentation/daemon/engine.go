@@ -51,6 +51,12 @@ func (e *Engine) Close() error {
 			firstErr = err
 		}
 	}
+	if closer, ok := e.registry.(interface{ Close() error }); ok {
+		if err := closer.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	e.service = map[string]serviceEntry{}
 	return firstErr
 }
 

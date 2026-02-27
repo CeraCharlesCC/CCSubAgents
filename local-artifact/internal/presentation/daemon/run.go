@@ -114,6 +114,7 @@ func Run(ctx context.Context, cfg RunConfig) error {
 			return fmt.Errorf("web address must bind localhost only: %s", cfg.WebAddr)
 		}
 		webServer := web.NewWithServiceResolver(cfg.StoreRoot, daemonWebServiceResolver(engine))
+		defer webServer.Close()
 		webMux := http.NewServeMux()
 		webMux.Handle("/daemon/v1/", daemonServer.Routes())
 		webMux.Handle("/", webServer.Handler())

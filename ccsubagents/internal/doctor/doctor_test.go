@@ -7,12 +7,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/paths"
 )
 
 func TestRun_ReportsActiveTransactionJournal(t *testing.T) {
 	home := t.TempDir()
 	cwd := t.TempDir()
-	stateDir := filepath.Join(home, ".local", "share", "ccsubagents")
+	stateDir := paths.Global(home).StateDir
 	if err := os.MkdirAll(filepath.Join(stateDir, "tx"), 0o755); err != nil {
 		t.Fatalf("mkdir tx: %v", err)
 	}

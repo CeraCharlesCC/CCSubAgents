@@ -21,10 +21,11 @@ func TestResolve_UsesGlobalByDefault(t *testing.T) {
 	if resolved.ConfigDir.Value == resolved.StateDir.Value {
 		t.Fatalf("expected config/state split, got config=%q state=%q", resolved.ConfigDir.Value, resolved.StateDir.Value)
 	}
-	if resolved.ConfigDir.Value != filepath.Join(home, ".local", "share", "ccsubagents", "config") {
+	base := defaultGlobalBase(home)
+	if resolved.ConfigDir.Value != filepath.Join(base, "config") {
 		t.Fatalf("config path mismatch: %q", resolved.ConfigDir.Value)
 	}
-	if resolved.StateDir.Value != filepath.Join(home, ".local", "share", "ccsubagents") {
+	if resolved.StateDir.Value != base {
 		t.Fatalf("state path mismatch: %q", resolved.StateDir.Value)
 	}
 }
@@ -81,7 +82,7 @@ func TestResolve_EnvOverridesWorkspaceAndGlobal(t *testing.T) {
 func TestResolveDaemonStateDir_DefaultAndOverrides(t *testing.T) {
 	home := t.TempDir()
 	defaultState := ResolveDaemonStateDir(home, func(string) string { return "" })
-	if defaultState != filepath.Join(home, ".local", "share", "ccsubagents", "state") {
+	if defaultState != filepath.Join(defaultGlobalBase(home), "state") {
 		t.Fatalf("daemon state default mismatch: %q", defaultState)
 	}
 

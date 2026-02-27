@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"os"
+	"runtime"
 	"testing"
 )
 
@@ -28,6 +29,9 @@ func TestResolveOrCreateToken_PersistsExplicitToken(t *testing.T) {
 	info, err := os.Stat(tokenFilePath(root))
 	if err != nil {
 		t.Fatalf("stat token file: %v", err)
+	}
+	if runtime.GOOS == "windows" {
+		return
 	}
 	if gotMode := info.Mode().Perm(); gotMode != 0o600 {
 		t.Fatalf("token file mode mismatch: got=%#o want=%#o", gotMode, 0o600)
