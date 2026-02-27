@@ -14,7 +14,7 @@ This repository is a personal collection of `agent.md` files designed for use wi
 
 All of these agents are defined with the assumption that an MCP called `artifact-mcp` is available in their toolset. This local artifact system is designed to prevent the orchestrator from becoming a bottleneck by having to relay sub-agent outputs; for example, having subagent-plan return a plan directly to the orchestrator, which then passes it verbatim, word for word, to subagent-impl (which amounts to nothing more than a scaling bottleneck). Furthermore, unlike the existing VS Code built-in TODO tool, a artifact-mcp/todo tool tied to an artifact-plan that persists across sessions (rather than just a chat session) allows subsequent sub-agents or orchestrators to pick up where things left off and track progress, even if a sub-agent crashes due to an error.
 
-
+*Note on underlying architecture: the `artifact-mcp` communicates with a robust background daemon (`ccsubagentsd`). It uses SQLite to safely coordinate concurrent transactions on artifact metadata, and hashes object contents into a dedicated blobstore. This permits sharing and mutating states smoothly even if you use multiple client interfaces or workspaces simultaneously.*
 
 The idea is inspired by Antigravity's artifact concept.
 
@@ -43,7 +43,27 @@ chmod +x ./ccsubagents
 ./ccsubagents install
 ```
 
-## CLI scope behavior
+## CLI capabilities & scope behavior
+
+The standard `ccsubagents` CLI unifies installation routines with advanced diagnostics and daemon operations.
+
+### Working with Daemons & Artifacts
+
+```bash
+# Verify component availability and database health
+./ccsubagents doctor
+
+# Start, stop, or check the background daemon
+./ccsubagents daemon status
+./ccsubagents daemon start
+
+# Manipulate artifacts on the fly (useful in CI or terminal scripts)
+./ccsubagents artifacts ls --workspace-id=global
+./ccsubagents artifacts get plan/spec
+./ccsubagents artifacts put plan/data ./dump.json --mime-type=application/json
+```
+
+### Installation scopes
 
 - Use `--scope=local|global` with `install`, `update`, and `uninstall`.
 - Default scope by command:

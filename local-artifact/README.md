@@ -9,24 +9,27 @@ By default artifacts are stored under:
 - Linux/macOS: `~/.local/share/ccsubagents/artifacts`
 - Override with `LOCAL_ARTIFACT_STORE_DIR=/path/to/dir`
 
-Directory layout:
+Directory layout (managed by the `ccsubagentsd` daemon):
 
 ```
 $LOCAL_ARTIFACT_STORE_DIR/
+  registry.sqlite          # maps workspace roots to hex IDs
+  blobs/                   # content-addressed raw byte storage
+    <hex[:2]>/
+      <hex>
   <subspace-hash>/         # roots-derived subspace (64 lowercase hex)
-    names.json             # name -> latest ref
-    objects/<ref>          # raw bytes
-    meta/<ref>.json        # Artifact metadata (JSON)
-  names.json               # global fallback session store
-  objects/<ref>            # global fallback objects
-  meta/<ref>.json          # global fallback metadata
+    meta.sqlite            # Artifact metadata (names, refs, relations)
+  global/                  # fallback global session subspace
+    meta.sqlite
 ```
 
-Each `save_*` creates a new immutable `ref` and updates the `name` pointer in `names.json`.
+Each `save_*` creates a new immutable `ref` and updates the `name` pointer in the corresponding `meta.sqlite`.
 Re-saving an existing `name` creates a new latest `ref` and sets `prevRef` to the previous latest `ref`.
 Older refs remain retrievable by `ref`.
 
-When MCP client roots are available, the server requests `roots/list`, normalizes/sorts root URIs, hashes them with SHA-256, and stores artifacts under `$LOCAL_ARTIFACT_STORE_DIR/<hash>/`. If `roots/list` is unavailable, returns any RPC error (including JSON-RPC errors such as `-32601` or `-32603`), cannot be parsed successfully, or if the client does not advertise the roots capability, the server falls back to the global store (`$LOCAL_ARTIFACT_STORE_DIR/`) for that process session only.
+All MCP/Web requests are routed through a background daemon (`ccsubagentsd`), which ensures safe concurrent access using transactions and handles workspace registry mapping. The MCP server (`local-artifact-mcp`) will automatically spawn the daemon if it's not running.
+
+When MCP client roots are available, the daemon normalizes the root URIs, hashes them with SHA-256, and maintains `meta.sqlite` under `$LOCAL_ARTIFACT_STORE_DIR/<hash>/`. If `roots/list` is unavailable or errors out, the server falls back to the `global` subspace (`$LOCAL_ARTIFACT_STORE_DIR/global/`).
 
 ## Exposed MCP tools
 
@@ -75,6 +78,7 @@ Write TODOs with stale-write protection:
 ## Build (in /local-artifact/)
 
 ```
+go build ./cmd/ccsubagentsd
 go build ./cmd/local-artifact-mcp
 go build ./cmd/local-artifact-web
 ```
@@ -95,13 +99,16 @@ Commands:
 ccsubagents install
 ccsubagents update
 ccsubagents uninstall
+ccsubagents doctor
+ccsubagents daemon [status|start|stop]
+ccsubagents artifacts [ls|get|put]
 ```
 
 Behavior summary:
 
 - Installs from the latest release in `https://github.com/CeraCharlesCC/CCSubAgents`.
 - Verifies downloaded release assets with GitHub attestations before making install/update changes.
-- Installs from a runtime-specific bundle asset (`local-artifact_<goos>_<goarch>.zip`) and places `local-artifact-mcp`/`local-artifact-web` (or `.exe` variants on Windows) into `~/.local/bin` by default.
+- Installs from a runtime-specific bundle asset (`local-artifact_<goos>_<goarch>.zip`) and places `ccsubagentsd`, `local-artifact-mcp`, and `local-artifact-web` (or `.exe` variants on Windows) into `~/.local/bin` by default.
 - Extracts `agents.zip` into `~/.local/share/ccsubagents/agents`.
 - For `install --scope=global`, prompts for VS Code Desktop (Stable/Insiders), VS Code Server (Stable/Insiders), or custom target path(s).
 - Adds `~/.local/share/ccsubagents/agents` to `chat.agentFilesLocations` in the selected `settings.json` target(s) using the object-map format (`"path": true`) without overwriting existing entries.
