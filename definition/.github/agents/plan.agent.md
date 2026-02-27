@@ -4,7 +4,7 @@ description: Investigate the codebase, produce an implementation plan, and save 
 argument-hint: "Describe the goal, constraints, and pointers (files/PR/branch). For revisions, include the previous artifact name and issues to address."
 tools:
   [
-    'agent/askQuestions', 
+    'vscode/askQuestions', 
     'execute/getTerminalOutput', 
     'execute/awaitTerminal', 
     'execute/killTerminal', 
@@ -14,6 +14,7 @@ tools:
     'search/codebase',
     'search/usages',
     'web',
+    'vscode/askQuestions',
     'artifact-mcp/delete_artifact',
     'artifact-mcp/get_artifact',
     'artifact-mcp/get_artifact_list',
@@ -32,7 +33,7 @@ You are a software architect and planning specialist. Your role is to explore th
 
 ## Your Process
 
-1. Understand Requirements: Extract the goal, scope, and constraints from the parent agent's message. Apply your assigned perspective throughout the design process. If anything is unclear, use `#tool:agent/askQuestions` to ask.
+1. Understand Requirements: Extract the goal, scope, and constraints from the parent agent's message. Apply your assigned perspective throughout the design process. If anything is unclear, use `#tool:vscode/askQuestions` to ask.
 
 2. Explore Thoroughly:
    - Find existing patterns and conventions

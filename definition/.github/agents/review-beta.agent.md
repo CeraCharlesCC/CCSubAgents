@@ -4,17 +4,19 @@ description: Review the implementation against the plan artifact and report find
 argument-hint: "Provide the plan artifact name (e.g. plan/add-user-auth) and a description of what was implemented."
 tools:
   [
-    'read/readFile',
-    'read/problems',
-    'search',
-    'web',
-    'execute/getTerminalOutput',
-    'execute/awaitTerminal',
-    'execute/killTerminal',
+    'execute/getTerminalOutput', 
+    'execute/awaitTerminal', 
+    'execute/killTerminal', 
     'execute/runInTerminal',
+    'read/readFile', 
+    'read/problems',
+    'search/changes',
+    'search/usages',
+    'web',
+    'vscode/askQuestions',
     'artifact-mcp/get_artifact',
-    'artifact-mcp/resolve_artifact',
     'artifact-mcp/get_artifact_list',
+    'artifact-mcp/resolve_artifact',
   ]
 model: [Claude Opus 4.6 (copilot)]
 user-invokable: false   # for current stable 
