@@ -11,7 +11,6 @@ tools:
     'execute/runInTerminal',
     'read/readFile', 
     'search/changes',
-    'search/codebase',
     'search/usages',
     'web',
     'vscode/askQuestions',
