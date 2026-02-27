@@ -35,18 +35,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	autostartWebUI, err := config.ResolveAutostartWebUI()
+	ccSettings, err := config.ResolveCCSubagentsSettings()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "cannot resolve ccsubagents settings:", err)
 		os.Exit(1)
 	}
-	if autostartWebUI {
+	if ccSettings.AutostartWebUI {
 		if err := startLocalArtifactWeb(os.Stderr); err != nil {
 			fmt.Fprintln(os.Stderr, "warning: failed to autostart local-artifact-web:", err)
 		}
 	}
 
-	client, err := ensureDaemonAvailable(context.Background(), root, stateDir, os.Stderr)
+	client, err := ensureDaemonAvailable(context.Background(), root, stateDir, ccSettings.NoAuth, os.Stderr)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "cannot start ccsubagentsd:", err)
 		os.Exit(1)
@@ -62,18 +62,32 @@ func main() {
 	}
 }
 
-func ensureDaemonAvailable(ctx context.Context, storeRoot, stateDir string, stderr io.Writer) (*daemon.Client, error) {
+func ensureDaemonAvailable(ctx context.Context, storeRoot, stateDir string, disableAuth bool, stderr io.Writer) (*daemon.Client, error) {
 	if stderr == nil {
 		stderr = os.Stderr
 	}
 
-	token, err := daemon.ResolveOrCreateToken(stateDir, config.ResolveDaemonToken(stateDir))
-	if err != nil {
-		return nil, err
+	token := ""
+	fallbackToken := ""
+	if !disableAuth {
+		resolvedToken, err := daemon.ResolveOrCreateToken(stateDir, config.ResolveDaemonToken(stateDir))
+		if err != nil {
+			return nil, err
+		}
+		token = resolvedToken
+	} else {
+		fallbackToken = readPersistedDaemonToken(stateDir)
 	}
 	client := buildDaemonClient(stateDir, token)
 	if err := daemonReady(ctx, client); err == nil {
 		return client, nil
+	}
+	var fallbackClient *daemon.Client
+	if fallbackToken != "" {
+		fallbackClient = buildDaemonClient(stateDir, fallbackToken)
+		if err := daemonReady(ctx, fallbackClient); err == nil {
+			return fallbackClient, nil
+		}
 	}
 
 	if err := startCCSubagentsd(stderr, storeRoot, stateDir, token); err != nil {
@@ -84,6 +98,11 @@ func ensureDaemonAvailable(ctx context.Context, storeRoot, stateDir string, stde
 	for {
 		if err := daemonReady(ctx, client); err == nil {
 			return client, nil
+		}
+		if fallbackClient != nil {
+			if err := daemonReady(ctx, fallbackClient); err == nil {
+				return fallbackClient, nil
+			}
 		}
 		if time.Now().After(deadline) {
 			return nil, errors.New("timed out waiting for ccsubagentsd readiness")
@@ -234,6 +253,14 @@ func pathExists(path string) bool {
 		return false
 	}
 	return !info.IsDir()
+}
+
+func readPersistedDaemonToken(stateDir string) string {
+	b, err := os.ReadFile(filepath.Join(stateDir, "daemon", "daemon.token"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
 }
 
 func resolveConfiguredPath(home, value string) string {

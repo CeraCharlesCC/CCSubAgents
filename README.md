@@ -61,7 +61,32 @@ The standard `ccsubagents` CLI unifies installation routines with advanced diagn
 ./ccsubagents artifacts ls --workspace-id=global
 ./ccsubagents artifacts get plan/spec
 ./ccsubagents artifacts put plan/data ./dump.json --mime-type=application/json
+./ccsubagents artifacts openwebui
 ```
+
+### `settings.json` keys
+
+`ccsubagents` reads settings from two files:
+
+- Global (Linux default): `~/.local/share/ccsubagents/config/settings.json`
+- Workspace-local: `<workspace>/ccsubagents/settings.json`
+
+Merge order is global first, then workspace-local overrides only keys that are present.
+
+Supported keys:
+
+- `pinned-version` (string or `null`): pinned release tag for install/update flows.
+- `autostart-webui` (boolean): whether `local-artifact-mcp` should try to start `local-artifact-web` automatically.
+- `no-auth` (boolean): when `true`, daemon/web auth is disabled and token auto-generation is skipped.
+- Changing `no-auth` only takes effect after restarting daemon/web processes.
+- Disabling auth clears `daemon.token`; when auth is enabled again, a new token is generated.
+- `webui-port` (integer `1..65535`): optional shorthand for binding the web UI to `127.0.0.1:<port>`.
+
+Web UI listen address precedence:
+
+- `LOCAL_ARTIFACT_WEB_UI_ADDR` (if non-empty)
+- `webui-port` (as `127.0.0.1:<webui-port>`)
+- default `127.0.0.1:19130`
 
 ### Installation scopes
 

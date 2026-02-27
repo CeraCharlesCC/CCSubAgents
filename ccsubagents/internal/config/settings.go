@@ -15,12 +15,18 @@ import (
 
 type InstallSettings struct {
 	AutostartWebUI bool
+	NoAuth         bool
+	WebUIPort      int
 	PinnedVersion  string
 }
 
 type settingsPatch struct {
 	HasAutostartWebUI bool
 	AutostartWebUI    bool
+	HasNoAuth         bool
+	NoAuth            bool
+	HasWebUIPort      bool
+	WebUIPort         int
 	HasPinnedVersion  bool
 	PinnedVersionRaw  string
 }
@@ -92,6 +98,27 @@ func readSettingsPatch(path string) (settingsPatch, error) {
 		patch.AutostartWebUI = enabled
 	}
 
+	if raw, ok := root["no-auth"]; ok {
+		var noAuth bool
+		if err := json.Unmarshal(raw, &noAuth); err != nil {
+			return settingsPatch{}, fmt.Errorf("key no-auth must be a boolean")
+		}
+		patch.HasNoAuth = true
+		patch.NoAuth = noAuth
+	}
+
+	if raw, ok := root["webui-port"]; ok {
+		var port int
+		if err := json.Unmarshal(raw, &port); err != nil {
+			return settingsPatch{}, fmt.Errorf("key webui-port must be an integer between 1 and 65535")
+		}
+		if port < 1 || port > 65535 {
+			return settingsPatch{}, fmt.Errorf("key webui-port must be between 1 and 65535")
+		}
+		patch.HasWebUIPort = true
+		patch.WebUIPort = port
+	}
+
 	if raw, ok := root["pinned-version"]; ok {
 		patch.HasPinnedVersion = true
 		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
@@ -113,6 +140,12 @@ func mergeSettings(globalPatch, localPatch settingsPatch) InstallSettings {
 	applyPatch := func(patch settingsPatch) {
 		if patch.HasAutostartWebUI {
 			settings.AutostartWebUI = patch.AutostartWebUI
+		}
+		if patch.HasNoAuth {
+			settings.NoAuth = patch.NoAuth
+		}
+		if patch.HasWebUIPort {
+			settings.WebUIPort = patch.WebUIPort
 		}
 		if patch.HasPinnedVersion {
 			settings.PinnedVersion = patch.PinnedVersionRaw

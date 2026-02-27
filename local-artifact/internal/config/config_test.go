@@ -80,3 +80,50 @@ func setTestHomeEnv(t *testing.T, home string) {
 	}
 	t.Setenv("HOMEPATH", homePath)
 }
+
+func withWorkingDir(t *testing.T, dir string) {
+	t.Helper()
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(previous)
+	})
+}
+
+func TestResolveWebAddr_EnvWins(t *testing.T) {
+	t.Setenv(webAddrEnv, "127.0.0.1:19999")
+	if got := ResolveWebAddr(); got != "127.0.0.1:19999" {
+		t.Fatalf("ResolveWebAddr env override mismatch: got=%q want=%q", got, "127.0.0.1:19999")
+	}
+}
+
+func TestResolveWebAddr_UsesCCSubagentsWebUIPortWhenEnvUnset(t *testing.T) {
+	home := t.TempDir()
+	cwd := t.TempDir()
+	setTestHomeEnv(t, home)
+	withWorkingDir(t, cwd)
+
+	t.Setenv(webAddrEnv, "")
+	writeSettingsFile(t, filepath.Join(cwd, "ccsubagents", "settings.json"), `{"webui-port": 19130}`)
+
+	if got := ResolveWebAddr(); got != "127.0.0.1:19130" {
+		t.Fatalf("ResolveWebAddr settings override mismatch: got=%q want=%q", got, "127.0.0.1:19130")
+	}
+}
+
+func TestResolveWebAddr_DefaultWhenUnset(t *testing.T) {
+	home := t.TempDir()
+	cwd := t.TempDir()
+	setTestHomeEnv(t, home)
+	withWorkingDir(t, cwd)
+
+	t.Setenv(webAddrEnv, "")
+	if got := ResolveWebAddr(); got != defaultWebAddr {
+		t.Fatalf("ResolveWebAddr default mismatch: got=%q want=%q", got, defaultWebAddr)
+	}
+}

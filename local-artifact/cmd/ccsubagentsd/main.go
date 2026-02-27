@@ -27,6 +27,11 @@ func main() {
 		fmt.Fprintln(os.Stderr, "cannot determine daemon log dir:", err)
 		os.Exit(1)
 	}
+	ccSettings, err := config.ResolveCCSubagentsSettings()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cannot resolve ccsubagents settings:", err)
+		os.Exit(1)
+	}
 
 	defaultSocket := config.ResolveDaemonSocket(stateDir)
 	defaultAddr := config.ResolveDaemonAddr()
@@ -41,6 +46,10 @@ func main() {
 	flag.StringVar(&cfg.WebAddr, "web-addr", "", "optional web UI listen address (localhost only)")
 	flag.StringVar(&cfg.Token, "token", defaultToken, "daemon auth token")
 	flag.Parse()
+	if ccSettings.NoAuth {
+		cfg.Token = ""
+		cfg.DisableAuth = true
+	}
 
 	if runtime.GOOS == "windows" {
 		cfg.APISocket = ""

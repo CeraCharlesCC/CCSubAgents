@@ -25,26 +25,47 @@ var newDefaultHealthClient = func(stateDir string) (daemonHealthClient, error) {
 	return daemonclient.NewDefaultClient(stateDir, os.Getenv)
 }
 
-func StartAndWait(ctx context.Context, stateDir, storeRoot string, stderr io.Writer) error {
+func StartAndWait(ctx context.Context, stateDir, storeRoot string, disableAuth bool, stderr io.Writer) error {
 	if stderr == nil {
 		stderr = os.Stderr
 	}
-	token, err := ensureToken(stateDir)
+	fallbackToken := ""
+	if disableAuth {
+		fallbackToken = readPersistedDaemonToken(stateDir)
+	}
+	token, err := ensureToken(stateDir, disableAuth)
 	if err != nil {
 		return err
+	}
+	client := daemonClientWithToken(stateDir, token)
+	var fallbackClient *daemonclient.Client
+	if fallbackToken != "" {
+		fallbackClient = daemonClientWithToken(stateDir, fallbackToken)
+	}
+	if err := daemonReady(ctx, client); err == nil {
+		if disableAuth {
+			return clearToken(stateDir)
+		}
+		return nil
+	}
+	if fallbackClient != nil {
+		if err := daemonReady(ctx, fallbackClient); err == nil {
+			return nil
+		}
 	}
 	if err := startProcess(stateDir, storeRoot, token, stderr); err != nil {
 		return err
 	}
-	client, err := daemonclient.NewDefaultClient(stateDir, os.Getenv)
-	if err != nil {
-		return err
-	}
 	deadline := time.Now().Add(8 * time.Second)
 	for {
-		if err := client.Health(ctx); err == nil {
-			_, err = client.List(ctx, daemonclient.ListRequest{Workspace: daemonclient.WorkspaceSelector{WorkspaceID: "global"}, Limit: 1})
-			if err == nil {
+		if err := daemonReady(ctx, client); err == nil {
+			if disableAuth {
+				return clearToken(stateDir)
+			}
+			return nil
+		}
+		if fallbackClient != nil {
+			if err := daemonReady(ctx, fallbackClient); err == nil {
 				return nil
 			}
 		}
@@ -53,6 +74,32 @@ func StartAndWait(ctx context.Context, stateDir, storeRoot string, stderr io.Wri
 		}
 		time.Sleep(120 * time.Millisecond)
 	}
+}
+
+func daemonReady(ctx context.Context, client *daemonclient.Client) error {
+	if err := client.Health(ctx); err != nil {
+		return err
+	}
+	_, err := client.List(ctx, daemonclient.ListRequest{
+		Workspace: daemonclient.WorkspaceSelector{WorkspaceID: "global"},
+		Limit:     1,
+	})
+	return err
+}
+
+func daemonClientWithToken(stateDir, token string) *daemonclient.Client {
+	if runtime.GOOS == "windows" {
+		addr := strings.TrimSpace(os.Getenv("LOCAL_ARTIFACT_DAEMON_ADDR"))
+		if addr == "" {
+			addr = defaultDaemonAddr()
+		}
+		return daemonclient.NewHTTPClient("http://"+addr, token)
+	}
+	socket := strings.TrimSpace(os.Getenv("LOCAL_ARTIFACT_DAEMON_SOCKET"))
+	if socket == "" {
+		socket = defaultDaemonSocket(stateDir)
+	}
+	return daemonclient.NewUnixSocketClient(socket, token)
 }
 
 func WaitForStop(ctx context.Context, stateDir string, timeout time.Duration) error {
@@ -126,13 +173,20 @@ func startProcess(stateDir, storeRoot, token string, stderr io.Writer) error {
 	return nil
 }
 
-func ensureToken(stateDir string) (string, error) {
+func ensureToken(stateDir string, disableAuth bool) (string, error) {
+	if disableAuth {
+		return "", nil
+	}
 	tokenPath := filepath.Join(stateDir, "daemon", "daemon.token")
-	if b, err := os.ReadFile(tokenPath); err == nil {
+
+	b, err := os.ReadFile(tokenPath)
+	if err == nil {
 		token := strings.TrimSpace(string(b))
 		if token != "" {
 			return token, nil
 		}
+	} else if !os.IsNotExist(err) {
+		return "", err
 	}
 	if err := os.MkdirAll(filepath.Dir(tokenPath), 0o755); err != nil {
 		return "", err
@@ -146,6 +200,22 @@ func ensureToken(stateDir string) (string, error) {
 		return "", err
 	}
 	return token, nil
+}
+
+func clearToken(stateDir string) error {
+	tokenPath := filepath.Join(stateDir, "daemon", "daemon.token")
+	if err := os.MkdirAll(filepath.Dir(tokenPath), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(tokenPath, []byte(""), 0o600)
+}
+
+func readPersistedDaemonToken(stateDir string) string {
+	b, err := os.ReadFile(filepath.Join(stateDir, "daemon", "daemon.token"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
 }
 
 func daemonBinaryName() string {
