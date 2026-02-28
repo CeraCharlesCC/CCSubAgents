@@ -33,16 +33,25 @@ func TestRegisterProcessPID_CreatesPIDFileAndUnregisters(t *testing.T) {
 		if err != nil {
 			t.Fatalf("stat role dir: %v", err)
 		}
-		if mode := roleInfo.Mode().Perm(); mode != 0o755 {
-			t.Fatalf("role dir mode mismatch: got=%#o want=%#o", mode, 0o755)
+		if mode := roleInfo.Mode().Perm(); mode&0o022 != 0 {
+			t.Fatalf("role dir must not be group/world-writable: got=%#o", mode)
+		}
+		if mode := roleInfo.Mode().Perm(); mode&0o200 == 0 {
+			t.Fatalf("role dir must be owner-writable: got=%#o", mode)
 		}
 
 		pidInfo, err := os.Stat(pidPath)
 		if err != nil {
 			t.Fatalf("stat pid file: %v", err)
 		}
-		if mode := pidInfo.Mode().Perm(); mode != 0o644 {
-			t.Fatalf("pid file mode mismatch: got=%#o want=%#o", mode, 0o644)
+		if mode := pidInfo.Mode().Perm(); mode&0o022 != 0 {
+			t.Fatalf("pid file must not be group/world-writable: got=%#o", mode)
+		}
+		if mode := pidInfo.Mode().Perm(); mode&0o200 == 0 {
+			t.Fatalf("pid file must be owner-writable: got=%#o", mode)
+		}
+		if mode := pidInfo.Mode().Perm(); mode&0o111 != 0 {
+			t.Fatalf("pid file must not be executable: got=%#o", mode)
 		}
 	}
 

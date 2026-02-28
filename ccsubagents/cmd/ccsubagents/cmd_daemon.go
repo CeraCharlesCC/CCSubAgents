@@ -78,7 +78,7 @@ func runDaemon(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		if err := daemonctl.StopRegisteredProcesses(context.Background(), stateDir, []string{"web", "mcp"}, stderr); err != nil {
+		if err := daemonctl.StopRegisteredProcesses(context.Background(), stateDir, []string{"web", "mcp"}); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}

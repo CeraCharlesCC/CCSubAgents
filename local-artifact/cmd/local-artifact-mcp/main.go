@@ -252,7 +252,11 @@ func startLocalArtifactWeb(stderr io.Writer) (*childProcess, error) {
 	exited := make(chan error, 1)
 
 	go func() {
-		exited <- cmd.Wait()
+		waitErr := cmd.Wait()
+		if waitErr != nil {
+			fmt.Fprintln(stderr, "local-artifact-web exited:", waitErr)
+		}
+		exited <- waitErr
 		close(exited)
 	}()
 
@@ -268,26 +272,26 @@ func stopChildProcess(child *childProcess, timeout time.Duration) error {
 	}
 
 	if exited, err := waitForChildExit(child.exited, 0); exited {
-		_ = err
+		reportChildExitError(err)
 		return nil
 	}
 
 	var gracefulErr error
 	if err := sendChildGracefulFn(child.cmd.Process); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		if exited, waitErr := waitForChildExit(child.exited, 0); exited {
-			_ = waitErr
+			reportChildExitError(waitErr)
 			return nil
 		}
 		gracefulErr = err
 	}
 	if exited, err := waitForChildExit(child.exited, timeout); exited {
-		_ = err
+		reportChildExitError(err)
 		return nil
 	}
 
 	if err := sendChildForceFn(child.cmd.Process); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		if exited, waitErr := waitForChildExit(child.exited, 0); exited {
-			_ = waitErr
+			reportChildExitError(waitErr)
 			return nil
 		}
 		if gracefulErr != nil {
@@ -296,7 +300,7 @@ func stopChildProcess(child *childProcess, timeout time.Duration) error {
 		return err
 	}
 	if exited, err := waitForChildExit(child.exited, timeout); exited {
-		_ = err
+		reportChildExitError(err)
 		return nil
 	}
 
@@ -320,6 +324,12 @@ func waitForChildExit(exited <-chan error, timeout time.Duration) (bool, error) 
 		return true, err
 	case <-time.After(timeout):
 		return false, nil
+	}
+}
+
+func reportChildExitError(err error) {
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "local-artifact-web exited:", err)
 	}
 }
 

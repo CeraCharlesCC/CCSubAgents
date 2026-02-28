@@ -11,31 +11,34 @@ func registryRoleDir(stateDir, role string) string {
 	return filepath.Join(stateDir, "daemon", "processes", strings.TrimSpace(role))
 }
 
-func listRolePIDs(stateDir, role string) ([]int, []string, error) {
+func listRolePIDs(stateDir, role string) ([]int, []string, []string, error) {
 	roleDir := registryRoleDir(stateDir, role)
 	entries, err := os.ReadDir(roleDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil, nil
+			return nil, nil, nil, nil
 		}
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	pids := make([]int, 0, len(entries))
 	pidFilePaths := make([]string, 0, len(entries))
+	invalidPaths := make([]string, 0)
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
+		path := filepath.Join(roleDir, entry.Name())
 		pid, ok := parsePIDFileName(entry.Name())
 		if !ok || pid <= 0 {
+			invalidPaths = append(invalidPaths, path)
 			continue
 		}
 		pids = append(pids, pid)
-		pidFilePaths = append(pidFilePaths, filepath.Join(roleDir, entry.Name()))
+		pidFilePaths = append(pidFilePaths, path)
 	}
 
-	return pids, pidFilePaths, nil
+	return pids, pidFilePaths, invalidPaths, nil
 }
 
 func parsePIDFileName(name string) (int, bool) {

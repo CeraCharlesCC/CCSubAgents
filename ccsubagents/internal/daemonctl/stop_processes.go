@@ -4,9 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -25,12 +23,7 @@ const (
 	stopPollInterval    = 120 * time.Millisecond
 )
 
-func StopRegisteredProcesses(ctx context.Context, stateDir string, roles []string, stderr io.Writer) error {
-	if stderr == nil {
-		stderr = os.Stderr
-	}
-	_ = stderr
-
+func StopRegisteredProcesses(ctx context.Context, stateDir string, roles []string) error {
 	var errs []error
 	for _, role := range roles {
 		if err := ctx.Err(); err != nil {
@@ -46,21 +39,12 @@ func StopRegisteredProcesses(ctx context.Context, stateDir string, roles []strin
 }
 
 func stopRegisteredRole(ctx context.Context, stateDir, role string) []error {
-	pids, pidFilePaths, err := listRolePIDs(stateDir, role)
+	pids, pidFilePaths, invalidPaths, err := listRolePIDs(stateDir, role)
 	if err != nil {
 		return []error{fmt.Errorf("list registered %s processes: %w", role, err)}
 	}
 
-	validPIDFiles := make(map[string]struct{}, len(pidFilePaths))
-	for _, path := range pidFilePaths {
-		validPIDFiles[path] = struct{}{}
-	}
-
 	var errs []error
-	invalidPaths, err := listInvalidPIDRegistryFiles(registryRoleDir(stateDir, role), validPIDFiles)
-	if err != nil {
-		errs = append(errs, fmt.Errorf("list invalid %s registry entries: %w", role, err))
-	}
 	for _, invalidPath := range invalidPaths {
 		if removeErr := removePIDFile(invalidPath); removeErr != nil {
 			errs = append(errs, fmt.Errorf("remove invalid %s pid file %s: %w", role, invalidPath, removeErr))
@@ -90,29 +74,6 @@ func stopRegisteredRole(ctx context.Context, stateDir, role string) []error {
 	}
 
 	return errs
-}
-
-func listInvalidPIDRegistryFiles(roleDir string, validPIDFiles map[string]struct{}) ([]string, error) {
-	entries, err := os.ReadDir(roleDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-
-	invalid := make([]string, 0)
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		path := filepath.Join(roleDir, entry.Name())
-		if _, ok := validPIDFiles[path]; ok {
-			continue
-		}
-		invalid = append(invalid, path)
-	}
-	return invalid, nil
 }
 
 func stopRegisteredPID(ctx context.Context, pid int) error {
@@ -193,5 +154,6 @@ func isProcessGoneError(err error) bool {
 	msg := strings.ToLower(strings.TrimSpace(err.Error()))
 	return strings.Contains(msg, "no such process") ||
 		strings.Contains(msg, "already finished") ||
-		strings.Contains(msg, "not found")
+		strings.Contains(msg, "not found") ||
+		strings.Contains(msg, "parameter is incorrect")
 }

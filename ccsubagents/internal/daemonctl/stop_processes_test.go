@@ -27,7 +27,7 @@ func TestStopRegisteredProcesses_RemovesStalePIDFile(t *testing.T) {
 		return nil
 	}
 
-	err := StopRegisteredProcesses(context.Background(), stateDir, []string{"web"}, os.Stderr)
+	err := StopRegisteredProcesses(context.Background(), stateDir, []string{"web"})
 	if err != nil {
 		t.Fatalf("StopRegisteredProcesses returned error: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestStopRegisteredProcesses_RemovesInvalidPIDFileNames(t *testing.T) {
 		return false
 	}
 
-	err := StopRegisteredProcesses(context.Background(), stateDir, []string{"web"}, os.Stderr)
+	err := StopRegisteredProcesses(context.Background(), stateDir, []string{"web"})
 	if err != nil {
 		t.Fatalf("StopRegisteredProcesses returned error: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestStopRegisteredProcesses_GracefulThenForce(t *testing.T) {
 		clock = clock.Add(d)
 	}
 
-	err := StopRegisteredProcesses(context.Background(), stateDir, []string{"web"}, os.Stderr)
+	err := StopRegisteredProcesses(context.Background(), stateDir, []string{"web"})
 	if err != nil {
 		t.Fatalf("StopRegisteredProcesses returned error: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestStopRegisteredProcesses_GracefulErrorFallsBackToForce(t *testing.T) {
 		clock = clock.Add(d)
 	}
 
-	err := StopRegisteredProcesses(context.Background(), stateDir, []string{"web"}, os.Stderr)
+	err := StopRegisteredProcesses(context.Background(), stateDir, []string{"web"})
 	if err != nil {
 		t.Fatalf("StopRegisteredProcesses returned error: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestStopRegisteredProcesses_AggregatesErrorsAndContinues(t *testing.T) {
 		clock = clock.Add(d)
 	}
 
-	err := StopRegisteredProcesses(context.Background(), stateDir, []string{"web"}, os.Stderr)
+	err := StopRegisteredProcesses(context.Background(), stateDir, []string{"web"})
 	if err == nil {
 		t.Fatalf("expected aggregated error when one pid fails to stop")
 	}

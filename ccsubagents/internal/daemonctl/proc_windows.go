@@ -5,38 +5,43 @@ package daemonctl
 import (
 	"errors"
 	"os"
-	"strings"
 	"syscall"
+)
+
+const (
+	windowsErrorInvalidParameter syscall.Errno = 87
+	windowsProcessStillActive    uint32        = 259
 )
 
 func processExists(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
-	proc, err := os.FindProcess(pid)
+
+	handle, err := syscall.OpenProcess(syscall.SYNCHRONIZE|syscall.PROCESS_QUERY_INFORMATION, false, uint32(pid))
 	if err != nil {
+		var errno syscall.Errno
+		if errors.As(err, &errno) && errno == windowsErrorInvalidParameter {
+			return false
+		}
+		if errors.Is(err, syscall.ERROR_ACCESS_DENIED) {
+			return true
+		}
 		return false
 	}
-	err = proc.Signal(syscall.Signal(0))
-	if err == nil {
+	defer syscall.CloseHandle(handle)
+
+	var exitCode uint32
+	if err := syscall.GetExitCodeProcess(handle, &exitCode); err != nil {
 		return true
 	}
-	if errors.Is(err, os.ErrProcessDone) {
-		return false
-	}
-	msg := strings.ToLower(strings.TrimSpace(err.Error()))
-	if strings.Contains(msg, "not found") || strings.Contains(msg, "already finished") {
-		return false
-	}
-	return true
+	return exitCode == windowsProcessStillActive
 }
 
 func sendGraceful(pid int) error {
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return err
-	}
-	return proc.Signal(os.Interrupt)
+	// Windows does not support POSIX-style graceful signals for arbitrary processes.
+	// Fall back to force termination.
+	return sendForce(pid)
 }
 
 func sendForce(pid int) error {
