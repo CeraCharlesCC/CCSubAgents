@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -23,43 +24,101 @@ type daemonReadinessProber interface {
 	List(ctx context.Context, req daemon.ListRequest) (daemon.ListResponse, error)
 }
 
+type childProcess struct {
+	cmd    *exec.Cmd
+	exited <-chan error
+}
+
+var (
+	startLocalArtifactWebFn = startLocalArtifactWeb
+	stopChildProcessFn      = stopChildProcess
+	sendChildGracefulFn     = sendProcessGraceful
+	sendChildForceFn        = sendProcessForce
+)
+
 func main() {
+	os.Exit(mainExitCode())
+}
+
+func mainExitCode() int {
+	err := run()
+	if err == nil || errors.Is(err, context.Canceled) {
+		return 0
+	}
+	fmt.Fprintln(os.Stderr, err)
+	return 1
+}
+
+func run() error {
+	ctx, stop := signal.NotifyContext(context.Background(), shutdownSignals...)
+	defer stop()
+
 	root, err := config.ResolveStoreRoot()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "cannot determine artifact store root:", err)
-		os.Exit(1)
+		return fmt.Errorf("cannot determine artifact store root: %w", err)
 	}
 	stateDir, err := config.ResolveStateDir()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "cannot determine daemon state dir:", err)
-		os.Exit(1)
+		return fmt.Errorf("cannot determine daemon state dir: %w", err)
 	}
+	unregisterMCPPID, err := daemon.RegisterProcessPID(stateDir, "mcp", os.Getpid())
+	if err != nil {
+		return fmt.Errorf("cannot register mcp pid: %w", err)
+	}
+	defer func() {
+		if unregisterErr := unregisterMCPPID(); unregisterErr != nil {
+			fmt.Fprintln(os.Stderr, "warning: failed to unregister mcp pid:", unregisterErr)
+		}
+	}()
 
 	ccSettings, err := config.ResolveCCSubagentsSettings()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "cannot resolve ccsubagents settings:", err)
-		os.Exit(1)
+		return fmt.Errorf("cannot resolve ccsubagents settings: %w", err)
 	}
-	if ccSettings.AutostartWebUI {
-		if err := startLocalArtifactWeb(os.Stderr); err != nil {
-			fmt.Fprintln(os.Stderr, "warning: failed to autostart local-artifact-web:", err)
+
+	return runWithAutostartedWebChild(ccSettings.AutostartWebUI, os.Stderr, func() error {
+		client, err := ensureDaemonAvailable(ctx, root, stateDir, ccSettings.NoAuth, os.Stderr)
+		if err != nil {
+			return fmt.Errorf("cannot start ccsubagentsd: %w", err)
+		}
+
+		srv := mcp.NewWithClient(root, client)
+
+		// MCP stdio transport requires newline-delimited JSON-RPC messages on stdout.
+		// Write any diagnostics only to stderr.
+		if err := srv.Serve(ctx, os.Stdin, os.Stdout); err != nil {
+			return fmt.Errorf("server error: %w", err)
+		}
+		return nil
+	})
+}
+
+func runWithAutostartedWebChild(autostartWeb bool, stderr io.Writer, runFn func() error) error {
+	if stderr == nil {
+		stderr = os.Stderr
+	}
+	if runFn == nil {
+		return errors.New("run function is required")
+	}
+
+	var webChild *childProcess
+	if autostartWeb {
+		var err error
+		webChild, err = startLocalArtifactWebFn(stderr)
+		if err != nil {
+			fmt.Fprintln(stderr, "warning: failed to autostart local-artifact-web:", err)
 		}
 	}
 
-	client, err := ensureDaemonAvailable(context.Background(), root, stateDir, ccSettings.NoAuth, os.Stderr)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "cannot start ccsubagentsd:", err)
-		os.Exit(1)
+	if webChild != nil {
+		defer func() {
+			if stopErr := stopChildProcessFn(webChild, 2*time.Second); stopErr != nil {
+				fmt.Fprintln(stderr, "warning: failed to stop local-artifact-web:", stopErr)
+			}
+		}()
 	}
 
-	srv := mcp.NewWithClient(root, client)
-
-	// MCP stdio transport requires newline-delimited JSON-RPC messages on stdout.
-	// Write any diagnostics only to stderr.
-	if err := srv.Serve(context.Background(), os.Stdin, os.Stdout); err != nil {
-		fmt.Fprintln(os.Stderr, "server error:", err)
-		os.Exit(1)
-	}
+	return runFn()
 }
 
 func ensureDaemonAvailable(ctx context.Context, storeRoot, stateDir string, disableAuth bool, stderr io.Writer) (*daemon.Client, error) {
@@ -96,6 +155,9 @@ func ensureDaemonAvailable(ctx context.Context, storeRoot, stateDir string, disa
 
 	deadline := time.Now().Add(8 * time.Second)
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if err := daemonReady(ctx, client); err == nil {
 			return client, nil
 		}
@@ -107,7 +169,11 @@ func ensureDaemonAvailable(ctx context.Context, storeRoot, stateDir string, disa
 		if time.Now().After(deadline) {
 			return nil, errors.New("timed out waiting for ccsubagentsd readiness")
 		}
-		time.Sleep(120 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(120 * time.Millisecond):
+		}
 	}
 }
 
@@ -165,14 +231,14 @@ func startCCSubagentsd(stderr io.Writer, storeRoot, stateDir, token string) erro
 	return nil
 }
 
-func startLocalArtifactWeb(stderr io.Writer) error {
+func startLocalArtifactWeb(stderr io.Writer) (*childProcess, error) {
 	if stderr == nil {
 		stderr = os.Stderr
 	}
 
 	exePath, err := os.Executable()
 	if err != nil {
-		return fmt.Errorf("resolve executable path: %w", err)
+		return nil, fmt.Errorf("resolve executable path: %w", err)
 	}
 
 	webPath := localArtifactWebPath(exePath, runtime.GOOS)
@@ -181,16 +247,80 @@ func startLocalArtifactWeb(stderr io.Writer) error {
 	cmd.Stderr = stderr
 
 	if err := cmd.Start(); err != nil {
-		return err
+		return nil, err
 	}
+	exited := make(chan error, 1)
 
 	go func() {
-		if waitErr := cmd.Wait(); waitErr != nil {
-			fmt.Fprintln(stderr, "local-artifact-web exited:", waitErr)
-		}
+		exited <- cmd.Wait()
+		close(exited)
 	}()
 
-	return nil
+	return &childProcess{cmd: cmd, exited: exited}, nil
+}
+
+func stopChildProcess(child *childProcess, timeout time.Duration) error {
+	if child == nil || child.cmd == nil || child.cmd.Process == nil {
+		return nil
+	}
+	if child.exited == nil {
+		return nil
+	}
+
+	if exited, err := waitForChildExit(child.exited, 0); exited {
+		_ = err
+		return nil
+	}
+
+	var gracefulErr error
+	if err := sendChildGracefulFn(child.cmd.Process); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		if exited, waitErr := waitForChildExit(child.exited, 0); exited {
+			_ = waitErr
+			return nil
+		}
+		gracefulErr = err
+	}
+	if exited, err := waitForChildExit(child.exited, timeout); exited {
+		_ = err
+		return nil
+	}
+
+	if err := sendChildForceFn(child.cmd.Process); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		if exited, waitErr := waitForChildExit(child.exited, 0); exited {
+			_ = waitErr
+			return nil
+		}
+		if gracefulErr != nil {
+			return fmt.Errorf("force stop after graceful error (%v): %w", gracefulErr, err)
+		}
+		return err
+	}
+	if exited, err := waitForChildExit(child.exited, timeout); exited {
+		_ = err
+		return nil
+	}
+
+	if gracefulErr != nil {
+		return fmt.Errorf("timed out waiting for local-artifact-web to exit after graceful error: %w", gracefulErr)
+	}
+	return errors.New("timed out waiting for local-artifact-web to exit")
+}
+
+func waitForChildExit(exited <-chan error, timeout time.Duration) (bool, error) {
+	if timeout <= 0 {
+		select {
+		case err := <-exited:
+			return true, err
+		default:
+			return false, nil
+		}
+	}
+	select {
+	case err := <-exited:
+		return true, err
+	case <-time.After(timeout):
+		return false, nil
+	}
 }
 
 func localArtifactWebPath(exePath, goos string) string {

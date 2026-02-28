@@ -78,6 +78,10 @@ func runDaemon(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
+		if err := daemonctl.StopRegisteredProcesses(context.Background(), stateDir, []string{"web", "mcp"}, stderr); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
 		fmt.Fprintln(stdout, "daemon stopped")
 		return 0
 	default:

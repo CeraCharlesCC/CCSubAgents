@@ -3,9 +3,12 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/core/workspaces"
 	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/presentation/daemon"
@@ -167,4 +170,88 @@ func TestDaemonReady_IncludesAuthenticatedProbe(t *testing.T) {
 	if req.Limit != 1 {
 		t.Fatalf("expected readiness list limit=1, got %d", req.Limit)
 	}
+}
+
+func TestRunWithAutostartedWebChild_CleansUpOnRunFailure(t *testing.T) {
+	resetMCPMainHooks(t)
+	child := &childProcess{}
+	cleanupCalled := false
+
+	startLocalArtifactWebFn = func(io.Writer) (*childProcess, error) {
+		return child, nil
+	}
+	stopChildProcessFn = func(got *childProcess, timeout time.Duration) error {
+		if got != child {
+			t.Fatalf("stopChildProcess called with unexpected child")
+		}
+		if timeout != 2*time.Second {
+			t.Fatalf("stopChildProcess timeout=%v, want %v", timeout, 2*time.Second)
+		}
+		cleanupCalled = true
+		return nil
+	}
+
+	runErr := errors.New("daemon readiness failed")
+	err := runWithAutostartedWebChild(true, io.Discard, func() error {
+		return runErr
+	})
+	if !errors.Is(err, runErr) {
+		t.Fatalf("runWithAutostartedWebChild() error = %v, want %v", err, runErr)
+	}
+	if !cleanupCalled {
+		t.Fatalf("expected autostarted web child cleanup on run failure")
+	}
+}
+
+func TestStopChildProcess_GracefulErrorFallsBackToForce(t *testing.T) {
+	resetMCPMainHooks(t)
+	exited := make(chan error, 1)
+	child := &childProcess{
+		cmd:    &exec.Cmd{Process: &os.Process{Pid: 999999}},
+		exited: exited,
+	}
+
+	gracefulCalled := false
+	forceCalled := false
+	sendChildGracefulFn = func(proc *os.Process) error {
+		if proc != child.cmd.Process {
+			t.Fatalf("graceful called with unexpected process")
+		}
+		gracefulCalled = true
+		return errors.New("interrupt not supported")
+	}
+	sendChildForceFn = func(proc *os.Process) error {
+		if proc != child.cmd.Process {
+			t.Fatalf("force called with unexpected process")
+		}
+		forceCalled = true
+		exited <- nil
+		close(exited)
+		return nil
+	}
+
+	err := stopChildProcess(child, 0)
+	if err != nil {
+		t.Fatalf("stopChildProcess() returned error: %v", err)
+	}
+	if !gracefulCalled {
+		t.Fatalf("expected graceful stop attempt")
+	}
+	if !forceCalled {
+		t.Fatalf("expected force stop fallback after graceful error")
+	}
+}
+
+func resetMCPMainHooks(t *testing.T) {
+	t.Helper()
+	origStartLocalArtifactWebFn := startLocalArtifactWebFn
+	origStopChildProcessFn := stopChildProcessFn
+	origSendChildGracefulFn := sendChildGracefulFn
+	origSendChildForceFn := sendChildForceFn
+	t.Cleanup(func() {
+		startLocalArtifactWebFn = origStartLocalArtifactWebFn
+		stopChildProcessFn = origStopChildProcessFn
+		sendChildGracefulFn = origSendChildGracefulFn
+		sendChildForceFn = origSendChildForceFn
+	})
 }
