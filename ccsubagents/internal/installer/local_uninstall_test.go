@@ -79,6 +79,18 @@ func startShutdownServiceUnavailableDaemon(t *testing.T, socketPath string, shut
 	return &healthCalls
 }
 
+func tempUnixSocketPath(t *testing.T, prefix string) string {
+	t.Helper()
+	socketDir, err := os.MkdirTemp("/tmp", prefix)
+	if err != nil {
+		t.Fatalf("create socket temp dir: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(socketDir)
+	})
+	return filepath.Join(socketDir, "daemon.sock")
+}
+
 func TestUninstallLocal_StopsDaemonBeforeDeletingManagedFiles(t *testing.T) {
 	home := t.TempDir()
 	installRoot := t.TempDir()
@@ -250,7 +262,7 @@ func TestUninstallLocal_NonStoppedServiceUnavailable_PreventsDeletion(t *testing
 		t.Fatalf("seed tracked state: %v", err)
 	}
 
-	socketPath := filepath.Join(t.TempDir(), "daemon.sock")
+	socketPath := tempUnixSocketPath(t, "ccsubagents-uninstall-")
 	healthCalls := startShutdownServiceUnavailableDaemon(t, socketPath, "dial unix /tmp/ccsubagentsd.sock: connect: network is unreachable")
 
 	m := &Runner{

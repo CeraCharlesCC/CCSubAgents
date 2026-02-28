@@ -76,12 +76,24 @@ func TestWebBootstrapHint_RedactsTokenValue(t *testing.T) {
 	}
 }
 
+func tempUnixSocketPath(t *testing.T, prefix string) string {
+	t.Helper()
+	socketDir, err := os.MkdirTemp("/tmp", prefix)
+	if err != nil {
+		t.Fatalf("create socket temp dir: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(socketDir)
+	})
+	return filepath.Join(socketDir, "daemon.sock")
+}
+
 func TestCleanupStaleSocket_RemovesStaleSocketOnConnRefused(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("unix socket-based test")
 	}
 
-	socket := filepath.Join(t.TempDir(), "daemon.sock")
+	socket := tempUnixSocketPath(t, "ccsubagentsd-cleanup-")
 	ln, err := net.Listen("unix", socket)
 	if err != nil {
 		t.Fatalf("listen unix: %v", err)
@@ -118,7 +130,7 @@ func TestCleanupStaleSocket_AlreadyListeningDoesNotRemove(t *testing.T) {
 		t.Skip("unix socket-based test")
 	}
 
-	socket := filepath.Join(t.TempDir(), "daemon.sock")
+	socket := tempUnixSocketPath(t, "ccsubagentsd-cleanup-")
 	ln, err := net.Listen("unix", socket)
 	if err != nil {
 		t.Fatalf("listen unix: %v", err)
