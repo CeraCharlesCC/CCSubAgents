@@ -25,6 +25,7 @@ import (
 	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/core/artifacts"
 	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/core/workspaces"
 	artsqlite "github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/infrastructure/sqlite"
+	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/presentation/jsonbody"
 )
 
 var subspaceHashPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
@@ -40,12 +41,13 @@ const csrfFieldName = "csrf_token"
 const csrfTokenBytes = 32
 
 type Server struct {
-	baseStoreRoot string
-	registry      workspaces.Registry
-	mu            sync.Mutex
-	serviceByKey  map[string]*artifacts.Service
-	closeByKey    map[string]func() error
-	resolver      ServiceResolver
+	baseStoreRoot       string
+	registry            workspaces.Registry
+	mu                  sync.Mutex
+	serviceByKey        map[string]*artifacts.Service
+	closeByKey          map[string]func() error
+	resolver            ServiceResolver
+	apiMaxJSONBodyBytes int64
 }
 
 type ServiceResolver func(selector string) (*artifacts.Service, error)
@@ -63,11 +65,12 @@ func NewWithServiceResolver(baseStoreRoot string, resolver ServiceResolver) *Ser
 		registry = sqliteRegistry
 	}
 	return &Server{
-		baseStoreRoot: baseStoreRoot,
-		registry:      registry,
-		serviceByKey:  make(map[string]*artifacts.Service),
-		closeByKey:    make(map[string]func() error),
-		resolver:      resolver,
+		baseStoreRoot:       baseStoreRoot,
+		registry:            registry,
+		serviceByKey:        make(map[string]*artifacts.Service),
+		closeByKey:          make(map[string]func() error),
+		resolver:            resolver,
+		apiMaxJSONBodyBytes: maxInsertJSONBodyBytes,
 	}
 }
 
@@ -641,7 +644,7 @@ type apiSaveRequest struct {
 	Text       *string `json:"text"`
 	MimeType   string  `json:"mimeType"`
 	Filename   string  `json:"filename"`
-	DataBase64 string  `json:"dataBase64"`
+	DataBase64 *string `json:"dataBase64"`
 }
 
 func (s *Server) handleAPISave(w http.ResponseWriter, r *http.Request) {
@@ -651,21 +654,14 @@ func (s *Server) handleAPISave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	decoder := json.NewDecoder(io.LimitReader(r.Body, maxInsertJSONBodyBytes))
-	decoder.DisallowUnknownFields()
 	var req apiSaveRequest
-	if err := decoder.Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON body"})
-		return
-	}
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
+	if err := jsonbody.DecodeStrictJSON(r, s.apiMaxJSONBodyBytes, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON body"})
 		return
 	}
 
 	hasText := req.Text != nil
-	hasBlob := strings.TrimSpace(req.DataBase64) != ""
+	hasBlob := req.DataBase64 != nil
 	if hasText == hasBlob {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "provide exactly one of text or dataBase64"})
 		return
@@ -679,7 +675,7 @@ func (s *Server) handleAPISave(w http.ResponseWriter, r *http.Request) {
 			MimeType: req.MimeType,
 		})
 	} else {
-		data, decodeErr := base64.StdEncoding.DecodeString(strings.TrimSpace(req.DataBase64))
+		data, decodeErr := base64.StdEncoding.DecodeString(strings.TrimSpace(*req.DataBase64))
 		if decodeErr != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid dataBase64"})
 			return

@@ -56,6 +56,39 @@ func TestAPISaveRejectsInvalidText(t *testing.T) {
 	}
 }
 
+func TestAPISaveAcceptsZeroByteBlob(t *testing.T) {
+	h := newWebHarness(t)
+
+	rr := h.jsonRequest(
+		http.MethodPost,
+		"/api/artifacts?subspace=global",
+		`{"name":"api/empty","dataBase64":"","mimeType":"application/octet-stream"}`,
+	)
+	assertStatus(t, rr, http.StatusCreated)
+
+	artifact, payload := h.mustGetByName(globalSubspaceSelector, "api/empty")
+	if artifact.Kind != artifacts.ArtifactKindFile {
+		t.Fatalf("expected file kind, got %q", artifact.Kind)
+	}
+	if len(payload) != 0 {
+		t.Fatalf("expected empty payload, got %d bytes", len(payload))
+	}
+}
+
+func TestAPISaveRejectsOversizedJSONBody_NotTruncationEOF(t *testing.T) {
+	h := newWebHarness(t)
+	h.s.apiMaxJSONBodyBytes = 64
+
+	body := `{"name":"api/oversized","text":"ok"}` + strings.Repeat(" ", 80)
+	rr := h.jsonRequest(http.MethodPost, "/api/artifacts?subspace=global", body)
+	assertStatus(t, rr, http.StatusBadRequest)
+
+	res := decodeJSON[map[string]any](t, rr)
+	if got, _ := res["error"].(string); got != "invalid JSON body" {
+		t.Fatalf("unexpected error: %q", got)
+	}
+}
+
 func TestAPIDeleteSupportsMultipleNames(t *testing.T) {
 	h := newWebHarness(t)
 	h.mustSaveText(globalSubspaceSelector, "api/del-a", "a")

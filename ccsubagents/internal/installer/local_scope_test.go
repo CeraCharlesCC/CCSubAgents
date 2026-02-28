@@ -139,6 +139,98 @@ func TestInstallOrUpdateLocal_AttestationFailureUpdateReportsActionableGuidance(
 	}
 }
 
+func TestInstallOrUpdateLocal_Update_RemovesStaleDaemonBinaryWhenBundleOmitsIt(t *testing.T) {
+	installRoot := t.TempDir()
+	stateDir := filepath.Join(t.TempDir(), "state")
+	if err := os.MkdirAll(stateDir, stateDirPerm); err != nil {
+		t.Fatalf("create state dir: %v", err)
+	}
+
+	mcpBinaryName, webBinaryName := localArtifactBinaryNames(runtime.GOOS)
+	daemonBinaryName := ccsubagentsdBinaryName(runtime.GOOS)
+	installBundleArchive := zipBytes(t, map[string]string{
+		mcpBinaryName:    "mcp-binary-v1",
+		webBinaryName:    "web-binary-v1",
+		daemonBinaryName: "daemon-binary-v1",
+	})
+	installAgentsArchive := zipBytes(t, map[string]string{"agents/example.agent.md": "content-v1"})
+
+	m := &Runner{
+		httpClient: successReleaseHTTPClient(t, "v1.2.3", installAgentsArchive, installBundleArchive),
+		now:        func() time.Time { return time.Unix(0, 0).UTC() },
+		lookPath:   func(string) (string, error) { return "/usr/bin/gh", nil },
+		runCommand: func(context.Context, string, ...string) ([]byte, error) { return []byte("ok"), nil },
+		installBinary: func(src, dst string) error {
+			data, err := os.ReadFile(src)
+			if err != nil {
+				return err
+			}
+			return os.WriteFile(dst, data, binaryFilePerm)
+		},
+	}
+
+	tracked := &state.TrackedState{Version: state.TrackedSchemaVersion}
+	if err := m.installOrUpdateLocal(context.Background(), localInstallConfig{
+		isUpdate: false,
+		location: localScopeLocation{installRoot: installRoot},
+		mode:     state.LocalInstallModePersonal,
+		stateDir: stateDir,
+		state:    tracked,
+	}); err != nil {
+		t.Fatalf("local install should succeed: %v", err)
+	}
+
+	managedDir := filepath.Join(installRoot, config.LocalManagedDirRelativePath)
+	daemonPath := filepath.Join(managedDir, daemonBinaryName)
+	if _, err := os.Stat(daemonPath); err != nil {
+		t.Fatalf("expected local daemon binary from initial install: %v", err)
+	}
+
+	stored, err := state.LoadTrackedState(stateDir)
+	if err != nil {
+		t.Fatalf("load tracked state after local install: %v", err)
+	}
+	previous, _ := stored.LocalInstallForRoot(installRoot)
+	if previous == nil {
+		t.Fatalf("expected tracked local record for install root")
+	}
+	previousClone := *previous
+
+	updateBundleArchive := zipBytes(t, map[string]string{
+		mcpBinaryName: "mcp-binary-v2",
+		webBinaryName: "web-binary-v2",
+	})
+	updateAgentsArchive := zipBytes(t, map[string]string{"agents/example.agent.md": "content-v2"})
+	m.httpClient = successReleaseHTTPClient(t, "v1.2.4", updateAgentsArchive, updateBundleArchive)
+
+	if err := m.installOrUpdateLocal(context.Background(), localInstallConfig{
+		isUpdate: true,
+		location: localScopeLocation{installRoot: installRoot},
+		mode:     previousClone.Mode,
+		stateDir: stateDir,
+		state:    stored,
+		previous: &previousClone,
+	}); err != nil {
+		t.Fatalf("local update should succeed: %v", err)
+	}
+
+	if _, err := os.Stat(daemonPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected stale local daemon binary removed after update, stat err: %v", err)
+	}
+
+	updated, err := state.LoadTrackedState(stateDir)
+	if err != nil {
+		t.Fatalf("load tracked state after local update: %v", err)
+	}
+	record, _ := updated.LocalInstallForRoot(installRoot)
+	if record == nil {
+		t.Fatalf("expected tracked local record after update")
+	}
+	if containsCleanPath(record.Managed.Files, daemonPath) {
+		t.Fatalf("expected daemon path removed from local managed files, got %#v", record.Managed.Files)
+	}
+}
+
 func TestInstallLocal_TeamRerunPreservesFullManagedState(t *testing.T) {
 	home := t.TempDir()
 	installRoot := t.TempDir()

@@ -448,6 +448,9 @@ func TestUninstall_RemovesTrackedCCSubagentsdBinary(t *testing.T) {
 		homeDir:    func() (string, error) { return home, nil },
 		lookPath:   func(string) (string, error) { return "/usr/bin/gh", nil },
 		runCommand: func(context.Context, string, ...string) ([]byte, error) { return nil, nil },
+		stopDaemonFn: func(context.Context) error {
+			return nil
+		},
 	}
 
 	binaryDir := filepath.Join(home, binaryInstallDirDefaultRel)
@@ -772,6 +775,9 @@ func TestInstallOrUpdate_TracksBothDestinationTargets(t *testing.T) {
 		homeDir:    func() (string, error) { return home, nil },
 		lookPath:   func(string) (string, error) { return "/usr/bin/gh", nil },
 		runCommand: func(context.Context, string, ...string) ([]byte, error) { return []byte("ok"), nil },
+		stopDaemonFn: func(context.Context) error {
+			return nil
+		},
 		installBinary: func(src, dst string) error {
 			data, err := os.ReadFile(src)
 			if err != nil {
@@ -851,6 +857,9 @@ func TestInstallOrUpdate_TracksDaemonBinaryAndUninstallRemovesIt(t *testing.T) {
 		homeDir:    func() (string, error) { return home, nil },
 		lookPath:   func(string) (string, error) { return "/usr/bin/gh", nil },
 		runCommand: func(context.Context, string, ...string) ([]byte, error) { return []byte("ok"), nil },
+		stopDaemonFn: func(context.Context) error {
+			return nil
+		},
 		installBinary: func(src, dst string) error {
 			data, err := os.ReadFile(src)
 			if err != nil {
@@ -888,6 +897,182 @@ func TestInstallOrUpdate_TracksDaemonBinaryAndUninstallRemovesIt(t *testing.T) {
 	}
 	if _, err := os.Stat(daemonPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected daemon binary removed by uninstall, stat err: %v", err)
+	}
+}
+
+func TestInstallOrUpdate_Update_RemovesStaleDaemonBinaryWhenBundleOmitsIt(t *testing.T) {
+	home := t.TempDir()
+	mcpBinaryName, webBinaryName := localArtifactBinaryNames(runtime.GOOS)
+	daemonBinaryName := ccsubagentsdBinaryName(runtime.GOOS)
+
+	installBundleArchive := zipBytes(t, map[string]string{
+		mcpBinaryName:    "mcp-binary-v1",
+		webBinaryName:    "web-binary-v1",
+		daemonBinaryName: "daemon-binary-v1",
+	})
+	installAgentsArchive := zipBytes(t, map[string]string{"agents/example.agent.md": "content-v1"})
+
+	m := &Runner{
+		httpClient: successReleaseHTTPClient(t, "v1.2.3", installAgentsArchive, installBundleArchive),
+		now:        func() time.Time { return time.Unix(0, 0).UTC() },
+		homeDir:    func() (string, error) { return home, nil },
+		lookPath:   func(string) (string, error) { return "/usr/bin/gh", nil },
+		runCommand: func(context.Context, string, ...string) ([]byte, error) { return []byte("ok"), nil },
+		installBinary: func(src, dst string) error {
+			data, err := os.ReadFile(src)
+			if err != nil {
+				return err
+			}
+			return os.WriteFile(dst, data, binaryFilePerm)
+		},
+	}
+
+	if err := m.installOrUpdate(context.Background(), false); err != nil {
+		t.Fatalf("install should succeed: %v", err)
+	}
+
+	paths := resolveInstallPaths(home)
+	daemonPath := filepath.Join(paths.binaryDir, daemonBinaryName)
+	if _, err := os.Stat(daemonPath); err != nil {
+		t.Fatalf("expected daemon binary from initial install: %v", err)
+	}
+
+	updateBundleArchive := zipBytes(t, map[string]string{
+		mcpBinaryName: "mcp-binary-v2",
+		webBinaryName: "web-binary-v2",
+	})
+	updateAgentsArchive := zipBytes(t, map[string]string{"agents/example.agent.md": "content-v2"})
+	m.httpClient = successReleaseHTTPClient(t, "v1.2.4", updateAgentsArchive, updateBundleArchive)
+
+	if err := m.installOrUpdate(context.Background(), true); err != nil {
+		t.Fatalf("update should succeed: %v", err)
+	}
+
+	if _, err := os.Stat(daemonPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected stale daemon binary removed after update, stat err: %v", err)
+	}
+
+	tracked, err := state.LoadTrackedState(globalStateDirForTest(home))
+	if err != nil {
+		t.Fatalf("load tracked state: %v", err)
+	}
+	if containsCleanPath(tracked.Managed.Files, daemonPath) {
+		t.Fatalf("expected daemon binary path removed from tracked managed files, got %#v", tracked.Managed.Files)
+	}
+}
+
+func TestUninstall_StopsDaemonBeforeDeletingManagedFiles(t *testing.T) {
+	home := t.TempDir()
+	binaryDir := filepath.Join(home, binaryInstallDirDefaultRel)
+	if err := os.MkdirAll(binaryDir, stateDirPerm); err != nil {
+		t.Fatalf("mkdir binary dir: %v", err)
+	}
+
+	daemonPath := filepath.Join(binaryDir, ccsubagentsdBinaryName(runtime.GOOS))
+	if err := os.WriteFile(daemonPath, []byte("daemon"), stateFilePerm); err != nil {
+		t.Fatalf("seed daemon binary: %v", err)
+	}
+
+	stateDir := globalStateDirForTest(home)
+	if err := os.MkdirAll(stateDir, stateDirPerm); err != nil {
+		t.Fatalf("mkdir state dir: %v", err)
+	}
+	if err := state.SaveTrackedState(stateDir, state.TrackedState{
+		Version:     state.TrackedSchemaVersion,
+		Repo:        release.Repo,
+		ReleaseID:   1,
+		ReleaseTag:  "v1.0.0",
+		InstalledAt: "2026-01-01T00:00:00Z",
+		Managed: state.ManagedState{
+			Files: []string{daemonPath},
+		},
+	}); err != nil {
+		t.Fatalf("seed tracked state: %v", err)
+	}
+
+	called := false
+	m := &Runner{
+		homeDir: func() (string, error) { return home, nil },
+		stopDaemonFn: func(context.Context) error {
+			called = true
+			if _, err := os.Stat(daemonPath); err != nil {
+				t.Fatalf("expected managed file to exist before daemon stop hook: %v", err)
+			}
+			return nil
+		},
+	}
+
+	if err := m.uninstall(context.Background()); err != nil {
+		t.Fatalf("uninstall should succeed: %v", err)
+	}
+	if !called {
+		t.Fatalf("expected stopDaemonFn to be called")
+	}
+	if _, err := os.Stat(daemonPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected managed file removed after uninstall, stat err: %v", err)
+	}
+}
+
+func TestUninstall_StopDaemonFailure_PreventsDeletion(t *testing.T) {
+	home := t.TempDir()
+	binaryDir := filepath.Join(home, binaryInstallDirDefaultRel)
+	if err := os.MkdirAll(binaryDir, stateDirPerm); err != nil {
+		t.Fatalf("mkdir binary dir: %v", err)
+	}
+
+	daemonPath := filepath.Join(binaryDir, ccsubagentsdBinaryName(runtime.GOOS))
+	if err := os.WriteFile(daemonPath, []byte("daemon"), stateFilePerm); err != nil {
+		t.Fatalf("seed daemon binary: %v", err)
+	}
+
+	stateDir := globalStateDirForTest(home)
+	if err := os.MkdirAll(stateDir, stateDirPerm); err != nil {
+		t.Fatalf("mkdir state dir: %v", err)
+	}
+	if err := state.SaveTrackedState(stateDir, state.TrackedState{
+		Version:     state.TrackedSchemaVersion,
+		Repo:        release.Repo,
+		ReleaseID:   1,
+		ReleaseTag:  "v1.0.0",
+		InstalledAt: "2026-01-01T00:00:00Z",
+		Managed: state.ManagedState{
+			Files: []string{daemonPath},
+		},
+	}); err != nil {
+		t.Fatalf("seed tracked state: %v", err)
+	}
+
+	m := &Runner{
+		homeDir: func() (string, error) { return home, nil },
+		stopDaemonFn: func(context.Context) error {
+			return errors.New("stop failed")
+		},
+	}
+
+	err := m.uninstall(context.Background())
+	if err == nil {
+		t.Fatalf("expected uninstall failure when daemon stop fails")
+	}
+	if !strings.Contains(err.Error(), "stop failed") {
+		t.Fatalf("expected stop failure in uninstall error, got %v", err)
+	}
+	if _, statErr := os.Stat(daemonPath); statErr != nil {
+		t.Fatalf("expected managed file to remain when daemon stop fails, stat err: %v", statErr)
+	}
+}
+
+func TestUninstall_NoTrackedState_DoesNotStopDaemon(t *testing.T) {
+	home := t.TempDir()
+	m := &Runner{
+		homeDir: func() (string, error) { return home, nil },
+		stopDaemonFn: func(context.Context) error {
+			t.Fatal("stopDaemonFn should not be called when tracked state is missing")
+			return nil
+		},
+	}
+
+	if err := m.uninstall(context.Background()); err != nil {
+		t.Fatalf("uninstall should be a no-op when tracked state is missing: %v", err)
 	}
 }
 
@@ -1040,6 +1225,9 @@ func TestInstallOrUpdate_CorruptTrackedStateFails(t *testing.T) {
 		homeDir:    func() (string, error) { return home, nil },
 		lookPath:   func(string) (string, error) { return "/usr/bin/gh", nil },
 		runCommand: func(context.Context, string, ...string) ([]byte, error) { return nil, nil },
+		stopDaemonFn: func(context.Context) error {
+			return nil
+		},
 	}
 
 	err := m.installOrUpdate(context.Background(), false)
@@ -1204,6 +1392,9 @@ func TestUninstall_FailsWhenMCPServersObjectIsMalformed(t *testing.T) {
 		homeDir:    func() (string, error) { return home, nil },
 		lookPath:   func(string) (string, error) { return "/usr/bin/gh", nil },
 		runCommand: func(context.Context, string, ...string) ([]byte, error) { return nil, nil },
+		stopDaemonFn: func(context.Context) error {
+			return nil
+		},
 	}
 
 	stateDir := globalStateDirForTest(home)
@@ -1256,6 +1447,9 @@ func TestUninstall_BothTargetMigrationRevertsPerTargetMetadata(t *testing.T) {
 		homeDir:    func() (string, error) { return home, nil },
 		lookPath:   func(string) (string, error) { return "/usr/bin/gh", nil },
 		runCommand: func(context.Context, string, ...string) ([]byte, error) { return nil, nil },
+		stopDaemonFn: func(context.Context) error {
+			return nil
+		},
 	}
 
 	paths := resolveInstallPaths(home)
@@ -1393,6 +1587,9 @@ func TestUninstall_AllowsTrackedConfigParentDirs(t *testing.T) {
 		homeDir:    func() (string, error) { return home, nil },
 		lookPath:   func(string) (string, error) { return "/usr/bin/gh", nil },
 		runCommand: func(context.Context, string, ...string) ([]byte, error) { return nil, nil },
+		stopDaemonFn: func(context.Context) error {
+			return nil
+		},
 	}
 
 	stateDir := globalStateDirForTest(home)
@@ -1450,6 +1647,9 @@ func TestUninstall_IgnoresTypedNotEmptyDirectoryError(t *testing.T) {
 		homeDir:    func() (string, error) { return home, nil },
 		lookPath:   func(string) (string, error) { return "/usr/bin/gh", nil },
 		runCommand: func(context.Context, string, ...string) ([]byte, error) { return nil, nil },
+		stopDaemonFn: func(context.Context) error {
+			return nil
+		},
 	}
 
 	stateDir := globalStateDirForTest(home)

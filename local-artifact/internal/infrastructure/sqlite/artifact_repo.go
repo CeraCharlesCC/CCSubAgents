@@ -204,13 +204,13 @@ func (r *ArtifactRepository) List(ctx context.Context, prefix string, limit int)
 	}
 	pattern := "%"
 	if prefix != "" {
-		pattern = prefix + "%"
+		pattern = escapeLikePrefix(prefix) + "%"
 	}
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT v.version_id, v.name, v.parent_version_id, v.kind, v.mime_type, v.filename, v.size_bytes, v.payload_sha256, v.created_at, v.tombstone
 		FROM artifacts a
 		JOIN versions v ON v.version_id = a.latest_version_id
-		WHERE a.deleted = 0 AND a.name LIKE ?
+		WHERE a.deleted = 0 AND a.name LIKE ? ESCAPE '\'
 		ORDER BY a.name ASC
 		LIMIT ?;
 	`, pattern, limit)
@@ -303,8 +303,8 @@ func (r *ArtifactRepository) deleteOnce(ctx context.Context, sel artifacts.Selec
 	defer func() { _ = tx.Rollback() }()
 
 	name := strings.TrimSpace(sel.Name)
+	ref := strings.TrimSpace(sel.Ref)
 	if name == "" {
-		ref := strings.TrimSpace(sel.Ref)
 		if ref == "" {
 			return artifacts.ArtifactVersion{}, artifacts.ErrRefOrName
 		}
@@ -325,6 +325,9 @@ func (r *ArtifactRepository) deleteOnce(ctx context.Context, sel artifacts.Selec
 		return artifacts.ArtifactVersion{}, err
 	}
 	if deleted != 0 || strings.TrimSpace(currentLatest.String) == "" {
+		return artifacts.ArtifactVersion{}, artifacts.ErrNotFound
+	}
+	if ref != "" && strings.TrimSpace(currentLatest.String) != ref {
 		return artifacts.ArtifactVersion{}, artifacts.ErrNotFound
 	}
 
@@ -449,6 +452,19 @@ func boolToInt(v bool) int {
 		return 1
 	}
 	return 0
+}
+
+func escapeLikePrefix(v string) string {
+	var b strings.Builder
+	b.Grow(len(v))
+	for _, r := range v {
+		switch r {
+		case '\\', '%', '_':
+			b.WriteRune('\\')
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 func isRetryableBusyErr(err error) bool {

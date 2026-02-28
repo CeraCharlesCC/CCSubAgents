@@ -76,6 +76,70 @@ func TestWebBootstrapHint_RedactsTokenValue(t *testing.T) {
 	}
 }
 
+func TestCleanupStaleSocket_RemovesStaleSocketOnConnRefused(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix socket-based test")
+	}
+
+	socket := filepath.Join(t.TempDir(), "daemon.sock")
+	ln, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatalf("listen unix: %v", err)
+	}
+	if err := ln.Close(); err != nil {
+		t.Fatalf("close unix listener: %v", err)
+	}
+
+	if err := cleanupStaleSocket(socket); err != nil {
+		t.Fatalf("cleanup stale socket: %v", err)
+	}
+	if _, err := os.Stat(socket); !os.IsNotExist(err) {
+		t.Fatalf("expected socket to be removed, stat err=%v", err)
+	}
+}
+
+func TestCleanupStaleSocket_DoesNotRemoveNonSocketFile(t *testing.T) {
+	socket := filepath.Join(t.TempDir(), "daemon.sock")
+	if err := os.WriteFile(socket, []byte("not-a-socket"), 0o600); err != nil {
+		t.Fatalf("write regular file: %v", err)
+	}
+
+	err := cleanupStaleSocket(socket)
+	if err == nil {
+		t.Fatal("expected cleanup to reject non-socket path")
+	}
+	if _, statErr := os.Stat(socket); statErr != nil {
+		t.Fatalf("expected regular file to remain, stat err=%v", statErr)
+	}
+}
+
+func TestCleanupStaleSocket_AlreadyListeningDoesNotRemove(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix socket-based test")
+	}
+
+	socket := filepath.Join(t.TempDir(), "daemon.sock")
+	ln, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatalf("listen unix: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = ln.Close()
+	})
+
+	err = cleanupStaleSocket(socket)
+	if err == nil {
+		t.Fatal("expected apiAlreadyListeningError")
+	}
+	var alreadyErr *apiAlreadyListeningError
+	if !errors.As(err, &alreadyErr) {
+		t.Fatalf("expected apiAlreadyListeningError, got %v", err)
+	}
+	if _, statErr := os.Stat(socket); statErr != nil {
+		t.Fatalf("expected socket to remain, stat err=%v", statErr)
+	}
+}
+
 func TestRun_ShutdownEndpointStopsDaemon(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("unix socket-based test")

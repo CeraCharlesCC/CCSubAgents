@@ -112,6 +112,30 @@ func ResolveDaemonToken(stateDir string) string {
 	return strings.TrimSpace(string(b))
 }
 
+func ResolveConfiguredPath(home, value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	if trimmed == "~" {
+		return filepath.Clean(home)
+	}
+	if strings.HasPrefix(trimmed, "~/") || strings.HasPrefix(trimmed, "~\\") {
+		remainder := strings.TrimLeft(trimmed[2:], `/\\`)
+		if remainder == "" {
+			return filepath.Clean(home)
+		}
+		return filepath.Join(home, remainder)
+	}
+	if filepath.IsAbs(trimmed) {
+		return filepath.Clean(trimmed)
+	}
+	if os.PathSeparator == '\\' && (strings.HasPrefix(trimmed, `\`) || strings.HasPrefix(trimmed, "/")) {
+		return filepath.Clean(trimmed)
+	}
+	return filepath.Join(home, trimmed)
+}
+
 func defaultGlobalBase(home string) string {
 	return defaultGlobalBaseForGOOS(runtime.GOOS, home)
 }

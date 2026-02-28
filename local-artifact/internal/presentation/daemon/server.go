@@ -4,14 +4,13 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"sync"
 
 	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/core/artifacts"
+	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/presentation/jsonbody"
 )
 
 type Server struct {
@@ -67,23 +66,6 @@ func (s *Server) writeErr(w http.ResponseWriter, err error) {
 	_ = json.NewEncoder(w).Encode(Envelope{OK: false, Error: payload})
 }
 
-func decodeJSONBody(r *http.Request, maxBodyBytes int64, out any) error {
-	if maxBodyBytes <= 0 {
-		maxBodyBytes = DefaultMaxRequestBytes
-	}
-	defer r.Body.Close()
-	dec := json.NewDecoder(io.LimitReader(r.Body, maxBodyBytes))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(out); err != nil {
-		return fmt.Errorf("%w: invalid JSON body", artifacts.ErrInvalidInput)
-	}
-	var extra any
-	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
-		return fmt.Errorf("%w: invalid JSON body", artifacts.ErrInvalidInput)
-	}
-	return nil
-}
-
 func ensurePost(w http.ResponseWriter, r *http.Request) bool {
 	if r.Method == http.MethodPost {
 		return true
@@ -128,7 +110,7 @@ func (s *Server) handleSaveText(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req SaveTextRequest
-	if err := decodeJSONBody(r, s.maxRequestBytes, &req); err != nil {
+	if err := jsonbody.DecodeStrictJSON(r, s.maxRequestBytes, &req); err != nil {
 		s.writeErr(w, err)
 		return
 	}
@@ -155,7 +137,7 @@ func (s *Server) handleSaveBlob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req SaveBlobRequest
-	if err := decodeJSONBody(r, s.maxRequestBytes, &req); err != nil {
+	if err := jsonbody.DecodeStrictJSON(r, s.maxRequestBytes, &req); err != nil {
 		s.writeErr(w, err)
 		return
 	}
@@ -188,7 +170,7 @@ func (s *Server) handleResolve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req ResolveRequest
-	if err := decodeJSONBody(r, s.maxRequestBytes, &req); err != nil {
+	if err := jsonbody.DecodeStrictJSON(r, s.maxRequestBytes, &req); err != nil {
 		s.writeErr(w, err)
 		return
 	}
@@ -210,7 +192,7 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req GetRequest
-	if err := decodeJSONBody(r, s.maxRequestBytes, &req); err != nil {
+	if err := jsonbody.DecodeStrictJSON(r, s.maxRequestBytes, &req); err != nil {
 		s.writeErr(w, err)
 		return
 	}
@@ -233,7 +215,7 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req ListRequest
-	if err := decodeJSONBody(r, s.maxRequestBytes, &req); err != nil {
+	if err := jsonbody.DecodeStrictJSON(r, s.maxRequestBytes, &req); err != nil {
 		s.writeErr(w, err)
 		return
 	}
@@ -255,7 +237,7 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req DeleteRequest
-	if err := decodeJSONBody(r, s.maxRequestBytes, &req); err != nil {
+	if err := jsonbody.DecodeStrictJSON(r, s.maxRequestBytes, &req); err != nil {
 		s.writeErr(w, err)
 		return
 	}

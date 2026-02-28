@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/core/artifacts"
@@ -225,17 +226,24 @@ func listenAPI(cfg RunConfig) (net.Listener, string, error) {
 }
 
 func cleanupStaleSocket(socket string) error {
-	if _, err := os.Stat(socket); err != nil {
+	info, err := os.Lstat(socket)
+	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
 		return err
+	}
+	if info.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("refusing to remove non-socket path: %s", socket)
 	}
 
 	conn, err := net.DialTimeout("unix", socket, 200*time.Millisecond)
 	if err == nil {
 		_ = conn.Close()
 		return &apiAlreadyListeningError{socket: socket}
+	}
+	if !errors.Is(err, syscall.ECONNREFUSED) {
+		return err
 	}
 	if err := os.Remove(socket); err != nil && !os.IsNotExist(err) {
 		return err
