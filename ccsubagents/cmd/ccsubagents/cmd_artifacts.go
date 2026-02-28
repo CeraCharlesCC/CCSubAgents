@@ -117,11 +117,6 @@ func runArtifactsOpenWebUI(ctx artifactsContext, args []string, stdout, stderr i
 }
 
 func runArtifactsLS(ctx artifactsContext, args []string, stdout, stderr io.Writer) int {
-	client, err := ctx.getClient()
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
 	fs := newQuietFlagSet("artifacts ls")
 	prefix := fs.String("prefix", "", "name prefix")
 	limit := fs.Int("limit", 100, "max results")
@@ -129,6 +124,11 @@ func runArtifactsLS(ctx artifactsContext, args []string, stdout, stderr io.Write
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 2
+	}
+	client, err := ctx.getClient()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
 	}
 	res, err := client.List(context.Background(), daemonclient.ListRequest{
 		Workspace: workspaceSelector(*workspaceID),
@@ -147,11 +147,6 @@ func runArtifactsLS(ctx artifactsContext, args []string, stdout, stderr io.Write
 
 func runArtifactsGet(ctx artifactsContext, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	_ = stdin
-	client, err := ctx.getClient()
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
 	fs := newQuietFlagSet("artifacts get")
 	outPath := fs.String("out", "-", "output path or - for stdout")
 	workspaceID := addWorkspaceFlag(fs)
@@ -162,6 +157,11 @@ func runArtifactsGet(ctx artifactsContext, args []string, stdin io.Reader, stdou
 	if fs.NArg() != 1 {
 		fmt.Fprintln(stderr, "Usage: ccsubagents artifacts get <name|ref> [--out PATH|-]")
 		return 2
+	}
+	client, err := ctx.getClient()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
 	}
 	id := strings.TrimSpace(fs.Arg(0))
 	sel := daemonclient.Selector{Name: id}
@@ -198,11 +198,6 @@ func runArtifactsGet(ctx artifactsContext, args []string, stdin io.Reader, stdou
 }
 
 func runArtifactsPut(ctx artifactsContext, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	client, err := ctx.getClient()
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
 	fs := newQuietFlagSet("artifacts put")
 	mimeType := fs.String("mime-type", "", "content MIME type")
 	filename := fs.String("filename", "", "optional filename metadata")
@@ -221,6 +216,11 @@ func runArtifactsPut(ctx artifactsContext, args []string, stdin io.Reader, stdou
 	if name == "" {
 		fmt.Fprintln(stderr, "artifact name is required")
 		return 2
+	}
+	client, err := ctx.getClient()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
 	}
 
 	data, err := readPutData(stdin, path)
