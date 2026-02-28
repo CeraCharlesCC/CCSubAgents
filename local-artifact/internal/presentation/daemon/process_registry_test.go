@@ -116,3 +116,29 @@ func TestUnregisterProcessPID_IdempotentWhenFileMissing(t *testing.T) {
 		t.Fatalf("unregister missing pid file: %v", err)
 	}
 }
+
+func TestProcessRegistryRoleDir_UnsafeRoleFallsBackToBase(t *testing.T) {
+	stateDir := t.TempDir()
+	base := filepath.Join(stateDir, "daemon", processRegistryRootDir)
+
+	got := ProcessRegistryRoleDir(stateDir, "../../../../etc")
+	if got != base {
+		t.Fatalf("ProcessRegistryRoleDir() = %q, want %q", got, base)
+	}
+}
+
+func TestRegisterProcessPID_RejectsUnsafeRole(t *testing.T) {
+	stateDir := t.TempDir()
+	_, err := RegisterProcessPID(stateDir, "../mcp", os.Getpid())
+	if err == nil {
+		t.Fatalf("expected unsafe role to be rejected")
+	}
+}
+
+func TestUnregisterProcessPID_RejectsUnsafeRole(t *testing.T) {
+	stateDir := t.TempDir()
+	err := UnregisterProcessPID(stateDir, "../web", 5050)
+	if err == nil {
+		t.Fatalf("expected unsafe role to be rejected")
+	}
+}

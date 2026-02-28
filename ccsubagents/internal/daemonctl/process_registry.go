@@ -21,7 +21,25 @@ type pidFileRecord struct {
 }
 
 func registryRoleDir(stateDir, role string) string {
-	return filepath.Join(stateDir, "daemon", "processes", strings.TrimSpace(role))
+	baseDir := filepath.Join(stateDir, "daemon", "processes")
+	safeRole, ok := sanitizeRegistryRole(role)
+	if !ok {
+		return baseDir
+	}
+	return filepath.Join(baseDir, safeRole)
+}
+
+func sanitizeRegistryRole(role string) (string, bool) {
+	trimmed := strings.TrimSpace(role)
+	if trimmed == "" || filepath.IsAbs(trimmed) || strings.ContainsAny(trimmed, `/\`) {
+		return "", false
+	}
+
+	cleaned := filepath.Clean(trimmed)
+	if cleaned == "." || cleaned == ".." || cleaned != trimmed {
+		return "", false
+	}
+	return cleaned, true
 }
 
 func listRolePIDs(stateDir, role string) ([]registeredPID, []string, error) {

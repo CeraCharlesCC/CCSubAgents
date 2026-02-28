@@ -328,9 +328,8 @@ func waitForChildExit(exited <-chan error, timeout time.Duration) (bool, error) 
 }
 
 func reportChildExitError(err error) {
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "local-artifact-web exited:", err)
-	}
+	// Child exit logging is emitted by the cmd.Wait goroutine using the caller-selected stderr writer.
+	_ = err
 }
 
 func localArtifactWebPath(exePath, goos string) string {

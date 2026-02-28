@@ -302,6 +302,39 @@ func TestStopRegisteredProcesses_AggregatesErrorsAndContinues(t *testing.T) {
 	}
 }
 
+func TestStopRegisteredProcesses_RejectsUnsafeRoleAndContinues(t *testing.T) {
+	resetStopProcessHooks(t)
+	stateDir := t.TempDir()
+	pidFile := seedRegisteredPIDFile(t, stateDir, "web", 4242, "start-4242")
+
+	processExistsFn = func(pid int) bool {
+		return false
+	}
+	processIdentityMatchesFn = func(pid int, startID string) bool {
+		t.Fatalf("processIdentityMatches should not be called for stale pid")
+		return false
+	}
+	sendGracefulFn = func(pid int) error {
+		t.Fatalf("sendGraceful should not be called for stale pid")
+		return nil
+	}
+	sendForceFn = func(pid int) error {
+		t.Fatalf("sendForce should not be called for stale pid")
+		return nil
+	}
+
+	err := StopRegisteredProcesses(context.Background(), stateDir, []string{"../../etc", "web"})
+	if err == nil {
+		t.Fatalf("expected error for unsafe role")
+	}
+	if !strings.Contains(err.Error(), `invalid role "../../etc"`) {
+		t.Fatalf("expected invalid role error, got %v", err)
+	}
+	if _, statErr := os.Stat(pidFile); !os.IsNotExist(statErr) {
+		t.Fatalf("expected safe role pid file to still be processed, stat err=%v", statErr)
+	}
+}
+
 func resetStopProcessHooks(t *testing.T) {
 	t.Helper()
 	origProcessExists := processExistsFn

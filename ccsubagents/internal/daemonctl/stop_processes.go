@@ -30,11 +30,18 @@ func StopRegisteredProcesses(ctx context.Context, stateDir string, roles []strin
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		role = strings.TrimSpace(role)
-		if role == "" {
+
+		trimmedRole := strings.TrimSpace(role)
+		if trimmedRole == "" {
 			continue
 		}
-		errs = append(errs, stopRegisteredRole(ctx, stateDir, role)...)
+
+		safeRole, ok := sanitizeRegistryRole(trimmedRole)
+		if !ok {
+			errs = append(errs, fmt.Errorf("invalid role %q", trimmedRole))
+			continue
+		}
+		errs = append(errs, stopRegisteredRole(ctx, stateDir, safeRole)...)
 	}
 	return errors.Join(errs...)
 }
