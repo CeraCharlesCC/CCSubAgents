@@ -10,11 +10,12 @@ import (
 )
 
 var (
-	processExistsFn = processExists
-	sendGracefulFn  = sendGraceful
-	sendForceFn     = sendForce
-	stopSleep       = time.Sleep
-	stopNow         = time.Now
+	processExistsFn          = processExists
+	processIdentityMatchesFn = processIdentityMatches
+	sendGracefulFn           = sendGraceful
+	sendForceFn              = sendForce
+	stopSleep                = time.Sleep
+	stopNow                  = time.Now
 )
 
 const (
@@ -39,7 +40,7 @@ func StopRegisteredProcesses(ctx context.Context, stateDir string, roles []strin
 }
 
 func stopRegisteredRole(ctx context.Context, stateDir, role string) []error {
-	pids, pidFilePaths, invalidPaths, err := listRolePIDs(stateDir, role)
+	registered, invalidPaths, err := listRolePIDs(stateDir, role)
 	if err != nil {
 		return []error{fmt.Errorf("list registered %s processes: %w", role, err)}
 	}
@@ -51,13 +52,20 @@ func stopRegisteredRole(ctx context.Context, stateDir, role string) []error {
 		}
 	}
 
-	for i, pid := range pids {
+	for _, item := range registered {
 		if err := ctx.Err(); err != nil {
 			errs = append(errs, err)
 			return errs
 		}
-		pidFilePath := pidFilePaths[i]
+		pid := item.pid
+		pidFilePath := item.pidFilePath
 		if !processExistsFn(pid) {
+			if removeErr := removePIDFile(pidFilePath); removeErr != nil {
+				errs = append(errs, fmt.Errorf("remove stale %s pid file %s: %w", role, pidFilePath, removeErr))
+			}
+			continue
+		}
+		if !processIdentityMatchesFn(pid, item.startID) {
 			if removeErr := removePIDFile(pidFilePath); removeErr != nil {
 				errs = append(errs, fmt.Errorf("remove stale %s pid file %s: %w", role, pidFilePath, removeErr))
 			}
@@ -74,6 +82,21 @@ func stopRegisteredRole(ctx context.Context, stateDir, role string) []error {
 	}
 
 	return errs
+}
+
+func processIdentityMatches(pid int, expectedStartID string) bool {
+	if pid <= 0 {
+		return false
+	}
+	expectedStartID = strings.TrimSpace(expectedStartID)
+	if expectedStartID == "" {
+		return false
+	}
+	actualStartID, err := processStartID(pid)
+	if err != nil {
+		return false
+	}
+	return actualStartID == expectedStartID
 }
 
 func stopRegisteredPID(ctx context.Context, pid int) error {

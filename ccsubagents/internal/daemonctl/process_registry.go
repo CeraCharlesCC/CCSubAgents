@@ -1,28 +1,40 @@
 package daemonctl
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 )
 
+type registeredPID struct {
+	pid         int
+	pidFilePath string
+	startID     string
+}
+
+type pidFileRecord struct {
+	PID     int    `json:"pid"`
+	StartID string `json:"start_id"`
+}
+
 func registryRoleDir(stateDir, role string) string {
 	return filepath.Join(stateDir, "daemon", "processes", strings.TrimSpace(role))
 }
 
-func listRolePIDs(stateDir, role string) ([]int, []string, []string, error) {
+func listRolePIDs(stateDir, role string) ([]registeredPID, []string, error) {
 	roleDir := registryRoleDir(stateDir, role)
 	entries, err := os.ReadDir(roleDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil, nil, nil
+			return nil, nil, nil
 		}
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 
-	pids := make([]int, 0, len(entries))
-	pidFilePaths := make([]string, 0, len(entries))
+	registered := make([]registeredPID, 0, len(entries))
 	invalidPaths := make([]string, 0)
 	for _, entry := range entries {
 		if entry.IsDir() {
@@ -34,11 +46,21 @@ func listRolePIDs(stateDir, role string) ([]int, []string, []string, error) {
 			invalidPaths = append(invalidPaths, path)
 			continue
 		}
-		pids = append(pids, pid)
-		pidFilePaths = append(pidFilePaths, path)
+
+		record, ok := parsePIDFile(path, pid)
+		if !ok {
+			invalidPaths = append(invalidPaths, path)
+			continue
+		}
+
+		registered = append(registered, registeredPID{
+			pid:         pid,
+			pidFilePath: path,
+			startID:     record.StartID,
+		})
 	}
 
-	return pids, pidFilePaths, invalidPaths, nil
+	return registered, invalidPaths, nil
 }
 
 func parsePIDFileName(name string) (int, bool) {
@@ -54,4 +76,24 @@ func parsePIDFileName(name string) (int, bool) {
 		return 0, false
 	}
 	return pid, true
+}
+
+func parsePIDFile(path string, expectedPID int) (pidFileRecord, bool) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return pidFileRecord{}, false
+	}
+
+	var record pidFileRecord
+	if err := json.Unmarshal(bytes.TrimSpace(raw), &record); err != nil {
+		return pidFileRecord{}, false
+	}
+	if record.PID != expectedPID {
+		return pidFileRecord{}, false
+	}
+	record.StartID = strings.TrimSpace(record.StartID)
+	if record.StartID == "" {
+		return pidFileRecord{}, false
+	}
+	return record, true
 }

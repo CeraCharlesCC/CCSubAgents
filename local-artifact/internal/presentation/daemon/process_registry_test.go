@@ -1,9 +1,11 @@
 package daemon
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -11,21 +13,29 @@ func TestRegisterProcessPID_CreatesPIDFileAndUnregisters(t *testing.T) {
 	stateDir := t.TempDir()
 	const (
 		role = "mcp"
-		pid  = 4242
 	)
+	pid := os.Getpid()
 
 	unregister, err := RegisterProcessPID(stateDir, role, pid)
 	if err != nil {
 		t.Fatalf("register pid: %v", err)
 	}
 
-	pidPath := filepath.Join(ProcessRegistryRoleDir(stateDir, role), "4242.pid")
+	pidPath := filepath.Join(ProcessRegistryRoleDir(stateDir, role), pidFileName(pid))
 	contents, err := os.ReadFile(pidPath)
 	if err != nil {
 		t.Fatalf("read pid file: %v", err)
 	}
-	if string(contents) != "4242\n" {
-		t.Fatalf("pid file contents mismatch: got=%q want=%q", string(contents), "4242\\n")
+
+	var record processPIDRecord
+	if err := json.Unmarshal(contents, &record); err != nil {
+		t.Fatalf("unmarshal pid file json: %v", err)
+	}
+	if record.PID != pid {
+		t.Fatalf("pid file PID mismatch: got=%d want=%d", record.PID, pid)
+	}
+	if strings.TrimSpace(record.StartID) == "" {
+		t.Fatalf("pid file StartID must not be empty")
 	}
 
 	if runtime.GOOS != "windows" {
@@ -67,8 +77,8 @@ func TestRegisterProcessPID_IdempotentRewriteForSamePID(t *testing.T) {
 	stateDir := t.TempDir()
 	const (
 		role = "mcp"
-		pid  = 4242
 	)
+	pid := os.Getpid()
 
 	if _, err := RegisterProcessPID(stateDir, role, pid); err != nil {
 		t.Fatalf("first register pid: %v", err)
@@ -78,13 +88,21 @@ func TestRegisterProcessPID_IdempotentRewriteForSamePID(t *testing.T) {
 		t.Fatalf("second register pid: %v", err)
 	}
 
-	pidPath := filepath.Join(ProcessRegistryRoleDir(stateDir, role), "4242.pid")
+	pidPath := filepath.Join(ProcessRegistryRoleDir(stateDir, role), pidFileName(pid))
 	contents, err := os.ReadFile(pidPath)
 	if err != nil {
 		t.Fatalf("read pid file after rewrite: %v", err)
 	}
-	if string(contents) != "4242\n" {
-		t.Fatalf("pid file contents mismatch after rewrite: got=%q want=%q", string(contents), "4242\\n")
+
+	var record processPIDRecord
+	if err := json.Unmarshal(contents, &record); err != nil {
+		t.Fatalf("unmarshal pid file json after rewrite: %v", err)
+	}
+	if record.PID != pid {
+		t.Fatalf("pid file PID mismatch after rewrite: got=%d want=%d", record.PID, pid)
+	}
+	if strings.TrimSpace(record.StartID) == "" {
+		t.Fatalf("pid file StartID must not be empty after rewrite")
 	}
 
 	if err := unregister(); err != nil {

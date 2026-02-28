@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,11 @@ import (
 )
 
 const processRegistryRootDir = "processes"
+
+type processPIDRecord struct {
+	PID     int    `json:"pid"`
+	StartID string `json:"start_id"`
+}
 
 func ProcessRegistryRoleDir(stateDir, role string) string {
 	return filepath.Join(stateDir, "daemon", processRegistryRootDir, strings.TrimSpace(role))
@@ -26,8 +32,21 @@ func RegisterProcessPID(stateDir, role string, pid int) (func() error, error) {
 	if err := os.MkdirAll(roleDir, 0o755); err != nil {
 		return nil, err
 	}
+	startID, err := processStartID(pid)
+	if err != nil {
+		return nil, fmt.Errorf("resolve process start identity for pid %d: %w", pid, err)
+	}
+
+	payload, err := json.Marshal(processPIDRecord{
+		PID:     pid,
+		StartID: startID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal process pid record: %w", err)
+	}
+
 	pidFilePath := filepath.Join(roleDir, pidFileName(pid))
-	if err := os.WriteFile(pidFilePath, []byte(strconv.Itoa(pid)+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(pidFilePath, append(payload, '\n'), 0o644); err != nil {
 		return nil, err
 	}
 

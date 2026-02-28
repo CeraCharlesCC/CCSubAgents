@@ -2,7 +2,9 @@ package daemonctl
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,9 +15,13 @@ import (
 func TestStopRegisteredProcesses_RemovesStalePIDFile(t *testing.T) {
 	resetStopProcessHooks(t)
 	stateDir := t.TempDir()
-	pidFile := seedPIDFile(t, stateDir, "web", "4242.pid")
+	pidFile := seedRegisteredPIDFile(t, stateDir, "web", 4242, "start-4242")
 
 	processExistsFn = func(pid int) bool {
+		return false
+	}
+	processIdentityMatchesFn = func(pid int, startID string) bool {
+		t.Fatalf("processIdentityMatches should not be called for stale pid")
 		return false
 	}
 	sendGracefulFn = func(pid int) error {
@@ -39,11 +45,16 @@ func TestStopRegisteredProcesses_RemovesStalePIDFile(t *testing.T) {
 func TestStopRegisteredProcesses_RemovesInvalidPIDFileNames(t *testing.T) {
 	resetStopProcessHooks(t)
 	stateDir := t.TempDir()
-	invalidA := seedPIDFile(t, stateDir, "web", "abc.pid")
-	invalidB := seedPIDFile(t, stateDir, "web", "123.txt")
+	invalidA := seedPIDFileRaw(t, stateDir, "web", "abc.pid", []byte("invalid\n"))
+	invalidB := seedPIDFileRaw(t, stateDir, "web", "123.txt", []byte("invalid\n"))
 
 	processExistsFn = func(pid int) bool {
-		return false
+		t.Fatalf("processExists should not be called for invalid pid filenames")
+		return true
+	}
+	processIdentityMatchesFn = func(pid int, startID string) bool {
+		t.Fatalf("processIdentityMatches should not be called for invalid pid filenames")
+		return true
 	}
 
 	err := StopRegisteredProcesses(context.Background(), stateDir, []string{"web"})
@@ -58,10 +69,68 @@ func TestStopRegisteredProcesses_RemovesInvalidPIDFileNames(t *testing.T) {
 	}
 }
 
+func TestStopRegisteredProcesses_RemovesInvalidPIDFilePayload(t *testing.T) {
+	resetStopProcessHooks(t)
+	stateDir := t.TempDir()
+	invalid := seedPIDFileRaw(t, stateDir, "web", "707.pid", []byte("707\n"))
+
+	processExistsFn = func(pid int) bool {
+		t.Fatalf("processExists should not be called for invalid pid payload")
+		return true
+	}
+	processIdentityMatchesFn = func(pid int, startID string) bool {
+		t.Fatalf("processIdentityMatches should not be called for invalid pid payload")
+		return true
+	}
+
+	err := StopRegisteredProcesses(context.Background(), stateDir, []string{"web"})
+	if err != nil {
+		t.Fatalf("StopRegisteredProcesses returned error: %v", err)
+	}
+	if _, statErr := os.Stat(invalid); !os.IsNotExist(statErr) {
+		t.Fatalf("expected invalid pid payload file to be removed, stat err=%v", statErr)
+	}
+}
+
+func TestStopRegisteredProcesses_RemovesMismatchedIdentityWithoutSignals(t *testing.T) {
+	resetStopProcessHooks(t)
+	stateDir := t.TempDir()
+	pidFile := seedRegisteredPIDFile(t, stateDir, "web", 302, "expected-start")
+
+	processExistsFn = func(pid int) bool {
+		return pid == 302
+	}
+	processIdentityMatchesFn = func(pid int, startID string) bool {
+		if pid != 302 {
+			t.Fatalf("unexpected identity check pid=%d", pid)
+		}
+		if startID != "expected-start" {
+			t.Fatalf("unexpected start id=%q", startID)
+		}
+		return false
+	}
+	sendGracefulFn = func(pid int) error {
+		t.Fatalf("sendGraceful should not be called when identity mismatches")
+		return nil
+	}
+	sendForceFn = func(pid int) error {
+		t.Fatalf("sendForce should not be called when identity mismatches")
+		return nil
+	}
+
+	err := StopRegisteredProcesses(context.Background(), stateDir, []string{"web"})
+	if err != nil {
+		t.Fatalf("StopRegisteredProcesses returned error: %v", err)
+	}
+	if _, statErr := os.Stat(pidFile); !os.IsNotExist(statErr) {
+		t.Fatalf("expected mismatched pid file to be removed, stat err=%v", statErr)
+	}
+}
+
 func TestStopRegisteredProcesses_GracefulThenForce(t *testing.T) {
 	resetStopProcessHooks(t)
 	stateDir := t.TempDir()
-	pidFile := seedPIDFile(t, stateDir, "web", "300.pid")
+	pidFile := seedRegisteredPIDFile(t, stateDir, "web", 300, "start-300")
 
 	var gracefulCalled, forceCalled bool
 	forced := false
@@ -70,6 +139,9 @@ func TestStopRegisteredProcesses_GracefulThenForce(t *testing.T) {
 			return false
 		}
 		return !forced
+	}
+	processIdentityMatchesFn = func(pid int, startID string) bool {
+		return pid == 300 && startID == "start-300"
 	}
 	sendGracefulFn = func(pid int) error {
 		if pid != 300 {
@@ -113,7 +185,7 @@ func TestStopRegisteredProcesses_GracefulThenForce(t *testing.T) {
 func TestStopRegisteredProcesses_GracefulErrorFallsBackToForce(t *testing.T) {
 	resetStopProcessHooks(t)
 	stateDir := t.TempDir()
-	pidFile := seedPIDFile(t, stateDir, "web", "301.pid")
+	pidFile := seedRegisteredPIDFile(t, stateDir, "web", 301, "start-301")
 
 	alive := true
 	var gracefulCalled, forceCalled bool
@@ -122,6 +194,9 @@ func TestStopRegisteredProcesses_GracefulErrorFallsBackToForce(t *testing.T) {
 			return false
 		}
 		return alive
+	}
+	processIdentityMatchesFn = func(pid int, startID string) bool {
+		return pid == 301 && startID == "start-301"
 	}
 	sendGracefulFn = func(pid int) error {
 		if pid != 301 {
@@ -165,8 +240,8 @@ func TestStopRegisteredProcesses_GracefulErrorFallsBackToForce(t *testing.T) {
 func TestStopRegisteredProcesses_AggregatesErrorsAndContinues(t *testing.T) {
 	resetStopProcessHooks(t)
 	stateDir := t.TempDir()
-	failingFile := seedPIDFile(t, stateDir, "web", "111.pid")
-	successFile := seedPIDFile(t, stateDir, "web", "222.pid")
+	failingFile := seedRegisteredPIDFile(t, stateDir, "web", 111, "start-111")
+	successFile := seedRegisteredPIDFile(t, stateDir, "web", 222, "start-222")
 
 	alive222 := true
 	processExistsFn = func(pid int) bool {
@@ -175,6 +250,16 @@ func TestStopRegisteredProcesses_AggregatesErrorsAndContinues(t *testing.T) {
 			return true
 		case 222:
 			return alive222
+		default:
+			return false
+		}
+	}
+	processIdentityMatchesFn = func(pid int, startID string) bool {
+		switch pid {
+		case 111:
+			return startID == "start-111"
+		case 222:
+			return startID == "start-222"
 		default:
 			return false
 		}
@@ -220,12 +305,14 @@ func TestStopRegisteredProcesses_AggregatesErrorsAndContinues(t *testing.T) {
 func resetStopProcessHooks(t *testing.T) {
 	t.Helper()
 	origProcessExists := processExistsFn
+	origProcessIdentityMatches := processIdentityMatchesFn
 	origSendGraceful := sendGracefulFn
 	origSendForce := sendForceFn
 	origStopSleep := stopSleep
 	origStopNow := stopNow
 	t.Cleanup(func() {
 		processExistsFn = origProcessExists
+		processIdentityMatchesFn = origProcessIdentityMatches
 		sendGracefulFn = origSendGraceful
 		sendForceFn = origSendForce
 		stopSleep = origStopSleep
@@ -233,14 +320,26 @@ func resetStopProcessHooks(t *testing.T) {
 	})
 }
 
-func seedPIDFile(t *testing.T, stateDir, role, name string) string {
+func seedRegisteredPIDFile(t *testing.T, stateDir, role string, pid int, startID string) string {
+	t.Helper()
+	payload, err := json.Marshal(pidFileRecord{
+		PID:     pid,
+		StartID: startID,
+	})
+	if err != nil {
+		t.Fatalf("marshal pid file record: %v", err)
+	}
+	return seedPIDFileRaw(t, stateDir, role, fmt.Sprintf("%d.pid", pid), append(payload, '\n'))
+}
+
+func seedPIDFileRaw(t *testing.T, stateDir, role, name string, contents []byte) string {
 	t.Helper()
 	roleDir := registryRoleDir(stateDir, role)
 	if err := os.MkdirAll(roleDir, 0o755); err != nil {
 		t.Fatalf("create role dir: %v", err)
 	}
 	path := filepath.Join(roleDir, name)
-	if err := os.WriteFile(path, []byte("test\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, contents, 0o644); err != nil {
 		t.Fatalf("write pid file %s: %v", name, err)
 	}
 	return path
