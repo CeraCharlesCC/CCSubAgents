@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/config"
@@ -25,8 +26,9 @@ type daemonReadinessProber interface {
 }
 
 type childProcess struct {
-	cmd    *exec.Cmd
-	exited <-chan error
+	cmd           *exec.Cmd
+	exited        <-chan error
+	stopRequested atomic.Bool
 }
 
 var (
@@ -250,17 +252,18 @@ func startLocalArtifactWeb(stderr io.Writer) (*childProcess, error) {
 		return nil, err
 	}
 	exited := make(chan error, 1)
+	child := &childProcess{cmd: cmd, exited: exited}
 
 	go func() {
 		waitErr := cmd.Wait()
-		if waitErr != nil {
+		if waitErr != nil && !child.stopRequested.Load() {
 			fmt.Fprintln(stderr, "local-artifact-web exited:", waitErr)
 		}
 		exited <- waitErr
 		close(exited)
 	}()
 
-	return &childProcess{cmd: cmd, exited: exited}, nil
+	return child, nil
 }
 
 func stopChildProcess(child *childProcess, timeout time.Duration) error {
@@ -275,6 +278,7 @@ func stopChildProcess(child *childProcess, timeout time.Duration) error {
 		reportChildExitError(err)
 		return nil
 	}
+	child.stopRequested.Store(true)
 
 	var gracefulErr error
 	if err := sendChildGracefulFn(child.cmd.Process); err != nil && !errors.Is(err, os.ErrProcessDone) {

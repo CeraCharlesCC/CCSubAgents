@@ -20,9 +20,9 @@ func TestStopRegisteredProcesses_RemovesStalePIDFile(t *testing.T) {
 	processExistsFn = func(pid int) bool {
 		return false
 	}
-	processIdentityMatchesFn = func(pid int, startID string) bool {
+	processIdentityMatchesFn = func(pid int, startID string) (bool, error) {
 		t.Fatalf("processIdentityMatches should not be called for stale pid")
-		return false
+		return false, nil
 	}
 	sendGracefulFn = func(pid int) error {
 		t.Fatalf("sendGraceful should not be called for stale pid")
@@ -42,7 +42,7 @@ func TestStopRegisteredProcesses_RemovesStalePIDFile(t *testing.T) {
 	}
 }
 
-func TestStopRegisteredProcesses_RemovesInvalidPIDFileNames(t *testing.T) {
+func TestStopRegisteredProcesses_ReportsInvalidPIDFileNamesWithoutDeleting(t *testing.T) {
 	resetStopProcessHooks(t)
 	stateDir := t.TempDir()
 	invalidA := seedPIDFileRaw(t, stateDir, "web", "abc.pid", []byte("invalid\n"))
@@ -52,24 +52,27 @@ func TestStopRegisteredProcesses_RemovesInvalidPIDFileNames(t *testing.T) {
 		t.Fatalf("processExists should not be called for invalid pid filenames")
 		return true
 	}
-	processIdentityMatchesFn = func(pid int, startID string) bool {
+	processIdentityMatchesFn = func(pid int, startID string) (bool, error) {
 		t.Fatalf("processIdentityMatches should not be called for invalid pid filenames")
-		return true
+		return true, nil
 	}
 
 	err := StopRegisteredProcesses(context.Background(), stateDir, []string{"web"})
-	if err != nil {
-		t.Fatalf("StopRegisteredProcesses returned error: %v", err)
+	if err == nil {
+		t.Fatalf("expected error for invalid pid filename")
 	}
-	if _, statErr := os.Stat(invalidA); !os.IsNotExist(statErr) {
-		t.Fatalf("expected invalid abc.pid file to be removed, stat err=%v", statErr)
+	if !strings.Contains(err.Error(), "abc.pid") {
+		t.Fatalf("expected invalid pid filename to be reported, got %v", err)
 	}
-	if _, statErr := os.Stat(invalidB); !os.IsNotExist(statErr) {
-		t.Fatalf("expected invalid 123.txt file to be removed, stat err=%v", statErr)
+	if _, statErr := os.Stat(invalidA); statErr != nil {
+		t.Fatalf("expected invalid abc.pid file to be preserved, stat err=%v", statErr)
+	}
+	if _, statErr := os.Stat(invalidB); statErr != nil {
+		t.Fatalf("expected non-pid file to be ignored, stat err=%v", statErr)
 	}
 }
 
-func TestStopRegisteredProcesses_RemovesInvalidPIDFilePayload(t *testing.T) {
+func TestStopRegisteredProcesses_ReportsInvalidPIDFilePayloadWithoutDeleting(t *testing.T) {
 	resetStopProcessHooks(t)
 	stateDir := t.TempDir()
 	invalid := seedPIDFileRaw(t, stateDir, "web", "707.pid", []byte("707\n"))
@@ -78,17 +81,20 @@ func TestStopRegisteredProcesses_RemovesInvalidPIDFilePayload(t *testing.T) {
 		t.Fatalf("processExists should not be called for invalid pid payload")
 		return true
 	}
-	processIdentityMatchesFn = func(pid int, startID string) bool {
+	processIdentityMatchesFn = func(pid int, startID string) (bool, error) {
 		t.Fatalf("processIdentityMatches should not be called for invalid pid payload")
-		return true
+		return true, nil
 	}
 
 	err := StopRegisteredProcesses(context.Background(), stateDir, []string{"web"})
-	if err != nil {
-		t.Fatalf("StopRegisteredProcesses returned error: %v", err)
+	if err == nil {
+		t.Fatalf("expected error for invalid pid payload")
 	}
-	if _, statErr := os.Stat(invalid); !os.IsNotExist(statErr) {
-		t.Fatalf("expected invalid pid payload file to be removed, stat err=%v", statErr)
+	if !strings.Contains(err.Error(), "707.pid") {
+		t.Fatalf("expected invalid pid payload to be reported, got %v", err)
+	}
+	if _, statErr := os.Stat(invalid); statErr != nil {
+		t.Fatalf("expected invalid pid payload file to be preserved, stat err=%v", statErr)
 	}
 }
 
@@ -100,14 +106,14 @@ func TestStopRegisteredProcesses_RemovesMismatchedIdentityWithoutSignals(t *test
 	processExistsFn = func(pid int) bool {
 		return pid == 302
 	}
-	processIdentityMatchesFn = func(pid int, startID string) bool {
+	processIdentityMatchesFn = func(pid int, startID string) (bool, error) {
 		if pid != 302 {
 			t.Fatalf("unexpected identity check pid=%d", pid)
 		}
 		if startID != "expected-start" {
 			t.Fatalf("unexpected start id=%q", startID)
 		}
-		return false
+		return false, nil
 	}
 	sendGracefulFn = func(pid int) error {
 		t.Fatalf("sendGraceful should not be called when identity mismatches")
@@ -127,6 +133,44 @@ func TestStopRegisteredProcesses_RemovesMismatchedIdentityWithoutSignals(t *test
 	}
 }
 
+func TestStopRegisteredProcesses_IdentityLookupErrorKeepsPIDFile(t *testing.T) {
+	resetStopProcessHooks(t)
+	stateDir := t.TempDir()
+	pidFile := seedRegisteredPIDFile(t, stateDir, "web", 303, "expected-start")
+
+	processExistsFn = func(pid int) bool {
+		return pid == 303
+	}
+	processIdentityMatchesFn = func(pid int, startID string) (bool, error) {
+		if pid != 303 {
+			t.Fatalf("unexpected identity check pid=%d", pid)
+		}
+		if startID != "expected-start" {
+			t.Fatalf("unexpected start id=%q", startID)
+		}
+		return false, errors.New("permission denied")
+	}
+	sendGracefulFn = func(pid int) error {
+		t.Fatalf("sendGraceful should not be called when identity lookup fails")
+		return nil
+	}
+	sendForceFn = func(pid int) error {
+		t.Fatalf("sendForce should not be called when identity lookup fails")
+		return nil
+	}
+
+	err := StopRegisteredProcesses(context.Background(), stateDir, []string{"web"})
+	if err == nil {
+		t.Fatalf("expected identity lookup error")
+	}
+	if !strings.Contains(err.Error(), "resolve web pid 303 identity") {
+		t.Fatalf("expected identity lookup failure in error, got %v", err)
+	}
+	if _, statErr := os.Stat(pidFile); statErr != nil {
+		t.Fatalf("expected pid file preserved for retry, stat err=%v", statErr)
+	}
+}
+
 func TestStopRegisteredProcesses_GracefulThenForce(t *testing.T) {
 	resetStopProcessHooks(t)
 	stateDir := t.TempDir()
@@ -140,8 +184,8 @@ func TestStopRegisteredProcesses_GracefulThenForce(t *testing.T) {
 		}
 		return !forced
 	}
-	processIdentityMatchesFn = func(pid int, startID string) bool {
-		return pid == 300 && startID == "start-300"
+	processIdentityMatchesFn = func(pid int, startID string) (bool, error) {
+		return pid == 300 && startID == "start-300", nil
 	}
 	sendGracefulFn = func(pid int) error {
 		if pid != 300 {
@@ -195,8 +239,8 @@ func TestStopRegisteredProcesses_GracefulErrorFallsBackToForce(t *testing.T) {
 		}
 		return alive
 	}
-	processIdentityMatchesFn = func(pid int, startID string) bool {
-		return pid == 301 && startID == "start-301"
+	processIdentityMatchesFn = func(pid int, startID string) (bool, error) {
+		return pid == 301 && startID == "start-301", nil
 	}
 	sendGracefulFn = func(pid int) error {
 		if pid != 301 {
@@ -254,14 +298,14 @@ func TestStopRegisteredProcesses_AggregatesErrorsAndContinues(t *testing.T) {
 			return false
 		}
 	}
-	processIdentityMatchesFn = func(pid int, startID string) bool {
+	processIdentityMatchesFn = func(pid int, startID string) (bool, error) {
 		switch pid {
 		case 111:
-			return startID == "start-111"
+			return startID == "start-111", nil
 		case 222:
-			return startID == "start-222"
+			return startID == "start-222", nil
 		default:
-			return false
+			return false, nil
 		}
 	}
 	sendGracefulFn = func(pid int) error {
@@ -310,9 +354,9 @@ func TestStopRegisteredProcesses_RejectsUnsafeRoleAndContinues(t *testing.T) {
 	processExistsFn = func(pid int) bool {
 		return false
 	}
-	processIdentityMatchesFn = func(pid int, startID string) bool {
+	processIdentityMatchesFn = func(pid int, startID string) (bool, error) {
 		t.Fatalf("processIdentityMatches should not be called for stale pid")
-		return false
+		return false, nil
 	}
 	sendGracefulFn = func(pid int) error {
 		t.Fatalf("sendGraceful should not be called for stale pid")
@@ -362,7 +406,7 @@ func seedRegisteredPIDFile(t *testing.T, stateDir, role string, pid int, startID
 	if err != nil {
 		t.Fatalf("marshal pid file record: %v", err)
 	}
-	return seedPIDFileRaw(t, stateDir, role, fmt.Sprintf("%d.pid", pid), append(payload, '\n'))
+	return seedPIDFileRaw(t, stateDir, role, fmt.Sprintf("%d%s", pid, processPIDFileSuffix), append(payload, '\n'))
 }
 
 func seedPIDFileRaw(t *testing.T, stateDir, role, name string, contents []byte) string {

@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 )
 
 const processRegistryRootDir = "processes"
+const processPIDFileSuffix = ".pid"
 
 type processPIDRecord struct {
 	PID     int    `json:"pid"`
@@ -52,7 +54,7 @@ func RegisterProcessPID(stateDir, role string, pid int) (func() error, error) {
 	}
 
 	pidFilePath := filepath.Join(roleDir, pidFileName(pid))
-	if err := os.WriteFile(pidFilePath, append(payload, '\n'), 0o644); err != nil {
+	if err := writeFileAtomic(pidFilePath, append(payload, '\n'), 0o644); err != nil {
 		return nil, err
 	}
 
@@ -91,5 +93,48 @@ func sanitizeProcessRegistryRole(role string) (string, bool) {
 }
 
 func pidFileName(pid int) string {
-	return strconv.Itoa(pid) + ".pid"
+	return strconv.Itoa(pid) + processPIDFileSuffix
+}
+
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmpFile, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmpFile.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+
+	if err := tmpFile.Chmod(perm); err != nil {
+		_ = tmpFile.Close()
+		return err
+	}
+	if _, err := tmpFile.Write(data); err != nil {
+		_ = tmpFile.Close()
+		return err
+	}
+	if err := tmpFile.Close(); err != nil {
+		return err
+	}
+
+	if err := os.Rename(tmpPath, path); err != nil {
+		if runtime.GOOS != "windows" {
+			return err
+		}
+		// Windows cannot atomically replace existing files via os.Rename.
+		if removeErr := os.Remove(path); removeErr != nil && !os.IsNotExist(removeErr) {
+			return removeErr
+		}
+		if retryErr := os.Rename(tmpPath, path); retryErr != nil {
+			return retryErr
+		}
+	}
+
+	cleanup = false
+	return nil
 }

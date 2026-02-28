@@ -47,19 +47,13 @@ func StopRegisteredProcesses(ctx context.Context, stateDir string, roles []strin
 }
 
 func stopRegisteredRole(ctx context.Context, stateDir, role string) []error {
-	registered, invalidPaths, err := listRolePIDs(stateDir, role)
+	listing, err := listRolePIDs(stateDir, role)
 	if err != nil {
 		return []error{fmt.Errorf("list registered %s processes: %w", role, err)}
 	}
 
-	var errs []error
-	for _, invalidPath := range invalidPaths {
-		if removeErr := removePIDFile(invalidPath); removeErr != nil {
-			errs = append(errs, fmt.Errorf("remove invalid %s pid file %s: %w", role, invalidPath, removeErr))
-		}
-	}
-
-	for _, item := range registered {
+	errs := append([]error(nil), listing.issues...)
+	for _, item := range listing.registered {
 		if err := ctx.Err(); err != nil {
 			errs = append(errs, err)
 			return errs
@@ -72,7 +66,19 @@ func stopRegisteredRole(ctx context.Context, stateDir, role string) []error {
 			}
 			continue
 		}
-		if !processIdentityMatchesFn(pid, item.startID) {
+		matches, matchErr := processIdentityMatchesFn(pid, item.startID)
+		if matchErr != nil {
+			// The process can exit between liveness and identity checks.
+			if !processExistsFn(pid) {
+				if removeErr := removePIDFile(pidFilePath); removeErr != nil {
+					errs = append(errs, fmt.Errorf("remove stale %s pid file %s: %w", role, pidFilePath, removeErr))
+				}
+				continue
+			}
+			errs = append(errs, fmt.Errorf("resolve %s pid %d identity: %w", role, pid, matchErr))
+			continue
+		}
+		if !matches {
 			if removeErr := removePIDFile(pidFilePath); removeErr != nil {
 				errs = append(errs, fmt.Errorf("remove stale %s pid file %s: %w", role, pidFilePath, removeErr))
 			}
@@ -91,19 +97,19 @@ func stopRegisteredRole(ctx context.Context, stateDir, role string) []error {
 	return errs
 }
 
-func processIdentityMatches(pid int, expectedStartID string) bool {
+func processIdentityMatches(pid int, expectedStartID string) (bool, error) {
 	if pid <= 0 {
-		return false
+		return false, fmt.Errorf("invalid pid %d", pid)
 	}
 	expectedStartID = strings.TrimSpace(expectedStartID)
 	if expectedStartID == "" {
-		return false
+		return false, errors.New("expected start id is empty")
 	}
 	actualStartID, err := processStartID(pid)
 	if err != nil {
-		return false
+		return false, err
 	}
-	return actualStartID == expectedStartID
+	return actualStartID == expectedStartID, nil
 }
 
 func stopRegisteredPID(ctx context.Context, pid int) error {
