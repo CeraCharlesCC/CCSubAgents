@@ -63,7 +63,7 @@ Goal: produce a proposal artifact that removes all ambiguity.
 
 1. Restate the user's goal concisely.
 2. Skim relevant parts of the codebase to understand the current state: structure, conventions, potential impact areas.
-3. Use `#tool:vscode/askQuestions` to resolve unknowns: desired behavior, constraints, edge cases, definition of done.
+3. Use `#tool:vscode/askQuestions` to resolve unknowns: desired behavior, constraints, edge cases, definition of done. Ask as many questions as needed until the requirements are crystal clear. Don't worry about asking too many; it's better to over-clarify than to make assumptions.
 4. Once requirements are solid, save them as `proposal/<slug>`: including scope, constraints, acceptance criteria, and any codebase observations that informed the proposal.
 
 Decomposition: if the request spans multiple independent pieces of work, split it into separate tasks. Each will get its own plan artifact (`plan/<slug>-001`, `plan/<slug>-002`, …) and go through the full cycle sequentially.
