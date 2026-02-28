@@ -16,7 +16,6 @@ tools:
     'vscode/askQuestions',
     'artifact-mcp/get_artifact',
     'artifact-mcp/get_artifact_list',
-    'artifact-mcp/resolve_artifact',
   ]
 model: [GPT-5.3-Codex (copilot)]
 user-invokable: false   # for current stable 

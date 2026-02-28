@@ -16,7 +16,6 @@ tools:
     'vscode/askQuestions',
     'artifact-mcp/get_artifact',
     'artifact-mcp/get_artifact_list',
-    'artifact-mcp/resolve_artifact',
   ]
 model: [Claude Opus 4.6 (copilot)]
 user-invokable: false   # for current stable 

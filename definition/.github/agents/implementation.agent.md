@@ -16,13 +16,10 @@ tools:
     'edit/createFile', 
     'edit/editFiles', 
     'search/changes',
-    'search/codebase',
     'search/usages',
     'web',
-    'artifact-mcp/delete_artifact',
     'artifact-mcp/get_artifact',
     'artifact-mcp/get_artifact_list',
-    'artifact-mcp/resolve_artifact',
     'artifact-mcp/todo',
     'artifact-mcp/save_artifact_text',
   ]
@@ -38,16 +35,16 @@ You are an implementation specialist. The parent agent gives you a **plan artifa
 
 ## Workflow
 
-1. **Read the plan** with `#tool:artifact-mcp/get_artifact` using the name provided by the parent.
-2. **Read existing TODOs** with `#tool:artifact-mcp/todo` (`operation: read`, bound to the plan artifact).
-   - **No TODOs exist** → fresh start. Create a TODO list derived from the plan's steps.
-   - **All completed** → verify results, then report back.
-   - **Some incomplete** → a previous agent was interrupted. Resume from the first non-completed item.
-3. **Implement each TODO item** in order:
+1. Read the plan with `#tool:artifact-mcp/get_artifact` using the name provided by the parent.
+2. Read existing TODOs with `#tool:artifact-mcp/todo` (`operation: read`, bound to the plan artifact).
+   - No TODOs exist → fresh start. Create a TODO list derived from the plan's steps.
+   - All completed → verify results, then report back.
+   - Some incomplete → a previous agent was interrupted. Resume from the first non-completed item.
+3. Implement each TODO item in order:
    - Mark it `in-progress` before starting, `completed` when done (always write the full list).
    - Follow the pattern: scaffolding → core logic → error handling → tests.
-4. **Run verification** (tests, lint, typecheck) when possible.
-5. **Report back** to the parent with a summary of what was done, TODO completion status, and any follow-ups.
+4. Run verification (tests, lint, typecheck) when possible.
+5. Report back to the parent with a summary of what was done, TODO completion status, and any follow-ups.
 
 ## TODO tracking details
 
