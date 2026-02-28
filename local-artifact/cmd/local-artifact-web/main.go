@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"runtime"
 
 	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/config"
@@ -11,25 +13,46 @@ import (
 )
 
 func main() {
+	os.Exit(mainExitCode())
+}
+
+func mainExitCode() int {
+	err := run()
+	if err == nil || errors.Is(err, context.Canceled) {
+		return 0
+	}
+	fmt.Fprintln(os.Stderr, err)
+	return 1
+}
+
+func run() error {
+	ctx, stop := signal.NotifyContext(context.Background(), shutdownSignals...)
+	defer stop()
+
 	root, err := config.ResolveStoreRoot()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "cannot determine artifact store root:", err)
-		os.Exit(1)
+		return fmt.Errorf("cannot determine artifact store root: %w", err)
 	}
 	stateDir, err := config.ResolveStateDir()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "cannot determine daemon state dir:", err)
-		os.Exit(1)
+		return fmt.Errorf("cannot determine daemon state dir: %w", err)
 	}
+	unregisterWebPID, err := daemon.RegisterProcessPID(stateDir, "web", os.Getpid())
+	if err != nil {
+		return fmt.Errorf("cannot register web pid: %w", err)
+	}
+	defer func() {
+		if unregisterErr := unregisterWebPID(); unregisterErr != nil {
+			fmt.Fprintln(os.Stderr, "warning: failed to unregister web pid:", unregisterErr)
+		}
+	}()
 	logDir, err := config.ResolveLogDir()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "cannot determine daemon log dir:", err)
-		os.Exit(1)
+		return fmt.Errorf("cannot determine daemon log dir: %w", err)
 	}
 	ccSettings, err := config.ResolveCCSubagentsSettings()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "cannot resolve ccsubagents settings:", err)
-		os.Exit(1)
+		return fmt.Errorf("cannot resolve ccsubagents settings: %w", err)
 	}
 
 	addr := config.ResolveWebAddrWithSettings(ccSettings)
@@ -44,7 +67,7 @@ func main() {
 		apiSocket = ""
 	}
 
-	if err := daemon.Run(context.Background(), daemon.RunConfig{
+	err = daemon.Run(ctx, daemon.RunConfig{
 		StoreRoot:   root,
 		StateDir:    stateDir,
 		LogDir:      logDir,
@@ -54,8 +77,9 @@ func main() {
 		Token:       token,
 		DisableAuth: ccSettings.NoAuth,
 		Stderr:      os.Stderr,
-	}); err != nil {
-		fmt.Fprintln(os.Stderr, "web daemon error:", err)
-		os.Exit(1)
+	})
+	if err != nil {
+		return fmt.Errorf("web daemon error: %w", err)
 	}
+	return nil
 }

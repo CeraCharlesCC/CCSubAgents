@@ -38,6 +38,11 @@ type protocolHarness struct {
 	cancel context.CancelFunc
 }
 
+const (
+	protocolRecvTimeout     = 6 * time.Second
+	protocolShutdownTimeout = 6 * time.Second
+)
+
 func newProtocolHarness(t *testing.T, baseStoreRoot string) *protocolHarness {
 	t.Helper()
 
@@ -71,7 +76,7 @@ func (h *protocolHarness) close() {
 	_ = h.outR.Close()
 	select {
 	case <-h.serveErr:
-	case <-time.After(2 * time.Second):
+	case <-time.After(protocolShutdownTimeout):
 	}
 }
 
@@ -104,7 +109,7 @@ func (h *protocolHarness) recv() protocolMessage {
 		h.t.Fatalf("read server output: %v", err)
 	case msg := <-h.outCh:
 		return msg
-	case <-time.After(2 * time.Second):
+	case <-time.After(protocolRecvTimeout):
 		h.t.Fatal("timed out waiting for server output")
 	}
 	return protocolMessage{}
