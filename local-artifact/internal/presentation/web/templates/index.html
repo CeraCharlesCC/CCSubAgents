@@ -81,6 +81,7 @@
       --scroll-track: #ece6dc;
       --scroll-thumb: #b7ac9a;
       --scroll-thumb-hover: #9f937f;
+      --viewer-pane-width: clamp(390px, 42vw, 620px);
     }
 
     :root[data-theme="dark"] {
@@ -405,6 +406,7 @@
       top: 0;
       z-index: 1;
       background: var(--card);
+      white-space: nowrap;
     }
 
     td code {
@@ -442,19 +444,9 @@
     }
 
     .viewer-shell {
-      width: 0;
-      opacity: 0;
-      transform: translateX(20px);
-      pointer-events: none;
-      overflow: hidden;
-      transition: width 350ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 250ms ease, transform 350ms cubic-bezier(0.2, 0.8, 0.2, 1);
-    }
-
-    .workspace.has-active-viewer .viewer-shell {
-      width: 45%;
-      opacity: 1;
-      transform: translateX(0);
-      pointer-events: auto;
+      flex: 0 0 var(--viewer-pane-width);
+      max-width: var(--viewer-pane-width);
+      min-width: 380px;
     }
 
     .viewer {
@@ -471,16 +463,29 @@
 
     .viewer-head {
       display: flex;
-      align-items: end;
+      align-items: flex-start;
       justify-content: space-between;
       gap: 0.6rem;
-      flex-wrap: wrap;
+      flex-wrap: nowrap;
       margin-bottom: 0.55rem;
+    }
+
+    .viewer-head-main {
+      flex: 1;
+      min-width: 0;
     }
 
     .viewer-head strong {
       display: block;
       margin-bottom: 0.15rem;
+    }
+
+    .viewer-head .hint {
+      display: block;
+      max-width: 100%;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .viewer-meta-grid {
@@ -511,7 +516,9 @@
       margin: 0.2rem 0 0;
       font-family: var(--mono);
       font-size: 0.85rem;
-      overflow-wrap: anywhere;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .viewer-actions {
@@ -580,12 +587,10 @@
     @keyframes preview-fade-in {
       from {
         opacity: 0;
-        transform: translateY(4px);
       }
 
       to {
         opacity: 1;
-        transform: none;
       }
     }
 
@@ -614,8 +619,19 @@
         flex-direction: column;
       }
 
-      .workspace.has-active-viewer .viewer-shell {
+      .viewer-shell {
+        flex: none;
         width: 100%;
+        max-width: none;
+        min-width: 0;
+        display: none;
+        visibility: visible;
+        opacity: 1;
+        pointer-events: auto;
+      }
+
+      .workspace.has-active-viewer .viewer-shell {
+        display: block;
       }
 
       .viewer {
@@ -749,12 +765,13 @@
           </div>
         </section>
 
-        <aside class="viewer-shell" id="artifact-viewer-shell" aria-hidden="true">
+        <aside class="viewer-shell" id="artifact-viewer-shell" aria-hidden="false">
           <section class="viewer" id="artifact-viewer" aria-live="polite">
             <div class="viewer-head">
-              <div>
+              <div class="viewer-head-main">
                 <strong>Data viewer</strong>
-                <span class="hint" id="viewer-meta">Select one artifact to preview.</span>
+                <span class="hint" id="viewer-meta" title="Select one artifact to preview.">Select one artifact to
+                  preview.</span>
               </div>
               <div class="viewer-actions">
                 <button type="button" class="subtle" id="viewer-copy" disabled>Copy content</button>
@@ -764,27 +781,27 @@
             <dl class="viewer-meta-grid">
               <div class="meta-item">
                 <dt>Name</dt>
-                <dd id="viewer-name">-</dd>
+                <dd id="viewer-name" title="-">-</dd>
               </div>
               <div class="meta-item">
                 <dt>Ref</dt>
-                <dd id="viewer-ref">-</dd>
+                <dd id="viewer-ref" title="-">-</dd>
               </div>
               <div class="meta-item">
                 <dt>MIME</dt>
-                <dd id="viewer-mime">-</dd>
+                <dd id="viewer-mime" title="-">-</dd>
               </div>
               <div class="meta-item">
                 <dt>Kind</dt>
-                <dd id="viewer-kind">-</dd>
+                <dd id="viewer-kind" title="-">-</dd>
               </div>
               <div class="meta-item">
                 <dt>Size</dt>
-                <dd id="viewer-size">-</dd>
+                <dd id="viewer-size" title="-">-</dd>
               </div>
               <div class="meta-item">
                 <dt>Created</dt>
-                <dd id="viewer-created">-</dd>
+                <dd id="viewer-created" title="-">-</dd>
               </div>
             </dl>
             <div class="viewer-content" id="viewer-content">
@@ -895,12 +912,30 @@
         return firstPart.trim().toLowerCase();
       }
 
+      function setTextAndTitle(node, rawValue) {
+        if (!node) {
+          return;
+        }
+        const value = rawValue && rawValue !== '' ? rawValue : '-';
+        node.textContent = value;
+        node.title = value;
+      }
+
+      function setViewerMetaText(message) {
+        if (!viewerMeta) {
+          return;
+        }
+        const value = message || '';
+        viewerMeta.textContent = value;
+        viewerMeta.title = value;
+      }
+
       function setViewerOpen(isOpen) {
         if (workspace) {
           workspace.classList.toggle('has-active-viewer', !!isOpen);
         }
         if (viewerShell) {
-          viewerShell.setAttribute('aria-hidden', isOpen ? 'false' : 'true');
+          viewerShell.setAttribute('aria-hidden', 'false');
         }
       }
 
@@ -969,25 +1004,12 @@
       }
 
       function setViewerDetails(row, mimeTypeOverride) {
-        if (viewerName) {
-          viewerName.textContent = row ? (row.dataset.name || '-') : '-';
-        }
-        if (viewerRef) {
-          viewerRef.textContent = row ? (row.dataset.ref || '-') : '-';
-        }
-        if (viewerMime) {
-          const candidate = mimeTypeOverride || (row ? row.dataset.mime : '');
-          viewerMime.textContent = candidate && candidate !== '' ? candidate : '-';
-        }
-        if (viewerKind) {
-          viewerKind.textContent = row ? (row.dataset.kind || '-') : '-';
-        }
-        if (viewerSize) {
-          viewerSize.textContent = row ? (row.dataset.size || '-') : '-';
-        }
-        if (viewerCreated) {
-          viewerCreated.textContent = row ? (row.dataset.created || '-') : '-';
-        }
+        setTextAndTitle(viewerName, row ? row.dataset.name : '');
+        setTextAndTitle(viewerRef, row ? row.dataset.ref : '');
+        setTextAndTitle(viewerMime, mimeTypeOverride || (row ? row.dataset.mime : ''));
+        setTextAndTitle(viewerKind, row ? row.dataset.kind : '');
+        setTextAndTitle(viewerSize, row ? row.dataset.size : '');
+        setTextAndTitle(viewerCreated, row ? row.dataset.created : '');
       }
 
       function clearViewer() {
@@ -1069,7 +1091,7 @@
           setViewerDetails(null, '');
           setViewerCopyState('', 'Copy content');
           clearCopyStatus();
-          viewerMeta.textContent = 'Select one artifact to preview.';
+          setViewerMetaText('Select one artifact to preview.');
           showViewerPlaceholder(previewSupportText, false);
           return;
         }
@@ -1080,7 +1102,7 @@
           setViewerDetails(null, '');
           setViewerCopyState('', 'Copy content');
           clearCopyStatus();
-          viewerMeta.textContent = activeRows.length + ' artifacts selected.';
+          setViewerMetaText(activeRows.length + ' artifacts selected.');
           showViewerPlaceholder('Multiple artifacts selected. Use bulk actions or select a single artifact to preview.', false);
           return;
         }
@@ -1093,7 +1115,7 @@
           setViewerDetails(null, '');
           setViewerCopyState('', 'Copy content');
           clearCopyStatus();
-          viewerMeta.textContent = 'Select one artifact to preview.';
+          setViewerMetaText('Select one artifact to preview.');
           showViewerPlaceholder('No artifact selected.', false);
           return;
         }
@@ -1104,7 +1126,7 @@
         const name = row.dataset.name || '';
         if (ref === '') {
           viewerContent.classList.remove('loading');
-          viewerMeta.textContent = 'Preview unavailable';
+          setViewerMetaText('Preview unavailable');
           setViewerCopyState('', 'Copy content');
           clearCopyStatus();
           showViewerPlaceholder('Missing ref for selected artifact.', true);
@@ -1118,7 +1140,7 @@
         previewRequestID = requestID;
         setViewerCopyState(ref, 'Copy ref');
         clearCopyStatus();
-        viewerMeta.textContent = (name || ref) + ' | loading...';
+        setViewerMetaText((name || ref) + ' | loading...');
         viewerContent.classList.add('loading');
         if (!viewerHasRenderableContent()) {
           showViewerPlaceholder('Loading preview...', false);
@@ -1156,7 +1178,7 @@
             viewerContent.classList.remove('loading');
             const mimeType = normalizeMimeType(result.rawMimeType);
             setViewerDetails(row, result.rawMimeType);
-            viewerMeta.textContent = (name || ref) + ' | ' + result.rawMimeType;
+            setViewerMetaText((name || ref) + ' | ' + result.rawMimeType);
             if (mimeType.indexOf('image/') === 0) {
               setViewerCopyState(ref, 'Copy ref');
               showViewerImage(result.blob, name || ref);
@@ -1202,7 +1224,7 @@
             }
             viewerContent.classList.remove('loading');
             setViewerDetails(row, row.dataset.mime || '');
-            viewerMeta.textContent = 'Preview error';
+            setViewerMetaText('Preview error');
             setViewerCopyState(ref, 'Copy ref');
             showViewerPlaceholder(error && error.message ? error.message : 'failed to load preview', true);
           });
