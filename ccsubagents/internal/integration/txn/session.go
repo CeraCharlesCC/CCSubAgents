@@ -1,6 +1,7 @@
 package txn
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -212,7 +213,7 @@ func rollbackFromJournal(j Journal) error {
 	}
 	if len(errs) > 0 {
 		sort.Strings(errs)
-		return fmt.Errorf(strings.Join(errs, "; "))
+		return errors.New(strings.Join(errs, "; "))
 	}
 	return nil
 }
