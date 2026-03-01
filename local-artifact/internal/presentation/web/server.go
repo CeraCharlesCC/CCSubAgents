@@ -734,7 +734,7 @@ func indexRedirectBase(subspace string, prefix string, sortMode string, limitRaw
 	}
 	return "/?subspace=" + url.QueryEscape(subspace) +
 		"&prefix=" + url.QueryEscape(prefix) +
-		"&sort=" + url.QueryEscape(normalizeListSort(sortMode)) +
+		"&sort=" + url.QueryEscape(sortMode) +
 		"&limit=" + url.QueryEscape(limitRaw)
 }
 
@@ -742,6 +742,7 @@ const (
 	listSortNameAsc  = "name_asc"
 	listSortTimeAsc  = "time_asc"
 	listSortTimeDesc = "time_desc"
+	maxPrefixFilters = 20
 	maxListLimit     = 1000
 	defaultListLimit = 200
 )
@@ -796,6 +797,9 @@ func listArtifacts(ctx context.Context, svc *artifacts.Service, rawPrefix string
 
 	normalizedSortMode := normalizeListSort(sortMode)
 	prefixFilters := splitPrefixFilters(rawPrefix)
+	if len(prefixFilters) > maxPrefixFilters {
+		return nil, fmt.Errorf("%w: too many prefix filters, limit is %d", artifacts.ErrInvalidInput, maxPrefixFilters)
+	}
 
 	// For non-default sorting or multi-prefix OR filters, fetch a wider window and
 	// apply sorting/limit in-process so time sort and OR behavior are meaningful.
@@ -840,8 +844,7 @@ func listArtifacts(ctx context.Context, svc *artifacts.Service, rawPrefix string
 }
 
 func sortArtifactVersions(items []artifacts.ArtifactVersion, mode string) {
-	normalizedMode := normalizeListSort(mode)
-	switch normalizedMode {
+	switch mode {
 	case listSortTimeDesc:
 		sort.Slice(items, func(i, j int) bool {
 			if items[i].CreatedAt.Equal(items[j].CreatedAt) {
