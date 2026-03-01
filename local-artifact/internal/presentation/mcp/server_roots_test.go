@@ -115,6 +115,73 @@ func (h *protocolHarness) recv() protocolMessage {
 	return protocolMessage{}
 }
 
+func (h *protocolHarness) initializeRootsCap(listChanged bool) protocolMessage {
+	h.t.Helper()
+	h.send(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+		"params": map[string]any{
+			"capabilities": map[string]any{
+				"roots": map[string]any{"listChanged": listChanged},
+			},
+		},
+	})
+	return h.recv()
+}
+
+func (h *protocolHarness) notifyInitialized() {
+	h.t.Helper()
+	h.send(map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"})
+}
+
+func (h *protocolHarness) expectRootsListRequest() json.RawMessage {
+	h.t.Helper()
+	msg := h.recv()
+	if msg.Method != "roots/list" {
+		h.t.Fatalf("expected roots/list request, got: %+v", msg)
+	}
+	if len(msg.ID) == 0 {
+		h.t.Fatalf("expected roots/list request id, got: %+v", msg)
+	}
+	return msg.ID
+}
+
+func (h *protocolHarness) replyRootsList(id json.RawMessage, roots []map[string]any) {
+	h.t.Helper()
+	h.send(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      json.RawMessage(id),
+		"result":  map[string]any{"roots": roots},
+	})
+}
+
+func (h *protocolHarness) replyRootsListError(id json.RawMessage, code int) {
+	h.t.Helper()
+	h.send(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      json.RawMessage(id),
+		"error": map[string]any{
+			"code":    code,
+			"message": "simulated",
+		},
+	})
+}
+
+func (h *protocolHarness) callTool(id int, name string, args map[string]any) protocolMessage {
+	h.t.Helper()
+	h.send(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name":      name,
+			"arguments": args,
+		},
+	})
+	return h.recv()
+}
+
 func readActiveArtifactNames(t *testing.T, dbPath string) map[string]struct{} {
 	t.Helper()
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
@@ -192,49 +259,18 @@ func TestRootsListProtocol_SuccessUsesScopedStore(t *testing.T) {
 	storeRoot := t.TempDir()
 	h := newProtocolHarness(t, storeRoot)
 
-	h.send(map[string]any{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "initialize",
-		"params": map[string]any{
-			"capabilities": map[string]any{
-				"roots": map[string]any{"listChanged": true},
-			},
-		},
-	})
-	initializeResp := h.recv()
+	initializeResp := h.initializeRootsCap(true)
 	if string(initializeResp.ID) != "1" || initializeResp.Error != nil {
 		t.Fatalf("unexpected initialize response: %+v", initializeResp)
 	}
 
-	h.send(map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"})
-	rootsReq := h.recv()
-	if rootsReq.Method != "roots/list" {
-		t.Fatalf("expected roots/list request, got: %+v", rootsReq)
-	}
-	if len(rootsReq.ID) == 0 {
-		t.Fatalf("expected roots/list request id, got: %+v", rootsReq)
-	}
+	h.notifyInitialized()
+	rootsID := h.expectRootsListRequest()
 
 	roots := []map[string]any{{"uri": "file:///repo/a"}, {"uri": "file://localhost/repo/b/../b"}}
-	h.send(map[string]any{
-		"jsonrpc": "2.0",
-		"id":      json.RawMessage(rootsReq.ID),
-		"result": map[string]any{
-			"roots": roots,
-		},
-	})
+	h.replyRootsList(rootsID, roots)
 
-	h.send(map[string]any{
-		"jsonrpc": "2.0",
-		"id":      2,
-		"method":  "tools/call",
-		"params": map[string]any{
-			"name":      toolArtifactSaveText,
-			"arguments": map[string]any{"name": "tests/protocol-success", "text": "ok"},
-		},
-	})
-	toolResp := h.recv()
+	toolResp := h.callTool(2, toolArtifactSaveText, map[string]any{"name": "tests/protocol-success", "text": "ok"})
 	if string(toolResp.ID) != "2" || toolResp.Error != nil {
 		t.Fatalf("unexpected tool response: %+v", toolResp)
 	}
@@ -264,31 +300,12 @@ func TestRootsListProtocol_DefersRootsListUntilInitializedNotification(t *testin
 	storeRoot := t.TempDir()
 	h := newProtocolHarness(t, storeRoot)
 
-	h.send(map[string]any{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "initialize",
-		"params": map[string]any{
-			"capabilities": map[string]any{
-				"roots": map[string]any{"listChanged": true},
-			},
-		},
-	})
-	initializeResp := h.recv()
+	initializeResp := h.initializeRootsCap(true)
 	if string(initializeResp.ID) != "1" || initializeResp.Error != nil {
 		t.Fatalf("unexpected initialize response: %+v", initializeResp)
 	}
 
-	h.send(map[string]any{
-		"jsonrpc": "2.0",
-		"id":      2,
-		"method":  "tools/call",
-		"params": map[string]any{
-			"name":      toolArtifactSaveText,
-			"arguments": map[string]any{"name": "tests/pre-init", "text": "ok"},
-		},
-	})
-	preInitResp := h.recv()
+	preInitResp := h.callTool(2, toolArtifactSaveText, map[string]any{"name": "tests/pre-init", "text": "ok"})
 	if preInitResp.Method == "roots/list" {
 		t.Fatalf("unexpected roots/list before initialized notification: %+v", preInitResp)
 	}
@@ -296,10 +313,10 @@ func TestRootsListProtocol_DefersRootsListUntilInitializedNotification(t *testin
 		t.Fatalf("unexpected pre-init tool response: %+v", preInitResp)
 	}
 
-	h.send(map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"})
-	rootsReq := h.recv()
-	if rootsReq.Method != "roots/list" {
-		t.Fatalf("expected roots/list request after initialized notification, got: %+v", rootsReq)
+	h.notifyInitialized()
+	rootsReqID := h.expectRootsListRequest()
+	if len(rootsReqID) == 0 {
+		t.Fatal("expected non-empty roots/list request id after initialized notification")
 	}
 }
 
@@ -317,43 +334,12 @@ func TestRootsListProtocol_FallbackOnMethodNotFoundAndInternalError(t *testing.T
 			storeRoot := t.TempDir()
 			h := newProtocolHarness(t, storeRoot)
 
-			h.send(map[string]any{
-				"jsonrpc": "2.0",
-				"id":      1,
-				"method":  "initialize",
-				"params": map[string]any{
-					"capabilities": map[string]any{
-						"roots": map[string]any{"listChanged": true},
-					},
-				},
-			})
-			_ = h.recv()
+			_ = h.initializeRootsCap(true)
+			h.notifyInitialized()
+			rootsID := h.expectRootsListRequest()
+			h.replyRootsListError(rootsID, tc.code)
 
-			h.send(map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"})
-			rootsReq := h.recv()
-			if rootsReq.Method != "roots/list" {
-				t.Fatalf("expected roots/list request, got: %+v", rootsReq)
-			}
-
-			h.send(map[string]any{
-				"jsonrpc": "2.0",
-				"id":      json.RawMessage(rootsReq.ID),
-				"error": map[string]any{
-					"code":    tc.code,
-					"message": "simulated",
-				},
-			})
-
-			h.send(map[string]any{
-				"jsonrpc": "2.0",
-				"id":      2,
-				"method":  "tools/call",
-				"params": map[string]any{
-					"name":      toolArtifactSaveText,
-					"arguments": map[string]any{"name": "tests/protocol-fallback", "text": "ok"},
-				},
-			})
-			toolResp := h.recv()
+			toolResp := h.callTool(2, toolArtifactSaveText, map[string]any{"name": "tests/protocol-fallback", "text": "ok"})
 			if string(toolResp.ID) != "2" || toolResp.Error != nil {
 				t.Fatalf("unexpected tool response: %+v", toolResp)
 			}
@@ -370,43 +356,14 @@ func TestRootsListChangedProtocol_ReResolvesToNewScopedStore(t *testing.T) {
 	storeRoot := t.TempDir()
 	h := newProtocolHarness(t, storeRoot)
 
-	h.send(map[string]any{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "initialize",
-		"params": map[string]any{
-			"capabilities": map[string]any{
-				"roots": map[string]any{"listChanged": true},
-			},
-		},
-	})
-	_ = h.recv()
-
-	h.send(map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"})
-	firstRootsReq := h.recv()
-	if firstRootsReq.Method != "roots/list" {
-		t.Fatalf("expected first roots/list request, got: %+v", firstRootsReq)
-	}
+	_ = h.initializeRootsCap(true)
+	h.notifyInitialized()
+	firstRootsID := h.expectRootsListRequest()
 
 	firstRoots := []map[string]any{{"uri": "file:///repo/first"}}
-	h.send(map[string]any{
-		"jsonrpc": "2.0",
-		"id":      json.RawMessage(firstRootsReq.ID),
-		"result": map[string]any{
-			"roots": firstRoots,
-		},
-	})
+	h.replyRootsList(firstRootsID, firstRoots)
 
-	h.send(map[string]any{
-		"jsonrpc": "2.0",
-		"id":      2,
-		"method":  "tools/call",
-		"params": map[string]any{
-			"name":      toolArtifactSaveText,
-			"arguments": map[string]any{"name": "tests/roots-changed-first", "text": "one"},
-		},
-	})
-	firstWrite := h.recv()
+	firstWrite := h.callTool(2, toolArtifactSaveText, map[string]any{"name": "tests/roots-changed-first", "text": "one"})
 	if string(firstWrite.ID) != "2" || firstWrite.Error != nil {
 		t.Fatalf("unexpected first write response: %+v", firstWrite)
 	}
@@ -418,30 +375,12 @@ func TestRootsListChangedProtocol_ReResolvesToNewScopedStore(t *testing.T) {
 	hashFirst := computeSubspaceHash(normalizedFirst)
 
 	h.send(map[string]any{"jsonrpc": "2.0", "method": "notifications/roots/list_changed"})
-	secondRootsReq := h.recv()
-	if secondRootsReq.Method != "roots/list" {
-		t.Fatalf("expected second roots/list request, got: %+v", secondRootsReq)
-	}
+	secondRootsID := h.expectRootsListRequest()
 
 	secondRoots := []map[string]any{{"uri": "file:///repo/second"}}
-	h.send(map[string]any{
-		"jsonrpc": "2.0",
-		"id":      json.RawMessage(secondRootsReq.ID),
-		"result": map[string]any{
-			"roots": secondRoots,
-		},
-	})
+	h.replyRootsList(secondRootsID, secondRoots)
 
-	h.send(map[string]any{
-		"jsonrpc": "2.0",
-		"id":      3,
-		"method":  "tools/call",
-		"params": map[string]any{
-			"name":      toolArtifactSaveText,
-			"arguments": map[string]any{"name": "tests/roots-changed-second", "text": "two"},
-		},
-	})
-	secondWrite := h.recv()
+	secondWrite := h.callTool(3, toolArtifactSaveText, map[string]any{"name": "tests/roots-changed-second", "text": "two"})
 	if string(secondWrite.ID) != "3" || secondWrite.Error != nil {
 		t.Fatalf("unexpected second write response: %+v", secondWrite)
 	}
@@ -483,57 +422,23 @@ func TestRootsListChangedProtocol_RefreshErrorFallsBackToGlobal(t *testing.T) {
 			storeRoot := t.TempDir()
 			h := newProtocolHarness(t, storeRoot)
 
-			h.send(map[string]any{
-				"jsonrpc": "2.0",
-				"id":      1,
-				"method":  "initialize",
-				"params": map[string]any{
-					"capabilities": map[string]any{
-						"roots": map[string]any{"listChanged": true},
-					},
-				},
-			})
-			_ = h.recv()
-
-			h.send(map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"})
-			firstRootsReq := h.recv()
-			if firstRootsReq.Method != "roots/list" {
-				t.Fatalf("expected first roots/list request, got: %+v", firstRootsReq)
-			}
-
-			h.send(map[string]any{
-				"jsonrpc": "2.0",
-				"id":      json.RawMessage(firstRootsReq.ID),
-				"result": map[string]any{
-					"roots": []map[string]any{{"uri": "file:///repo/first"}},
-				},
-			})
+			_ = h.initializeRootsCap(true)
+			h.notifyInitialized()
+			firstRootsID := h.expectRootsListRequest()
+			h.replyRootsList(firstRootsID, []map[string]any{{"uri": "file:///repo/first"}})
 
 			h.send(map[string]any{"jsonrpc": "2.0", "method": "notifications/roots/list_changed"})
-			secondRootsReq := h.recv()
-			if secondRootsReq.Method != "roots/list" {
-				t.Fatalf("expected second roots/list request, got: %+v", secondRootsReq)
-			}
-
+			secondRootsID := h.expectRootsListRequest()
 			h.send(map[string]any{
 				"jsonrpc": "2.0",
-				"id":      json.RawMessage(secondRootsReq.ID),
+				"id":      json.RawMessage(secondRootsID),
 				"error": map[string]any{
 					"code":    tc.code,
 					"message": "refresh failed",
 				},
 			})
 
-			h.send(map[string]any{
-				"jsonrpc": "2.0",
-				"id":      2,
-				"method":  "tools/call",
-				"params": map[string]any{
-					"name":      toolArtifactSaveText,
-					"arguments": map[string]any{"name": "tests/roots-refresh-fallback", "text": "ok"},
-				},
-			})
-			writeResp := h.recv()
+			writeResp := h.callTool(2, toolArtifactSaveText, map[string]any{"name": "tests/roots-refresh-fallback", "text": "ok"})
 			if string(writeResp.ID) != "2" || writeResp.Error != nil {
 				t.Fatalf("unexpected write response: %+v", writeResp)
 			}
@@ -563,17 +468,7 @@ func TestRootsCapabilityProtocol_NonObjectSkipsRootsList(t *testing.T) {
 	_ = h.recv()
 
 	h.send(map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"})
-	h.send(map[string]any{
-		"jsonrpc": "2.0",
-		"id":      2,
-		"method":  "tools/call",
-		"params": map[string]any{
-			"name":      toolArtifactSaveText,
-			"arguments": map[string]any{"name": "tests/non-object-roots", "text": "ok"},
-		},
-	})
-
-	first := h.recv()
+	first := h.callTool(2, toolArtifactSaveText, map[string]any{"name": "tests/non-object-roots", "text": "ok"})
 	if first.Method == "roots/list" {
 		t.Fatalf("unexpected roots/list request for non-object roots capability: %+v", first)
 	}

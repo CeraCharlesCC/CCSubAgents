@@ -1,204 +1,59 @@
 package web
 
 import (
-	"context"
-	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/core/artifacts"
 )
-
-func TestServiceForSubspaceReusesServicePerSelector(t *testing.T) {
-	root := t.TempDir()
-	s := New(root)
-	t.Cleanup(func() {
-		_ = s.Close()
-	})
-
-	first, err := s.serviceForSubspace(globalSubspaceSelector)
-	if err != nil {
-		t.Fatalf("first serviceForSubspace error: %v", err)
-	}
-	second, err := s.serviceForSubspace(globalSubspaceSelector)
-	if err != nil {
-		t.Fatalf("second serviceForSubspace error: %v", err)
-	}
-	if first == nil || second == nil {
-		t.Fatalf("expected non-nil services")
-	}
-	if first != second {
-		t.Fatalf("expected same service instance for selector reuse")
-	}
-}
-
-func TestIsValidSubspaceHash(t *testing.T) {
-	valid := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	if !isValidSubspaceHash(valid) {
-		t.Fatalf("expected valid hash")
-	}
-
-	cases := []string{
-		"",
-		"abc",
-		"0123456789ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef",
-		"g123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde",
-	}
-	for _, tc := range cases {
-		if isValidSubspaceHash(tc) {
-			t.Fatalf("expected invalid hash: %q", tc)
-		}
-	}
-}
 
 func TestIsValidSubspaceSelector(t *testing.T) {
 	validHash := strings.Repeat("a", 64)
-
 	tests := []struct {
-		name    string
-		input   string
-		expects bool
+		name string
+		in   string
+		want bool
 	}{
-		{name: "global", input: globalSubspaceSelector, expects: true},
-		{name: "hash", input: validHash, expects: true},
-		{name: "uppercase global", input: "GLOBAL", expects: true},
-		{name: "uppercase hash", input: strings.ToUpper(validHash), expects: true},
-		{name: "invalid hash", input: "xyz", expects: false},
-		{name: "empty", input: "", expects: false},
+		{name: "global", in: globalSubspaceSelector, want: true},
+		{name: "hash", in: validHash, want: true},
+		{name: "uppercase global", in: "GLOBAL", want: true},
+		{name: "uppercase hash", in: strings.ToUpper(validHash), want: true},
+		{name: "invalid hash", in: "xyz", want: false},
+		{name: "empty", in: "", want: false},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := isValidSubspaceSelector(tc.input); got != tc.expects {
-				t.Fatalf("isValidSubspaceSelector(%q)=%v want=%v", tc.input, got, tc.expects)
+			if got := isValidSubspaceSelector(tc.in); got != tc.want {
+				t.Fatalf("isValidSubspaceSelector(%q)=%v want=%v", tc.in, got, tc.want)
 			}
 		})
 	}
 }
 
-func TestDiscoverSubspacesIncludesGlobalAndSortedHashes(t *testing.T) {
-	root := t.TempDir()
-	hashA := strings.Repeat("a", 64)
-	hashB := strings.Repeat("b", 64)
-
-	if err := os.MkdirAll(filepath.Join(root, hashB), 0o755); err != nil {
-		t.Fatalf("mkdir hashB: %v", err)
-	}
-	if err := os.MkdirAll(filepath.Join(root, "not-a-subspace"), 0o755); err != nil {
-		t.Fatalf("mkdir invalid: %v", err)
-	}
-	if err := os.MkdirAll(filepath.Join(root, hashA), 0o755); err != nil {
-		t.Fatalf("mkdir hashA: %v", err)
-	}
-
-	s := New(root)
-	t.Cleanup(func() {
-		_ = s.Close()
-	})
-	got, err := s.discoverSubspaces()
-	if err != nil {
-		t.Fatalf("discoverSubspaces error: %v", err)
-	}
-
-	want := []string{globalSubspaceSelector, hashA, hashB}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("discoverSubspaces mismatch\nwant=%v\ngot=%v", want, got)
-	}
-}
-
-func TestServiceFromQuerySubspaceSupportsGlobal(t *testing.T) {
+func TestServiceFromQuerySubspaceSupportsGlobalAndHashExistence(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "missing-store-root")
-	s := New(root)
-	t.Cleanup(func() {
-		_ = s.Close()
-	})
+	h := newWebHarnessAtRoot(t, root)
 
-	if _, err := s.serviceFromQuerySubspace(globalSubspaceSelector); err != nil {
+	if _, err := h.s.serviceFromQuerySubspace(globalSubspaceSelector); err != nil {
 		t.Fatalf("expected global subspace to resolve, got error: %v", err)
 	}
-	if _, err := s.serviceFromQuerySubspace(""); err != nil {
+	if _, err := h.s.serviceFromQuerySubspace(""); err != nil {
 		t.Fatalf("expected empty subspace selector to resolve to global, got error: %v", err)
 	}
 
 	hash := strings.Repeat("c", 64)
-	if _, err := s.serviceFromQuerySubspace(hash); err == nil || !strings.Contains(err.Error(), "selected subspace not found") {
+	if _, err := h.s.serviceFromQuerySubspace(hash); err == nil || !strings.Contains(err.Error(), "selected subspace not found") {
 		t.Fatalf("expected missing hash subspace error, got: %v", err)
 	}
 
 	if err := os.MkdirAll(filepath.Join(root, hash), 0o755); err != nil {
 		t.Fatalf("mkdir hash subspace: %v", err)
 	}
-	if _, err := s.serviceFromQuerySubspace(hash); err != nil {
+	if _, err := h.s.serviceFromQuerySubspace(hash); err != nil {
 		t.Fatalf("expected existing hash subspace to resolve, got error: %v", err)
-	}
-}
-
-func TestAPIArtifactsAndDeleteSupportGlobalSubspace(t *testing.T) {
-	root := t.TempDir()
-	s := New(root)
-	t.Cleanup(func() {
-		_ = s.Close()
-	})
-
-	globalSvc, err := s.serviceForSubspace(globalSubspaceSelector)
-	if err != nil {
-		t.Fatalf("global serviceForSubspace error: %v", err)
-	}
-	if _, err := globalSvc.SaveText(context.Background(), artifacts.SaveTextInput{Name: "global/item", Text: "ok"}); err != nil {
-		t.Fatalf("seed global artifact: %v", err)
-	}
-
-	defaultReq := httptest.NewRequest(http.MethodGet, "/api/artifacts", nil)
-	defaultRR := httptest.NewRecorder()
-	s.handleAPIArtifacts(defaultRR, defaultReq)
-	if defaultRR.Code != http.StatusOK {
-		t.Fatalf("default list status=%d body=%s", defaultRR.Code, defaultRR.Body.String())
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/api/artifacts?subspace=global", nil)
-	rr := httptest.NewRecorder()
-	s.handleAPIArtifacts(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("list status=%d body=%s", rr.Code, rr.Body.String())
-	}
-
-	var listRes struct {
-		Items []artifacts.Artifact `json:"items"`
-	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &listRes); err != nil {
-		t.Fatalf("decode list response: %v", err)
-	}
-	if len(listRes.Items) != 1 || listRes.Items[0].Name != "global/item" {
-		t.Fatalf("unexpected list items: %+v", listRes.Items)
-	}
-
-	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/artifacts?subspace=global&name=global/item", nil)
-	deleteRR := httptest.NewRecorder()
-	s.handleAPIArtifacts(deleteRR, deleteReq)
-	if deleteRR.Code != http.StatusOK {
-		t.Fatalf("delete status=%d body=%s", deleteRR.Code, deleteRR.Body.String())
-	}
-
-	verifyReq := httptest.NewRequest(http.MethodGet, "/api/artifacts?subspace=global", nil)
-	verifyRR := httptest.NewRecorder()
-	s.handleAPIArtifacts(verifyRR, verifyReq)
-	if verifyRR.Code != http.StatusOK {
-		t.Fatalf("verify list status=%d body=%s", verifyRR.Code, verifyRR.Body.String())
-	}
-	var verifyRes struct {
-		Items []artifacts.Artifact `json:"items"`
-	}
-	if err := json.Unmarshal(verifyRR.Body.Bytes(), &verifyRes); err != nil {
-		t.Fatalf("decode verify response: %v", err)
-	}
-	if len(verifyRes.Items) != 0 {
-		t.Fatalf("expected no remaining global artifacts, got: %+v", verifyRes.Items)
 	}
 }
 
@@ -206,7 +61,6 @@ func TestAPISubspacesIncludesGlobalAndSortedHashes(t *testing.T) {
 	root := t.TempDir()
 	hashA := strings.Repeat("a", 64)
 	hashB := strings.Repeat("b", 64)
-
 	if err := os.MkdirAll(filepath.Join(root, hashB), 0o755); err != nil {
 		t.Fatalf("mkdir hashB: %v", err)
 	}
@@ -214,24 +68,13 @@ func TestAPISubspacesIncludesGlobalAndSortedHashes(t *testing.T) {
 		t.Fatalf("mkdir hashA: %v", err)
 	}
 
-	s := New(root)
-	t.Cleanup(func() {
-		_ = s.Close()
-	})
-	req := httptest.NewRequest(http.MethodGet, "/api/subspaces", nil)
-	rr := httptest.NewRecorder()
-	s.handleAPISubspaces(rr, req)
+	h := newWebHarnessAtRoot(t, root)
+	rr := h.request(http.MethodGet, "/api/subspaces", nil, nil)
+	assertStatus(t, rr, http.StatusOK)
 
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
-	}
-
-	var res struct {
+	res := decodeJSON[struct {
 		Items []string `json:"items"`
-	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &res); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
+	}](t, rr)
 
 	want := []string{globalSubspaceSelector, hashA, hashB}
 	if !reflect.DeepEqual(res.Items, want) {
@@ -246,15 +89,7 @@ func TestAPISubspacesReturnsInternalServerErrorOnDiscoverFailure(t *testing.T) {
 		t.Fatalf("write file: %v", err)
 	}
 
-	s := New(filePath)
-	t.Cleanup(func() {
-		_ = s.Close()
-	})
-	req := httptest.NewRequest(http.MethodGet, "/api/subspaces", nil)
-	rr := httptest.NewRecorder()
-	s.handleAPISubspaces(rr, req)
-
-	if rr.Code != http.StatusInternalServerError {
-		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
-	}
+	h := newWebHarnessAtRoot(t, filePath)
+	rr := h.request(http.MethodGet, "/api/subspaces", nil, nil)
+	assertStatus(t, rr, http.StatusInternalServerError)
 }

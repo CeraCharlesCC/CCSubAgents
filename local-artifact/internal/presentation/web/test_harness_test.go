@@ -23,7 +23,12 @@ type webHarness struct {
 
 func newWebHarness(t *testing.T) *webHarness {
 	t.Helper()
-	s := New(t.TempDir())
+	return newWebHarnessAtRoot(t, t.TempDir())
+}
+
+func newWebHarnessAtRoot(t *testing.T, root string) *webHarness {
+	t.Helper()
+	s := New(root)
 	t.Cleanup(func() {
 		_ = s.Close()
 	})
@@ -162,6 +167,20 @@ func decodeJSON[T any](t *testing.T, rr *httptest.ResponseRecorder) T {
 		t.Fatalf("decode json response: %v\nbody=%s", err, rr.Body.String())
 	}
 	return out
+}
+
+func assertJSONErrorEq(t *testing.T, rr *httptest.ResponseRecorder, wantStatus int, wantErr string) {
+	t.Helper()
+	assertStatus(t, rr, wantStatus)
+	var payload struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode json error response: %v\nbody=%s", err, rr.Body.String())
+	}
+	if payload.Error != wantErr {
+		t.Fatalf("error=%q want=%q", payload.Error, wantErr)
+	}
 }
 
 func cloneValues(values url.Values) url.Values {

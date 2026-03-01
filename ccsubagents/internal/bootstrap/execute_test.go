@@ -8,152 +8,98 @@ import (
 	"testing"
 )
 
-type executeManagerStub struct {
-	installVersion        string
-	pinned                bool
-	skipAttestationsCheck bool
-	verbose               bool
-	statusWriter          io.Writer
-	setStatusWriterCalled bool
-	promptInput           io.Reader
-	promptOutput          io.Writer
-	setPromptIOCalled     bool
-	runCtx                context.Context
-	runCommand            Command
-	runScope              Scope
-	runCalled             bool
-	runErr                error
+type executeManagerRecorder struct {
+	got                ExecuteOptions
+	statusWriterCalled bool
+	promptIOCalled     bool
+	runCalled          bool
+	runCtx             context.Context
+	runCommand         Command
+	runScope           Scope
+	runErr             error
 }
 
-func (m *executeManagerStub) SetSkipAttestationsCheck(skip bool) {
-	m.skipAttestationsCheck = skip
+func (m *executeManagerRecorder) SetSkipAttestationsCheck(skip bool) {
+	m.got.SkipAttestationsCheck = skip
 }
-
-func (m *executeManagerStub) SetVerbose(verbose bool) {
-	m.verbose = verbose
+func (m *executeManagerRecorder) SetVerbose(verbose bool)          { m.got.Verbose = verbose }
+func (m *executeManagerRecorder) SetInstallVersion(version string) { m.got.InstallVersion = version }
+func (m *executeManagerRecorder) SetPinned(pinned bool)            { m.got.Pinned = pinned }
+func (m *executeManagerRecorder) SetStatusWriter(writer io.Writer) {
+	m.statusWriterCalled, m.got.StatusWriter = true, writer
 }
-
-func (m *executeManagerStub) SetInstallVersion(version string) {
-	m.installVersion = version
+func (m *executeManagerRecorder) SetInstallPromptIO(input io.Reader, output io.Writer) {
+	m.promptIOCalled, m.got.PromptInput, m.got.PromptOutput = true, input, output
 }
-
-func (m *executeManagerStub) SetPinned(pinned bool) {
-	m.pinned = pinned
-}
-
-func (m *executeManagerStub) SetStatusWriter(writer io.Writer) {
-	m.setStatusWriterCalled = true
-	m.statusWriter = writer
-}
-
-func (m *executeManagerStub) SetInstallPromptIO(input io.Reader, output io.Writer) {
-	m.setPromptIOCalled = true
-	m.promptInput = input
-	m.promptOutput = output
-}
-
-func (m *executeManagerStub) Run(ctx context.Context, command Command, scope Scope) error {
-	m.runCalled = true
-	m.runCtx = ctx
-	m.runCommand = command
-	m.runScope = scope
+func (m *executeManagerRecorder) Run(ctx context.Context, command Command, scope Scope) error {
+	m.runCalled, m.runCtx, m.runCommand, m.runScope = true, ctx, command, scope
 	return m.runErr
 }
 
-func TestExecute_PropagatesStatusWriterAndPromptIO(t *testing.T) {
-	stub := &executeManagerStub{runErr: errors.New("run failed")}
-	originalFactory := newExecuteManager
+func useExecuteManager(t *testing.T, stub executeManager) {
+	t.Helper()
+	original := newExecuteManager
 	newExecuteManager = func() executeManager { return stub }
-	defer func() { newExecuteManager = originalFactory }()
-
-	var statusOut strings.Builder
-	promptIn := strings.NewReader("1\n")
-	var promptOut strings.Builder
-	ctx := context.Background()
-
-	err := Execute(ctx, ExecuteRequest{
-		Command: CommandUpdate,
-		Scope:   ScopeGlobal,
-		Options: ExecuteOptions{
-			InstallVersion:        "v1.2.3",
-			Pinned:                true,
-			SkipAttestationsCheck: true,
-			Verbose:               true,
-			StatusWriter:          &statusOut,
-			PromptInput:           promptIn,
-			PromptOutput:          &promptOut,
-		},
-	})
-	if !errors.Is(err, stub.runErr) {
-		t.Fatalf("expected run error %v, got %v", stub.runErr, err)
-	}
-
-	if !stub.skipAttestationsCheck {
-		t.Fatalf("expected skip attestation option to propagate")
-	}
-	if stub.installVersion != "v1.2.3" {
-		t.Fatalf("expected install version to propagate, got %q", stub.installVersion)
-	}
-	if !stub.pinned {
-		t.Fatalf("expected pinned option to propagate")
-	}
-	if !stub.verbose {
-		t.Fatalf("expected verbose option to propagate")
-	}
-	if !stub.setStatusWriterCalled {
-		t.Fatalf("expected status writer to be set")
-	}
-	if stub.statusWriter != &statusOut {
-		t.Fatalf("expected status writer %p, got %p", &statusOut, stub.statusWriter)
-	}
-	if !stub.setPromptIOCalled {
-		t.Fatalf("expected prompt io to be set")
-	}
-	if stub.promptInput != promptIn {
-		t.Fatalf("expected prompt input to be propagated")
-	}
-	if stub.promptOutput != &promptOut {
-		t.Fatalf("expected prompt output to be propagated")
-	}
-	if !stub.runCalled {
-		t.Fatalf("expected run to be called")
-	}
-	if stub.runCtx != ctx {
-		t.Fatalf("expected run context to match execute context")
-	}
-	if stub.runCommand != CommandUpdate || stub.runScope != ScopeGlobal {
-		t.Fatalf("expected run to be invoked with update/global, got %q/%q", stub.runCommand, stub.runScope)
-	}
+	t.Cleanup(func() { newExecuteManager = original })
 }
 
-func TestExecute_DoesNotSetPromptIOWhenPromptStreamsNil(t *testing.T) {
-	stub := &executeManagerStub{}
-	originalFactory := newExecuteManager
-	newExecuteManager = func() executeManager { return stub }
-	defer func() { newExecuteManager = originalFactory }()
+func TestExecute(t *testing.T) {
+	runErr := errors.New("run failed")
+	statusOut, promptOut := io.Discard, io.Discard
+	promptIn := strings.NewReader("1\n")
 
-	err := Execute(context.Background(), ExecuteRequest{
-		Command: CommandInstall,
-		Scope:   ScopeLocal,
-		Options: ExecuteOptions{
-			SkipAttestationsCheck: false,
-			Verbose:               false,
+	tests := []struct {
+		request          ExecuteRequest
+		runErr           error
+		wantErr          error
+		wantStatusWriter bool
+		wantPrompt       bool
+	}{
+		{
+			request: ExecuteRequest{
+				Command: CommandUpdate,
+				Scope:   ScopeGlobal,
+				Options: ExecuteOptions{
+					InstallVersion:        "v1.2.3",
+					Pinned:                true,
+					SkipAttestationsCheck: true,
+					Verbose:               true,
+					StatusWriter:          statusOut,
+					PromptInput:           promptIn,
+					PromptOutput:          promptOut,
+				},
+			},
+			runErr:           runErr,
+			wantErr:          runErr,
+			wantStatusWriter: true,
+			wantPrompt:       true,
 		},
-	})
-	if err != nil {
-		t.Fatalf("expected execute to return nil when run succeeds, got %v", err)
+		{request: ExecuteRequest{Command: CommandInstall, Scope: ScopeLocal}},
 	}
 
-	if stub.setPromptIOCalled {
-		t.Fatalf("expected prompt io not to be set when prompt streams are nil")
-	}
-	if stub.setStatusWriterCalled {
-		t.Fatalf("expected status writer not to be set when status writer is nil")
-	}
-	if !stub.runCalled {
-		t.Fatalf("expected run to be called")
-	}
-	if stub.runCommand != CommandInstall || stub.runScope != ScopeLocal {
-		t.Fatalf("expected run to be invoked with install/local, got %q/%q", stub.runCommand, stub.runScope)
+	for i, tc := range tests {
+		stub := &executeManagerRecorder{runErr: tc.runErr}
+		useExecuteManager(t, stub)
+
+		ctx := context.Background()
+		err := Execute(ctx, tc.request)
+		if !errors.Is(err, tc.wantErr) {
+			t.Fatalf("case %d: expected error %v, got %v", i, tc.wantErr, err)
+		}
+		if stub.got != tc.request.Options {
+			t.Fatalf("case %d: unexpected options: got %#v want %#v", i, stub.got, tc.request.Options)
+		}
+		if stub.statusWriterCalled != tc.wantStatusWriter {
+			t.Fatalf("case %d: status writer call mismatch: got %v want %v", i, stub.statusWriterCalled, tc.wantStatusWriter)
+		}
+		if stub.promptIOCalled != tc.wantPrompt {
+			t.Fatalf("case %d: prompt IO call mismatch: got %v want %v", i, stub.promptIOCalled, tc.wantPrompt)
+		}
+		if !stub.runCalled {
+			t.Fatalf("case %d: expected run to be called", i)
+		}
+		if stub.runCtx != ctx || stub.runCommand != tc.request.Command || stub.runScope != tc.request.Scope {
+			t.Fatalf("case %d: run args mismatch: got %v/%q/%q want %v/%q/%q", i, stub.runCtx, stub.runCommand, stub.runScope, ctx, tc.request.Command, tc.request.Scope)
+		}
 	}
 }

@@ -89,6 +89,25 @@ func TestAPISaveRejectsOversizedJSONBody_NotTruncationEOF(t *testing.T) {
 	}
 }
 
+func TestAPIArtifactsListWithoutSubspaceDefaultsToGlobal(t *testing.T) {
+	h := newWebHarness(t)
+	h.mustSaveText(globalSubspaceSelector, "api/default-subspace/global", "global")
+	h.mustSaveText(strings.Repeat("c", 64), "api/default-subspace/hash", "hash")
+
+	rr := h.request(http.MethodGet, "/api/artifacts?prefix=api/default-subspace/", nil, nil)
+	assertStatus(t, rr, http.StatusOK)
+
+	res := decodeJSON[struct {
+		Items []artifacts.Artifact `json:"items"`
+	}](t, rr)
+	if len(res.Items) != 1 {
+		t.Fatalf("expected exactly one global item when subspace is omitted, got %d items", len(res.Items))
+	}
+	if got := res.Items[0].Name; got != "api/default-subspace/global" {
+		t.Fatalf("expected omitted subspace to list global artifacts, got item %q", got)
+	}
+}
+
 func TestAPIDeleteSupportsMultipleNames(t *testing.T) {
 	h := newWebHarness(t)
 	h.mustSaveText(globalSubspaceSelector, "api/del-a", "a")
