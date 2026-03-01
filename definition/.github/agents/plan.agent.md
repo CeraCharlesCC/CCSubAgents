@@ -17,7 +17,7 @@ tools:
     'artifact-mcp/get_artifact_list',
     'artifact-mcp/save_artifact_text',
   ]
-model: [GPT-5.2 (copilot)]
+model: [GPT-5.2 (copilot), GPT-5.3-Codex (copilot)] # The reason GPT-5.2 is designated as the priority model specifically for the Plan agent is that (I) believe GPT-5.3-Codex is a coding-specialized model with highly optimized reasoning token counts, making it unsuitable for tasks like planning that require general domain knowledge and deep consideration of side effects. i.e: my intuition.
 user-invokable: false
 user-invocable: false
 disable-model-invocation: false

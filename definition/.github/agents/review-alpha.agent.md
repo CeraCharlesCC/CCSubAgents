@@ -17,7 +17,7 @@ tools:
     'artifact-mcp/get_artifact',
     'artifact-mcp/get_artifact_list',
   ]
-model: [GPT-5.3-Codex (copilot)]
+model: [GPT-5.3-Codex (copilot), GPT-5.2-Codex (copilot), GPT-5.1-Codex-Max (copilot)]
 user-invokable: false   # for current stable 
 user-invocable: false   # insiders + upcoming; see https://github.com/microsoft/vscode/issues/296845
 disable-model-invocation: false
