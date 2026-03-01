@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -101,6 +102,36 @@ func TestCleanupStaleSocket_RemovesStaleSocketOnConnRefused(t *testing.T) {
 	if err := ln.Close(); err != nil {
 		t.Fatalf("close unix listener: %v", err)
 	}
+
+	if err := cleanupStaleSocket(socket); err != nil {
+		t.Fatalf("cleanup stale socket: %v", err)
+	}
+	if _, err := os.Stat(socket); !os.IsNotExist(err) {
+		t.Fatalf("expected socket to be removed, stat err=%v", err)
+	}
+}
+
+func TestCleanupStaleSocket_RemovesStaleSocketOnDialENOENT(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix socket-based test")
+	}
+
+	socket := tempUnixSocketPath(t, "ccsubagentsd-cleanup-")
+	ln, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatalf("listen unix: %v", err)
+	}
+	if err := ln.Close(); err != nil {
+		t.Fatalf("close unix listener: %v", err)
+	}
+
+	origDialTimeoutFn := dialTimeoutFn
+	dialTimeoutFn = func(network, address string, timeout time.Duration) (net.Conn, error) {
+		return nil, &net.OpError{Op: "dial", Net: network, Err: syscall.ENOENT}
+	}
+	t.Cleanup(func() {
+		dialTimeoutFn = origDialTimeoutFn
+	})
 
 	if err := cleanupStaleSocket(socket); err != nil {
 		t.Fatalf("cleanup stale socket: %v", err)

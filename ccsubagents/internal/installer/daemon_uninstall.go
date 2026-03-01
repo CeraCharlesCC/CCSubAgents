@@ -43,7 +43,11 @@ func (r *Runner) stopDaemonBeforeRemoval(ctx context.Context) error {
 		return fmt.Errorf("wait for daemon stop: %w", err)
 	}
 	if err := daemonctl.StopRegisteredProcesses(ctx, daemonStateDir, []string{"web", "mcp"}); err != nil {
-		return fmt.Errorf("stop registered daemon processes: %w", err)
+		if daemonctl.IsOnlyProcessRegistryMetadataIssues(err) {
+			r.reportWarning("Ignoring stale daemon process metadata", err.Error())
+		} else {
+			return fmt.Errorf("stop registered daemon processes: %w", err)
+		}
 	}
 
 	return nil
