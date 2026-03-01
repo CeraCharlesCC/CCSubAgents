@@ -30,7 +30,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22.x'
+          go-version-file: local-artifact/go.mod
 
       - name: Build release artifacts
         run: |

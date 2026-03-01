@@ -68,7 +68,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: ccsubagents/go.mod
+          go-version-file: local-artifact/go.mod
 
       - name: Cross-compile linux/arm64 binaries
         run: |
