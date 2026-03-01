@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	pathutil "github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/paths"
 	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/state"
 )
 
@@ -187,7 +188,7 @@ func (r *Runner) promptGlobalInstallTargets(ctx context.Context, home string, pa
 			}
 
 			for _, customPath := range customPaths {
-				resolved := resolveConfiguredPath(home, customPath)
+				resolved := pathutil.ResolveConfiguredPath(home, customPath)
 				if strings.TrimSpace(resolved) == "" {
 					continue
 				}

@@ -72,7 +72,7 @@ func listRolePIDs(stateDir, role string) (rolePIDListing, error) {
 
 		pid, isPIDFile, parseNameErr := parsePIDFileName(entry.Name())
 		if parseNameErr != nil {
-			listing.issues = append(listing.issues, fmt.Errorf("skip invalid pid filename %s: %w", path, parseNameErr))
+			listing.issues = append(listing.issues, fmt.Errorf("%w: skip invalid pid filename %s: %v", ErrProcessRegistryMetadata, path, parseNameErr))
 			continue
 		}
 		if !isPIDFile {
@@ -81,7 +81,7 @@ func listRolePIDs(stateDir, role string) (rolePIDListing, error) {
 
 		record, parseFileErr := parsePIDFile(path, pid)
 		if parseFileErr != nil {
-			listing.issues = append(listing.issues, fmt.Errorf("skip unreadable pid file %s: %w", path, parseFileErr))
+			listing.issues = append(listing.issues, fmt.Errorf("%w: skip unreadable pid file %s: %v", ErrProcessRegistryMetadata, path, parseFileErr))
 			continue
 		}
 

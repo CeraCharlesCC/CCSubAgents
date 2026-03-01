@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/daemonclient"
+	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/paths"
 )
 
 type daemonHealthClient interface {
@@ -25,7 +26,17 @@ var newDefaultHealthClient = func(stateDir string) (daemonHealthClient, error) {
 	return daemonclient.NewDefaultClient(stateDir, os.Getenv)
 }
 
+var (
+	startProcessFn    = startProcess
+	startReadyTimeout = 8 * time.Second
+	startPollInterval = 120 * time.Millisecond
+	startNow          = time.Now
+)
+
 func StartAndWait(ctx context.Context, stateDir, storeRoot string, disableAuth bool, stderr io.Writer) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if stderr == nil {
 		stderr = os.Stderr
 	}
@@ -39,7 +50,7 @@ func StartAndWait(ctx context.Context, stateDir, storeRoot string, disableAuth b
 	}
 	client := daemonClientWithToken(stateDir, token)
 	var fallbackClient *daemonclient.Client
-	if fallbackToken != "" {
+	if disableAuth && fallbackToken != "" {
 		fallbackClient = daemonClientWithToken(stateDir, fallbackToken)
 	}
 	if err := daemonReady(ctx, client); err == nil {
@@ -48,31 +59,52 @@ func StartAndWait(ctx context.Context, stateDir, storeRoot string, disableAuth b
 		}
 		return nil
 	}
-	if fallbackClient != nil {
+	if disableAuth && fallbackClient != nil {
 		if err := daemonReady(ctx, fallbackClient); err == nil {
-			return nil
+			if _, err := fallbackClient.Shutdown(ctx); err != nil && !IsDaemonStoppedOrUnavailable(err) {
+				return err
+			}
+			if err := WaitForStop(ctx, stateDir, 4*time.Second); err != nil {
+				return err
+			}
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if err := startProcessFn(stateDir, storeRoot, token, stderr); err != nil {
+				return err
+			}
+			return waitForStartReady(ctx, client, stateDir, disableAuth)
 		}
 	}
-	if err := startProcess(stateDir, storeRoot, token, stderr); err != nil {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
-	deadline := time.Now().Add(8 * time.Second)
+	if err := startProcessFn(stateDir, storeRoot, token, stderr); err != nil {
+		return err
+	}
+	return waitForStartReady(ctx, client, stateDir, disableAuth)
+}
+
+func waitForStartReady(ctx context.Context, client *daemonclient.Client, stateDir string, disableAuth bool) error {
+	deadline := startNow().Add(startReadyTimeout)
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err := daemonReady(ctx, client); err == nil {
 			if disableAuth {
 				return clearToken(stateDir)
 			}
 			return nil
 		}
-		if fallbackClient != nil {
-			if err := daemonReady(ctx, fallbackClient); err == nil {
-				return nil
-			}
-		}
-		if time.Now().After(deadline) {
+		if startNow().After(deadline) {
 			return errors.New("timed out waiting for daemon readiness")
 		}
-		time.Sleep(120 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(startPollInterval):
+		}
 	}
 }
 
@@ -114,7 +146,7 @@ func WaitForStop(ctx context.Context, stateDir string, timeout time.Duration) er
 		}
 
 		err := client.Health(ctx)
-		if err != nil && isStoppedHealthError(err) {
+		if err != nil && IsDaemonStoppedOrUnavailable(err) {
 			return nil
 		}
 		if err != nil {
@@ -126,24 +158,6 @@ func WaitForStop(ctx context.Context, stateDir string, timeout time.Duration) er
 		time.Sleep(120 * time.Millisecond)
 	}
 }
-
-func isStoppedHealthError(err error) bool {
-	var remoteErr *daemonclient.RemoteError
-	if !errors.As(err, &remoteErr) {
-		return false
-	}
-	msg := strings.ToLower(strings.TrimSpace(remoteErr.Message))
-	if strings.Contains(msg, "already stopped") || strings.Contains(msg, "already unavailable") {
-		return true
-	}
-	if remoteErr.Code != daemonclient.CodeServiceUnavailable {
-		return false
-	}
-	return strings.Contains(msg, "no such file or directory") ||
-		strings.Contains(msg, "connection refused") ||
-		strings.Contains(msg, "actively refused")
-}
-
 func startProcess(stateDir, storeRoot, token string, stderr io.Writer) error {
 	exePath, err := os.Executable()
 	if err != nil {
@@ -243,7 +257,7 @@ func resolveDaemonPath(exePath, home, goos string, getenv func(string) string, l
 		return sibling
 	}
 
-	configuredBinDir := resolveConfiguredPath(home, strings.TrimSpace(getenv("LOCAL_ARTIFACT_BIN_DIR")))
+	configuredBinDir := paths.ResolveConfiguredPath(home, strings.TrimSpace(getenv("LOCAL_ARTIFACT_BIN_DIR")))
 	if configuredBinDir != "" {
 		configuredPath := filepath.Join(configuredBinDir, name)
 		if pathExists(configuredPath) {
@@ -278,30 +292,6 @@ func pathExists(path string) bool {
 		return false
 	}
 	return !info.IsDir()
-}
-
-func resolveConfiguredPath(home, value string) string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return ""
-	}
-	if trimmed == "~" {
-		return filepath.Clean(home)
-	}
-	if strings.HasPrefix(trimmed, "~/") || strings.HasPrefix(trimmed, "~\\") {
-		remainder := strings.TrimLeft(trimmed[2:], `/\`)
-		if remainder == "" {
-			return filepath.Clean(home)
-		}
-		return filepath.Join(home, remainder)
-	}
-	if filepath.IsAbs(trimmed) {
-		return filepath.Clean(trimmed)
-	}
-	if os.PathSeparator == '\\' && (strings.HasPrefix(trimmed, `\`) || strings.HasPrefix(trimmed, "/")) {
-		return filepath.Clean(trimmed)
-	}
-	return filepath.Join(home, trimmed)
 }
 
 func defaultDaemonSocket(stateDir string) string {

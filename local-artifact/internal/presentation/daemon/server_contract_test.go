@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/core/workspaces"
@@ -160,5 +161,37 @@ func TestServerContract_MethodNotAllowedUsesEnvelopeForHealthEndpoint(t *testing
 	}
 	if env.Error == nil || env.Error.Code != CodeMethodNotAllowed {
 		t.Fatalf("expected method-not-allowed envelope error, got %+v", env.Error)
+	}
+}
+
+func TestServerRejectsOversizedJSONBody_NotTruncationEOF(t *testing.T) {
+	engine, err := NewEngine(t.TempDir())
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	srv := NewServer(engine, "test")
+	srv.maxRequestBytes = 64
+
+	body := `{"workspace":{"workspaceID":"global"},"name":"plan/oversized","text":"ok"}` + strings.Repeat(" ", 80)
+	req := httptest.NewRequest(http.MethodPost, "/daemon/v1/artifacts/save_text", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	srv.Routes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status mismatch: got=%d want=%d body=%s", rr.Code, http.StatusBadRequest, rr.Body.String())
+	}
+	var env Envelope
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode envelope: %v body=%q", err, rr.Body.String())
+	}
+	if env.OK {
+		t.Fatalf("expected ok=false, got %+v", env)
+	}
+	if env.Error == nil || env.Error.Code != CodeInvalidInput {
+		t.Fatalf("expected invalid-input envelope error, got %+v", env.Error)
 	}
 }

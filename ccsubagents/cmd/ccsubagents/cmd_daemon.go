@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -37,7 +36,7 @@ func runDaemon(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		if err := client.Health(context.Background()); err != nil {
-			if isStoppedStatusError(err) {
+			if daemonctl.IsDaemonStoppedOrUnavailable(err) {
 				fmt.Fprintf(stdout, "daemon status: stopped\nstate dir: %s\n", stateDir)
 				return 0
 			}
@@ -70,7 +69,7 @@ func runDaemon(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		if _, err := client.Shutdown(context.Background()); err != nil && !isAlreadyStoppedRemoteError(err) {
+		if _, err := client.Shutdown(context.Background()); err != nil && !daemonctl.IsDaemonStoppedOrUnavailable(err) {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
@@ -88,30 +87,6 @@ func runDaemon(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "unknown daemon subcommand %q\n", sub)
 		return 2
 	}
-}
-
-func isAlreadyStoppedRemoteError(err error) bool {
-	var re *daemonclient.RemoteError
-	if !errors.As(err, &re) {
-		return false
-	}
-	msg := strings.ToLower(strings.TrimSpace(re.Message))
-	return strings.Contains(msg, "already stopped") || strings.Contains(msg, "already unavailable")
-}
-
-func isStoppedStatusError(err error) bool {
-	var re *daemonclient.RemoteError
-	if !errors.As(err, &re) {
-		return false
-	}
-	if re.Code != daemonclient.CodeServiceUnavailable {
-		return false
-	}
-	msg := strings.ToLower(strings.TrimSpace(re.Message))
-	return strings.Contains(msg, "no such file or directory") ||
-		strings.Contains(msg, "connection refused") ||
-		strings.Contains(msg, "actively refused") ||
-		strings.Contains(msg, "already unavailable")
 }
 
 func resolveStoreRoot(home string) string {

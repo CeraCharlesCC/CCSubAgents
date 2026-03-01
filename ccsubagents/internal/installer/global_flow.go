@@ -688,6 +688,16 @@ func (r *Runner) installOrUpdate(ctx context.Context, isUpdate bool) (retErr err
 		if previousGlobal == nil {
 			r.reportDetail("no previously tracked files; skipped stale cleanup")
 		} else {
+			daemonPath := filepath.Join(paths.binaryDir, ccsubagentsdBinaryName(goos))
+			if containsCleanPath(previousGlobal.Managed.Files, daemonPath) && !containsCleanPath(binaryPaths, daemonPath) {
+				if err := mutations.SnapshotFile(daemonPath); err != nil {
+					return err
+				}
+				if err := os.Remove(daemonPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+					return fmt.Errorf("remove stale managed daemon binary %s: %w", daemonPath, err)
+				}
+			}
+
 			if err := ctx.Err(); err != nil {
 				return err
 			}
@@ -748,6 +758,9 @@ func (r *Runner) uninstall(ctx context.Context) error {
 		r.reportStepOK("Checked tracked installation state", "found")
 	} else {
 		r.reportStepOK("Checked tracked installation state", fmt.Sprintf("%s found", tracked.ReleaseTag))
+	}
+	if err := r.stopDaemonBeforeRemoval(ctx); err != nil {
+		return err
 	}
 
 	agentsDir := filepath.Join(layout.StateDir, "agents")

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -73,6 +74,112 @@ func TestWebBootstrapHint_RedactsTokenValue(t *testing.T) {
 	}
 	if !strings.Contains(hint, tokenFilePath(storeRoot)) {
 		t.Fatalf("bootstrap hint should reference token file path, got %q", hint)
+	}
+}
+
+func tempUnixSocketPath(t *testing.T, prefix string) string {
+	t.Helper()
+	socketDir, err := os.MkdirTemp("/tmp", prefix)
+	if err != nil {
+		t.Fatalf("create socket temp dir: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(socketDir)
+	})
+	return filepath.Join(socketDir, "daemon.sock")
+}
+
+func TestCleanupStaleSocket_RemovesStaleSocketOnConnRefused(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix socket-based test")
+	}
+
+	socket := tempUnixSocketPath(t, "ccsubagentsd-cleanup-")
+	ln, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatalf("listen unix: %v", err)
+	}
+	if err := ln.Close(); err != nil {
+		t.Fatalf("close unix listener: %v", err)
+	}
+
+	if err := cleanupStaleSocket(socket); err != nil {
+		t.Fatalf("cleanup stale socket: %v", err)
+	}
+	if _, err := os.Stat(socket); !os.IsNotExist(err) {
+		t.Fatalf("expected socket to be removed, stat err=%v", err)
+	}
+}
+
+func TestCleanupStaleSocket_RemovesStaleSocketOnDialENOENT(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix socket-based test")
+	}
+
+	socket := tempUnixSocketPath(t, "ccsubagentsd-cleanup-")
+	ln, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatalf("listen unix: %v", err)
+	}
+	if err := ln.Close(); err != nil {
+		t.Fatalf("close unix listener: %v", err)
+	}
+
+	origDialTimeoutFn := dialTimeoutFn
+	dialTimeoutFn = func(network, address string, timeout time.Duration) (net.Conn, error) {
+		return nil, &net.OpError{Op: "dial", Net: network, Err: syscall.ENOENT}
+	}
+	t.Cleanup(func() {
+		dialTimeoutFn = origDialTimeoutFn
+	})
+
+	if err := cleanupStaleSocket(socket); err != nil {
+		t.Fatalf("cleanup stale socket: %v", err)
+	}
+	if _, err := os.Stat(socket); !os.IsNotExist(err) {
+		t.Fatalf("expected socket to be removed, stat err=%v", err)
+	}
+}
+
+func TestCleanupStaleSocket_DoesNotRemoveNonSocketFile(t *testing.T) {
+	socket := filepath.Join(t.TempDir(), "daemon.sock")
+	if err := os.WriteFile(socket, []byte("not-a-socket"), 0o600); err != nil {
+		t.Fatalf("write regular file: %v", err)
+	}
+
+	err := cleanupStaleSocket(socket)
+	if err == nil {
+		t.Fatal("expected cleanup to reject non-socket path")
+	}
+	if _, statErr := os.Stat(socket); statErr != nil {
+		t.Fatalf("expected regular file to remain, stat err=%v", statErr)
+	}
+}
+
+func TestCleanupStaleSocket_AlreadyListeningDoesNotRemove(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix socket-based test")
+	}
+
+	socket := tempUnixSocketPath(t, "ccsubagentsd-cleanup-")
+	ln, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatalf("listen unix: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = ln.Close()
+	})
+
+	err = cleanupStaleSocket(socket)
+	if err == nil {
+		t.Fatal("expected apiAlreadyListeningError")
+	}
+	var alreadyErr *apiAlreadyListeningError
+	if !errors.As(err, &alreadyErr) {
+		t.Fatalf("expected apiAlreadyListeningError, got %v", err)
+	}
+	if _, statErr := os.Stat(socket); statErr != nil {
+		t.Fatalf("expected socket to remain, stat err=%v", statErr)
 	}
 }
 

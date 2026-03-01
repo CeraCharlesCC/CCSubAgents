@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/files"
+	pathutil "github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/paths"
 )
 
 const (
@@ -67,6 +68,7 @@ type Runner struct {
 	runCommand            func(context.Context, string, ...string) ([]byte, error)
 	getenv                func(string) string
 	installBinary         func(string, string) error
+	stopDaemonFn          func(context.Context) error
 	statusOut             io.Writer
 	promptIn              io.Reader
 	promptOut             io.Writer
@@ -200,16 +202,16 @@ func resolveInstallPaths(home string) installPaths {
 		},
 	}
 
-	if override := resolveConfiguredPath(home, os.Getenv(binaryInstallDirEnv)); override != "" {
+	if override := pathutil.ResolveConfiguredPath(home, os.Getenv(binaryInstallDirEnv)); override != "" {
 		paths.binaryDir = override
 	}
-	if override := resolveConfiguredPath(home, os.Getenv(settingsPathEnv)); override != "" {
+	if override := pathutil.ResolveConfiguredPath(home, os.Getenv(settingsPathEnv)); override != "" {
 		paths.desktopStable.settingsPath = override
 		paths.desktopInsiders.settingsPath = override
 		paths.stable.settingsPath = override
 		paths.insiders.settingsPath = override
 	}
-	if override := resolveConfiguredPath(home, os.Getenv(mcpConfigPathEnv)); override != "" {
+	if override := pathutil.ResolveConfiguredPath(home, os.Getenv(mcpConfigPathEnv)); override != "" {
 		paths.desktopStable.mcpPath = override
 		paths.desktopInsiders.mcpPath = override
 		paths.stable.mcpPath = override
@@ -241,33 +243,6 @@ func localArtifactBundleAssetName(goos, goarch string) string {
 
 func installAssetNamesForRuntime() []string {
 	return []string{assetAgentsZip, localArtifactBundleAssetName(runtime.GOOS, runtime.GOARCH)}
-}
-
-func resolveConfiguredPath(home, value string) string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return ""
-	}
-	if trimmed == "~" {
-		return filepath.Clean(home)
-	}
-	if strings.HasPrefix(trimmed, "~/") || strings.HasPrefix(trimmed, "~\\") {
-		remainder := strings.TrimLeft(trimmed[2:], `/\`)
-		if remainder == "" {
-			return filepath.Clean(home)
-		}
-		return filepath.Join(home, remainder)
-	}
-	if filepath.IsAbs(trimmed) {
-		return filepath.Clean(trimmed)
-	}
-	// On Windows, a leading slash or backslash is a rooted path on the current
-	// drive (e.g. "\tmp\file.json"), which filepath.IsAbs reports as non-absolute.
-	// Treat it as a direct override rather than joining it under home.
-	if os.PathSeparator == '\\' && (strings.HasPrefix(trimmed, `\`) || strings.HasPrefix(trimmed, "/")) {
-		return filepath.Clean(trimmed)
-	}
-	return filepath.Join(home, trimmed)
 }
 
 func toHomeTildePath(home, path string) string {

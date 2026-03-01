@@ -361,7 +361,7 @@ func ccsubagentsdPath(exePath, home, goos string, getenv func(string) string, lo
 		return sibling
 	}
 
-	configuredBinDir := resolveConfiguredPath(home, strings.TrimSpace(getenv("LOCAL_ARTIFACT_BIN_DIR")))
+	configuredBinDir := config.ResolveConfiguredPath(home, strings.TrimSpace(getenv("LOCAL_ARTIFACT_BIN_DIR")))
 	if configuredBinDir != "" {
 		configuredPath := filepath.Join(configuredBinDir, name)
 		if pathExists(configuredPath) {
@@ -404,28 +404,4 @@ func readPersistedDaemonToken(stateDir string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(b))
-}
-
-func resolveConfiguredPath(home, value string) string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return ""
-	}
-	if trimmed == "~" {
-		return filepath.Clean(home)
-	}
-	if strings.HasPrefix(trimmed, "~/") || strings.HasPrefix(trimmed, "~\\") {
-		remainder := strings.TrimLeft(trimmed[2:], `/\`)
-		if remainder == "" {
-			return filepath.Clean(home)
-		}
-		return filepath.Join(home, remainder)
-	}
-	if filepath.IsAbs(trimmed) {
-		return filepath.Clean(trimmed)
-	}
-	if os.PathSeparator == '\\' && (strings.HasPrefix(trimmed, `\`) || strings.HasPrefix(trimmed, "/")) {
-		return filepath.Clean(trimmed)
-	}
-	return filepath.Join(home, trimmed)
 }

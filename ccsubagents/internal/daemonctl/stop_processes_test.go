@@ -61,6 +61,9 @@ func TestStopRegisteredProcesses_ReportsInvalidPIDFileNamesWithoutDeleting(t *te
 	if err == nil {
 		t.Fatalf("expected error for invalid pid filename")
 	}
+	if !IsOnlyProcessRegistryMetadataIssues(err) {
+		t.Fatalf("expected metadata-only issue classification, got %v", err)
+	}
 	if !strings.Contains(err.Error(), "abc.pid") {
 		t.Fatalf("expected invalid pid filename to be reported, got %v", err)
 	}
@@ -89,6 +92,9 @@ func TestStopRegisteredProcesses_ReportsInvalidPIDFilePayloadWithoutDeleting(t *
 	err := StopRegisteredProcesses(context.Background(), stateDir, []string{"web"})
 	if err == nil {
 		t.Fatalf("expected error for invalid pid payload")
+	}
+	if !IsOnlyProcessRegistryMetadataIssues(err) {
+		t.Fatalf("expected metadata-only issue classification, got %v", err)
 	}
 	if !strings.Contains(err.Error(), "707.pid") {
 		t.Fatalf("expected invalid pid payload to be reported, got %v", err)
@@ -162,6 +168,9 @@ func TestStopRegisteredProcesses_IdentityLookupErrorKeepsPIDFile(t *testing.T) {
 	err := StopRegisteredProcesses(context.Background(), stateDir, []string{"web"})
 	if err == nil {
 		t.Fatalf("expected identity lookup error")
+	}
+	if IsOnlyProcessRegistryMetadataIssues(err) {
+		t.Fatalf("expected non-metadata classification for identity lookup failure, got %v", err)
 	}
 	if !strings.Contains(err.Error(), "resolve web pid 303 identity") {
 		t.Fatalf("expected identity lookup failure in error, got %v", err)
@@ -334,6 +343,9 @@ func TestStopRegisteredProcesses_AggregatesErrorsAndContinues(t *testing.T) {
 	err := StopRegisteredProcesses(context.Background(), stateDir, []string{"web"})
 	if err == nil {
 		t.Fatalf("expected aggregated error when one pid fails to stop")
+	}
+	if IsOnlyProcessRegistryMetadataIssues(err) {
+		t.Fatalf("expected non-metadata classification for stop failure, got %v", err)
 	}
 	if !strings.Contains(err.Error(), "pid 111") {
 		t.Fatalf("expected error to mention failed pid 111, got %v", err)

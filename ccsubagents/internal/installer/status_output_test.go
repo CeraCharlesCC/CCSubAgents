@@ -61,7 +61,10 @@ func statusTestManager(home string, client *http.Client, statusOut io.Writer) *R
 		homeDir:    func() (string, error) { return home, nil },
 		lookPath:   func(string) (string, error) { return "/usr/bin/gh", nil },
 		runCommand: func(context.Context, string, ...string) ([]byte, error) { return []byte("ok"), nil },
-		statusOut:  statusOut,
+		stopDaemonFn: func(context.Context) error {
+			return nil
+		},
+		statusOut: statusOut,
 		getenv: func(key string) string {
 			if key != "PATH" {
 				return ""

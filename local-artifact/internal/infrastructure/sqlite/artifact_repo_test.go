@@ -179,3 +179,144 @@ func TestArtifactRepository_ListVersions_UsesParentChainOrderForSameSecondWrites
 		t.Fatalf("unexpected ListVersions prevRef chain: %+v", versions)
 	}
 }
+
+func TestArtifactRepository_DeleteByHistoricalRef_DoesNotTombstoneHead(t *testing.T) {
+	repo, err := NewArtifactRepository(t.TempDir())
+	if err != nil {
+		t.Fatalf("new repo: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+	ctx := context.Background()
+
+	firstData := []byte("first")
+	first := makeVersion("20260216T120010Z-aaaaaaaaaaaaaaaa", "plan/delete-history", "text/plain; charset=utf-8", firstData, time.Now())
+	firstOut, err := repo.Save(ctx, first, firstData, artifacts.SaveOptions{})
+	if err != nil {
+		t.Fatalf("save first: %v", err)
+	}
+
+	secondData := []byte("second")
+	second := makeVersion("20260216T120011Z-bbbbbbbbbbbbbbbb", "plan/delete-history", "text/plain; charset=utf-8", secondData, time.Now().Add(time.Second))
+	secondOut, err := repo.Save(ctx, second, secondData, artifacts.SaveOptions{ExpectedPrevRef: firstOut.Ref})
+	if err != nil {
+		t.Fatalf("save second: %v", err)
+	}
+
+	_, err = repo.Delete(ctx, artifacts.Selector{Ref: firstOut.Ref})
+	if !errors.Is(err, artifacts.ErrNotFound) {
+		t.Fatalf("expected delete by historical ref to return ErrNotFound, got %v", err)
+	}
+
+	resolved, err := repo.Resolve(ctx, "plan/delete-history")
+	if err != nil {
+		t.Fatalf("resolve after historical delete attempt: %v", err)
+	}
+	if resolved != secondOut.Ref {
+		t.Fatalf("expected head ref to remain %q, got %q", secondOut.Ref, resolved)
+	}
+}
+
+func TestArtifactRepository_DeleteByHeadRef_Tombstones(t *testing.T) {
+	repo, err := NewArtifactRepository(t.TempDir())
+	if err != nil {
+		t.Fatalf("new repo: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+	ctx := context.Background()
+
+	data := []byte("head")
+	version := makeVersion("20260216T120012Z-cccccccccccccccc", "plan/delete-head", "text/plain; charset=utf-8", data, time.Now())
+	out, err := repo.Save(ctx, version, data, artifacts.SaveOptions{})
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	tomb, err := repo.Delete(ctx, artifacts.Selector{Ref: out.Ref})
+	if err != nil {
+		t.Fatalf("delete by head ref: %v", err)
+	}
+	if !tomb.Tombstone {
+		t.Fatalf("expected tombstone result, got %+v", tomb)
+	}
+	if tomb.PrevRef != out.Ref {
+		t.Fatalf("expected tombstone prevRef=%q, got %q", out.Ref, tomb.PrevRef)
+	}
+
+	if _, err := repo.Resolve(ctx, "plan/delete-head"); !errors.Is(err, artifacts.ErrNotFound) {
+		t.Fatalf("expected resolve ErrNotFound after delete-by-ref tombstone, got %v", err)
+	}
+}
+
+func TestArtifactRepository_List_LiteralPercentPrefix(t *testing.T) {
+	repo, err := NewArtifactRepository(t.TempDir())
+	if err != nil {
+		t.Fatalf("new repo: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+	ctx := context.Background()
+
+	dataA := []byte("a")
+	artA := makeVersion("20260216T120013Z-dddddddddddddddd", "plan/%literal", "text/plain; charset=utf-8", dataA, time.Now())
+	if _, err := repo.Save(ctx, artA, dataA, artifacts.SaveOptions{}); err != nil {
+		t.Fatalf("save percent literal: %v", err)
+	}
+
+	dataB := []byte("b")
+	artB := makeVersion("20260216T120014Z-eeeeeeeeeeeeeeee", "plan/abc", "text/plain; charset=utf-8", dataB, time.Now().Add(time.Second))
+	if _, err := repo.Save(ctx, artB, dataB, artifacts.SaveOptions{}); err != nil {
+		t.Fatalf("save non-matching: %v", err)
+	}
+
+	listed, err := repo.List(ctx, "plan/%", 10)
+	if err != nil {
+		t.Fatalf("list with percent literal prefix: %v", err)
+	}
+	if len(listed) != 1 || listed[0].Name != "plan/%literal" {
+		t.Fatalf("expected only plan/%%literal, got %+v", listed)
+	}
+}
+
+func TestArtifactRepository_List_LiteralUnderscorePrefix(t *testing.T) {
+	repo, err := NewArtifactRepository(t.TempDir())
+	if err != nil {
+		t.Fatalf("new repo: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+	ctx := context.Background()
+
+	dataA := []byte("a")
+	artA := makeVersion("20260216T120015Z-ffffffffffffffff", "plan/_literal", "text/plain; charset=utf-8", dataA, time.Now())
+	if _, err := repo.Save(ctx, artA, dataA, artifacts.SaveOptions{}); err != nil {
+		t.Fatalf("save underscore literal: %v", err)
+	}
+
+	dataB := []byte("b")
+	artB := makeVersion("20260216T120016Z-0000000000000000", "plan/abc", "text/plain; charset=utf-8", dataB, time.Now().Add(time.Second))
+	if _, err := repo.Save(ctx, artB, dataB, artifacts.SaveOptions{}); err != nil {
+		t.Fatalf("save non-matching: %v", err)
+	}
+
+	listed, err := repo.List(ctx, "plan/_", 10)
+	if err != nil {
+		t.Fatalf("list with underscore literal prefix: %v", err)
+	}
+	if len(listed) != 1 || listed[0].Name != "plan/_literal" {
+		t.Fatalf("expected only plan/_literal, got %+v", listed)
+	}
+}
+
+func TestEscapeLikePrefix_EscapesSpecialCharacters(t *testing.T) {
+	got := escapeLikePrefix(`a%_b\\c`)
+	want := `a\%\_b\\\\c`
+	if got != want {
+		t.Fatalf("escapeLikePrefix mismatch: got=%q want=%q", got, want)
+	}
+}

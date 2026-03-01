@@ -19,6 +19,8 @@ import (
 	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/presentation/web"
 )
 
+var dialTimeoutFn = net.DialTimeout
+
 type RunConfig struct {
 	StoreRoot   string
 	StateDir    string
@@ -225,18 +227,26 @@ func listenAPI(cfg RunConfig) (net.Listener, string, error) {
 }
 
 func cleanupStaleSocket(socket string) error {
-	if _, err := os.Stat(socket); err != nil {
+	info, err := os.Lstat(socket)
+	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
 		return err
 	}
+	if info.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("refusing to remove non-socket path: %s", socket)
+	}
 
-	conn, err := net.DialTimeout("unix", socket, 200*time.Millisecond)
+	conn, err := dialTimeoutFn("unix", socket, 200*time.Millisecond)
 	if err == nil {
 		_ = conn.Close()
 		return &apiAlreadyListeningError{socket: socket}
 	}
+
+	// A stale unix socket can fail with more than ECONNREFUSED (for example
+	// ENOENT if it disappears between lstat and dial). Treat any dial failure as
+	// stale and retry startup by removing the socket path.
 	if err := os.Remove(socket); err != nil && !os.IsNotExist(err) {
 		return err
 	}

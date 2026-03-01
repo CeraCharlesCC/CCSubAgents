@@ -206,6 +206,9 @@ func (r *Runner) uninstallLocal(ctx context.Context) error {
 			return err
 		}
 	}
+	if err := r.stopDaemonBeforeRemoval(ctx); err != nil {
+		return err
+	}
 
 	managedDir := filepath.Join(location.installRoot, config.LocalManagedDirRelativePath)
 	mcpBinaryName, webBinaryName := localArtifactBinaryNames(runtime.GOOS)
@@ -392,6 +395,17 @@ func (r *Runner) installOrUpdateLocal(ctx context.Context, cfg localInstallConfi
 		return err
 	}
 	r.reportStepOK("Installed local binaries", fmt.Sprintf("→ %s", filepath.ToSlash(managedDir)))
+	if cfg.isUpdate && cfg.previous != nil {
+		daemonPath := filepath.Join(managedDir, ccsubagentsdBinaryName(goos))
+		if containsCleanPath(cfg.previous.Managed.Files, daemonPath) && !containsCleanPath(binaryPaths, daemonPath) {
+			if err := mutations.SnapshotFile(daemonPath); err != nil {
+				return err
+			}
+			if err := os.Remove(daemonPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("remove stale managed local daemon binary %s: %w", daemonPath, err)
+			}
+		}
+	}
 
 	extractedFiles := []string{}
 	extractedDirs := []string{}
