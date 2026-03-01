@@ -48,10 +48,6 @@ func startShutdownServiceUnavailableDaemon(t *testing.T, socketPath string, shut
 			return
 		}
 		writeDaemonErrorEnvelope(w, http.StatusServiceUnavailable, daemonclient.CodeServiceUnavailable, shutdownMessage)
-		go func() {
-			_ = server.Close()
-			_ = os.Remove(socketPath)
-		}()
 	})
 	mux.HandleFunc("/daemon/v1/health", func(w http.ResponseWriter, r *http.Request) {
 		healthCalls.Add(1)
