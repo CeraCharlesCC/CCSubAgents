@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/core/artifacts"
 )
@@ -136,17 +138,21 @@ func TestCSRFTokenFromRequest_IgnoresInvalidAndReturnsValid(t *testing.T) {
 }
 
 func TestFormRedirectContextDefaultsAndTrim(t *testing.T) {
-	gotSubspace, gotPrefix, gotLimit := formRedirectContext(url.Values{
+	gotSubspace, gotPrefix, gotSort, gotLimit := formRedirectContext(url.Values{
 		"subspace": {" GLOBAL "},
-		"prefix":   {"  plan/next "},
+		"prefix":   {"  plan/next, report/ "},
+		"sort":     {" time_desc "},
 		"limit":    {"   "},
 	})
 
 	if gotSubspace != "GLOBAL" {
 		t.Fatalf("unexpected subspace: %q", gotSubspace)
 	}
-	if gotPrefix != "plan/next" {
+	if gotPrefix != "plan/next, report/" {
 		t.Fatalf("unexpected prefix: %q", gotPrefix)
+	}
+	if gotSort != listSortTimeDesc {
+		t.Fatalf("unexpected sort: %q", gotSort)
 	}
 	if gotLimit != "200" {
 		t.Fatalf("unexpected default limit: %q", gotLimit)
@@ -154,7 +160,7 @@ func TestFormRedirectContextDefaultsAndTrim(t *testing.T) {
 }
 
 func TestIndexRedirectBaseDefaultsLimitAndEscapes(t *testing.T) {
-	base := indexRedirectBase("global", "a/b c", "")
+	base := indexRedirectBase("global", "a/b c,report/", listSortTimeAsc, "")
 	u, err := url.Parse(base)
 	if err != nil {
 		t.Fatalf("parse redirect base: %v", err)
@@ -163,10 +169,40 @@ func TestIndexRedirectBaseDefaultsLimitAndEscapes(t *testing.T) {
 	if q.Get("subspace") != "global" {
 		t.Fatalf("unexpected subspace query: %q", q.Get("subspace"))
 	}
-	if q.Get("prefix") != "a/b c" {
+	if q.Get("prefix") != "a/b c,report/" {
 		t.Fatalf("unexpected prefix query: %q", q.Get("prefix"))
+	}
+	if q.Get("sort") != listSortTimeAsc {
+		t.Fatalf("unexpected sort query: %q", q.Get("sort"))
 	}
 	if q.Get("limit") != "200" {
 		t.Fatalf("unexpected limit query: %q", q.Get("limit"))
+	}
+}
+
+func TestSplitPrefixFilters_DedupesAndTrims(t *testing.T) {
+	got := splitPrefixFilters(" plan/, report/ , plan/ , ,image/ ")
+	want := []string{"plan/", "report/", "image/"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("splitPrefixFilters mismatch\nwant=%v\ngot=%v", want, got)
+	}
+}
+
+func TestSortArtifactVersions_ByTimeAndName(t *testing.T) {
+	base := time.Date(2026, time.February, 20, 10, 0, 0, 0, time.UTC)
+	items := []artifacts.ArtifactVersion{
+		{Name: "zeta", CreatedAt: base},
+		{Name: "alpha", CreatedAt: base.Add(2 * time.Minute)},
+		{Name: "beta", CreatedAt: base.Add(2 * time.Minute)},
+	}
+
+	sortArtifactVersions(items, listSortTimeDesc)
+	if items[0].Name != "alpha" || items[1].Name != "beta" || items[2].Name != "zeta" {
+		t.Fatalf("unexpected time_desc order: %+v", []string{items[0].Name, items[1].Name, items[2].Name})
+	}
+
+	sortArtifactVersions(items, listSortTimeAsc)
+	if items[0].Name != "zeta" || items[1].Name != "alpha" || items[2].Name != "beta" {
+		t.Fatalf("unexpected time_asc order: %+v", []string{items[0].Name, items[1].Name, items[2].Name})
 	}
 }

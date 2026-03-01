@@ -653,7 +653,14 @@
           </select>
         </label>
         <label>Prefix
-          <input type="text" name="prefix" value="{{.Prefix}}" placeholder="plan/ or image/">
+          <input type="text" name="prefix" value="{{.Prefix}}" placeholder="plan/, report/">
+        </label>
+        <label>Sort
+          <select name="sort">
+            <option value="name_asc" {{if eq .Sort "name_asc"}}selected{{end}}>Name (A-Z)</option>
+            <option value="time_desc" {{if eq .Sort "time_desc"}}selected{{end}}>Time (newest first)</option>
+            <option value="time_asc" {{if eq .Sort "time_asc"}}selected{{end}}>Time (oldest first)</option>
+          </select>
         </label>
         <label>Limit
           <input type="number" name="limit" min="1" max="1000" value="{{.Limit}}">
@@ -666,6 +673,7 @@
         <form class="insert" id="insert-form" method="post" action="/insert" enctype="multipart/form-data">
           <input type="hidden" name="subspace" value="{{.Subspace}}">
           <input type="hidden" name="prefix" value="{{.Prefix}}">
+          <input type="hidden" name="sort" value="{{.Sort}}">
           <input type="hidden" name="limit" value="{{.Limit}}">
           <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
           <label>Name
@@ -695,6 +703,7 @@
           <form id="bulk-delete-form" method="post" action="/delete">
             <input type="hidden" name="subspace" value="{{.Subspace}}">
             <input type="hidden" name="prefix" value="{{.Prefix}}">
+            <input type="hidden" name="sort" value="{{.Sort}}">
             <input type="hidden" name="limit" value="{{.Limit}}">
             <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
             <div id="selected-inputs"></div>
@@ -704,7 +713,7 @@
               <span class="selection-count" id="selection-count">0 selected</span>
             </div>
           </form>
-          <p class="workflow-hint">Click rows to select. Use <code>Shift</code> for ranges, <code>Ctrl/Cmd</code> to toggle, and <code>Esc</code> to clear.</p>
+          <p class="workflow-hint">Prefix supports comma-separated OR filters (example: <code>plan/, report/</code>). Click rows to select. Use <code>Shift</code> for ranges, <code>Ctrl/Cmd</code> to toggle, and <code>Esc</code> to clear.</p>
 
           <div class="table-wrap">
             <table>

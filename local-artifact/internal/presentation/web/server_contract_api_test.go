@@ -108,6 +108,26 @@ func TestAPIArtifactsListWithoutSubspaceDefaultsToGlobal(t *testing.T) {
 	}
 }
 
+func TestAPIArtifactsListSupportsCommaSeparatedPrefixFilters(t *testing.T) {
+	h := newWebHarness(t)
+	h.mustSaveText(globalSubspaceSelector, "plan/item-a", "a")
+	h.mustSaveText(globalSubspaceSelector, "report/item-b", "b")
+	h.mustSaveText(globalSubspaceSelector, "misc/item-c", "c")
+
+	rr := h.request(http.MethodGet, "/api/artifacts?subspace=global&prefix=plan/,report/", nil, nil)
+	assertStatus(t, rr, http.StatusOK)
+
+	res := decodeJSON[struct {
+		Items []artifacts.Artifact `json:"items"`
+	}](t, rr)
+	if len(res.Items) != 2 {
+		t.Fatalf("expected 2 items for comma-separated prefix filters, got %d", len(res.Items))
+	}
+	if res.Items[0].Name != "plan/item-a" || res.Items[1].Name != "report/item-b" {
+		t.Fatalf("unexpected items order/content: %+v", []string{res.Items[0].Name, res.Items[1].Name})
+	}
+}
+
 func TestAPIDeleteSupportsMultipleNames(t *testing.T) {
 	h := newWebHarness(t)
 	h.mustSaveText(globalSubspaceSelector, "api/del-a", "a")

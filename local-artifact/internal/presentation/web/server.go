@@ -152,6 +152,7 @@ type pageData struct {
 	Subspaces   []string
 	Subspace    string
 	Prefix      string
+	Sort        string
 	Limit       int
 	CSRFToken   string
 	Message     string
@@ -169,6 +170,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	subspaces, err := s.discoverSubspaces()
 	if err != nil {
 		renderIndex(w, r, pageData{
+			Sort:        listSortNameAsc,
 			Limit:       200,
 			Error:       err.Error(),
 			GeneratedAt: time.Now().UTC().Format(time.RFC3339),
@@ -182,6 +184,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	prefix := strings.TrimSpace(r.URL.Query().Get("prefix"))
+	sortMode := normalizeListSort(r.URL.Query().Get("sort"))
 	limit := 200
 	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
 		parsed, parseErr := strconv.Atoi(raw)
@@ -190,6 +193,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 				Subspaces:   subspaces,
 				Subspace:    subspace,
 				Prefix:      prefix,
+				Sort:        sortMode,
 				Limit:       limit,
 				Error:       "limit must be a valid integer",
 				GeneratedAt: time.Now().UTC().Format(time.RFC3339),
@@ -204,6 +208,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 			Subspaces:   subspaces,
 			Subspace:    subspace,
 			Prefix:      prefix,
+			Sort:        sortMode,
 			Limit:       limit,
 			Error:       "subspace must be 64 lowercase hex or global",
 			GeneratedAt: time.Now().UTC().Format(time.RFC3339),
@@ -215,6 +220,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 			Subspaces:   subspaces,
 			Subspace:    subspace,
 			Prefix:      prefix,
+			Sort:        sortMode,
 			Limit:       limit,
 			Error:       "selected subspace not found",
 			GeneratedAt: time.Now().UTC().Format(time.RFC3339),
@@ -230,18 +236,20 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 				Subspaces:   subspaces,
 				Subspace:    subspace,
 				Prefix:      prefix,
+				Sort:        sortMode,
 				Limit:       limit,
 				Error:       svcErr.Error(),
 				GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 			})
 			return
 		}
-		arts, listErr := svc.List(r.Context(), prefix, limit)
+		arts, listErr := listArtifacts(r.Context(), svc, prefix, sortMode, limit)
 		if listErr != nil {
 			renderIndex(w, r, pageData{
 				Subspaces:   subspaces,
 				Subspace:    subspace,
 				Prefix:      prefix,
+				Sort:        sortMode,
 				Limit:       limit,
 				Error:       listErr.Error(),
 				GeneratedAt: time.Now().UTC().Format(time.RFC3339),
@@ -270,6 +278,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		Subspaces:   subspaces,
 		Subspace:    subspace,
 		Prefix:      prefix,
+		Sort:        sortMode,
 		Limit:       limit,
 		Items:       items,
 		Message:     message,
@@ -288,8 +297,8 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	subspace, prefix, limitRaw := formRedirectContext(r.Form)
-	redirectBase := indexRedirectBase(subspace, prefix, limitRaw)
+	subspace, prefix, sortMode, limitRaw := formRedirectContext(r.Form)
+	redirectBase := indexRedirectBase(subspace, prefix, sortMode, limitRaw)
 	if err := validateCSRFToken(r); err != nil {
 		http.Redirect(w, r, redirectBase+"&err="+url.QueryEscape(err.Error()), http.StatusSeeOther)
 		return
@@ -379,15 +388,15 @@ func (s *Server) handleInsert(w http.ResponseWriter, r *http.Request) {
 		if errors.As(err, &maxErr) {
 			errMsg = "upload too large (max 10 MiB)"
 		}
-		http.Redirect(w, r, indexRedirectBase("", "", "")+"&err="+url.QueryEscape(errMsg), http.StatusSeeOther)
+		http.Redirect(w, r, indexRedirectBase("", "", listSortNameAsc, "")+"&err="+url.QueryEscape(errMsg), http.StatusSeeOther)
 		return
 	}
 	if r.MultipartForm != nil {
 		defer r.MultipartForm.RemoveAll()
 	}
 
-	subspace, prefix, limitRaw := formRedirectContext(r.Form)
-	redirectBase := indexRedirectBase(subspace, prefix, limitRaw)
+	subspace, prefix, sortMode, limitRaw := formRedirectContext(r.Form)
+	redirectBase := indexRedirectBase(subspace, prefix, sortMode, limitRaw)
 	if err := validateCSRFToken(r); err != nil {
 		http.Redirect(w, r, redirectBase+"&err="+url.QueryEscape(err.Error()), http.StatusSeeOther)
 		return
@@ -542,6 +551,7 @@ func (s *Server) handleAPIList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	prefix := strings.TrimSpace(r.URL.Query().Get("prefix"))
+	sortMode := normalizeListSort(r.URL.Query().Get("sort"))
 	limit := 200
 	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
 		parsed, err := strconv.Atoi(raw)
@@ -552,7 +562,7 @@ func (s *Server) handleAPIList(w http.ResponseWriter, r *http.Request) {
 		limit = parsed
 	}
 
-	arts, err := svc.List(r.Context(), prefix, limit)
+	arts, err := listArtifacts(r.Context(), svc, prefix, sortMode, limit)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
@@ -707,9 +717,10 @@ func (s *Server) handleAPISave(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"artifact": saved})
 }
 
-func formRedirectContext(values url.Values) (subspace string, prefix string, limitRaw string) {
+func formRedirectContext(values url.Values) (subspace string, prefix string, sortMode string, limitRaw string) {
 	subspace = strings.TrimSpace(values.Get("subspace"))
 	prefix = strings.TrimSpace(values.Get("prefix"))
+	sortMode = normalizeListSort(values.Get("sort"))
 	limitRaw = strings.TrimSpace(values.Get("limit"))
 	if limitRaw == "" {
 		limitRaw = "200"
@@ -717,11 +728,139 @@ func formRedirectContext(values url.Values) (subspace string, prefix string, lim
 	return
 }
 
-func indexRedirectBase(subspace string, prefix string, limitRaw string) string {
+func indexRedirectBase(subspace string, prefix string, sortMode string, limitRaw string) string {
 	if strings.TrimSpace(limitRaw) == "" {
 		limitRaw = "200"
 	}
-	return "/?subspace=" + url.QueryEscape(subspace) + "&prefix=" + url.QueryEscape(prefix) + "&limit=" + url.QueryEscape(limitRaw)
+	return "/?subspace=" + url.QueryEscape(subspace) +
+		"&prefix=" + url.QueryEscape(prefix) +
+		"&sort=" + url.QueryEscape(normalizeListSort(sortMode)) +
+		"&limit=" + url.QueryEscape(limitRaw)
+}
+
+const (
+	listSortNameAsc  = "name_asc"
+	listSortTimeAsc  = "time_asc"
+	listSortTimeDesc = "time_desc"
+	maxListLimit     = 1000
+	defaultListLimit = 200
+)
+
+func normalizeListSort(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case listSortNameAsc:
+		return listSortNameAsc
+	case listSortTimeAsc:
+		return listSortTimeAsc
+	case listSortTimeDesc:
+		return listSortTimeDesc
+	default:
+		return listSortNameAsc
+	}
+}
+
+func splitPrefixFilters(raw string) []string {
+	parts := strings.Split(raw, ",")
+	prefixes := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
+	for _, part := range parts {
+		prefix := strings.TrimSpace(part)
+		if prefix == "" {
+			continue
+		}
+		if _, ok := seen[prefix]; ok {
+			continue
+		}
+		seen[prefix] = struct{}{}
+		prefixes = append(prefixes, prefix)
+	}
+	return prefixes
+}
+
+func normalizedEffectiveLimit(limit int) (int, error) {
+	effectiveLimit := limit
+	if effectiveLimit <= 0 {
+		effectiveLimit = defaultListLimit
+	}
+	if effectiveLimit > maxListLimit {
+		return 0, fmt.Errorf("%w: limit must be <= %d", artifacts.ErrInvalidInput, maxListLimit)
+	}
+	return effectiveLimit, nil
+}
+
+func listArtifacts(ctx context.Context, svc *artifacts.Service, rawPrefix string, sortMode string, limit int) ([]artifacts.ArtifactVersion, error) {
+	effectiveLimit, err := normalizedEffectiveLimit(limit)
+	if err != nil {
+		return nil, err
+	}
+
+	normalizedSortMode := normalizeListSort(sortMode)
+	prefixFilters := splitPrefixFilters(rawPrefix)
+
+	// For non-default sorting or multi-prefix OR filters, fetch a wider window and
+	// apply sorting/limit in-process so time sort and OR behavior are meaningful.
+	fetchLimit := effectiveLimit
+	if normalizedSortMode != listSortNameAsc || len(prefixFilters) > 1 {
+		fetchLimit = maxListLimit
+	}
+
+	if len(prefixFilters) == 0 {
+		items, err := svc.List(ctx, "", fetchLimit)
+		if err != nil {
+			return nil, err
+		}
+		sortArtifactVersions(items, normalizedSortMode)
+		if len(items) > effectiveLimit {
+			items = items[:effectiveLimit]
+		}
+		return items, nil
+	}
+
+	combined := make([]artifacts.ArtifactVersion, 0, fetchLimit)
+	seenByRef := make(map[string]struct{}, fetchLimit)
+	for _, prefix := range prefixFilters {
+		items, err := svc.List(ctx, prefix, fetchLimit)
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range items {
+			if _, exists := seenByRef[item.Ref]; exists {
+				continue
+			}
+			seenByRef[item.Ref] = struct{}{}
+			combined = append(combined, item)
+		}
+	}
+
+	sortArtifactVersions(combined, normalizedSortMode)
+	if len(combined) > effectiveLimit {
+		combined = combined[:effectiveLimit]
+	}
+	return combined, nil
+}
+
+func sortArtifactVersions(items []artifacts.ArtifactVersion, mode string) {
+	normalizedMode := normalizeListSort(mode)
+	switch normalizedMode {
+	case listSortTimeDesc:
+		sort.Slice(items, func(i, j int) bool {
+			if items[i].CreatedAt.Equal(items[j].CreatedAt) {
+				return items[i].Name < items[j].Name
+			}
+			return items[i].CreatedAt.After(items[j].CreatedAt)
+		})
+	case listSortTimeAsc:
+		sort.Slice(items, func(i, j int) bool {
+			if items[i].CreatedAt.Equal(items[j].CreatedAt) {
+				return items[i].Name < items[j].Name
+			}
+			return items[i].CreatedAt.Before(items[j].CreatedAt)
+		})
+	default:
+		sort.Slice(items, func(i, j int) bool {
+			return items[i].Name < items[j].Name
+		})
+	}
 }
 
 type deleteSelectorRequest struct {
