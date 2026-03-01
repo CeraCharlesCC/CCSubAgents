@@ -11,6 +11,12 @@ import (
 	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/paths"
 )
 
+var (
+	newDefaultDaemonClientFn  = daemonclient.NewDefaultClient
+	waitForDaemonStopFn       = daemonctl.WaitForStop
+	stopRegisteredProcessesFn = daemonctl.StopRegisteredProcesses
+)
+
 func (r *Runner) stopDaemonBeforeRemoval(ctx context.Context) error {
 	if r.stopDaemonFn != nil {
 		return r.stopDaemonFn(ctx)
@@ -31,7 +37,7 @@ func (r *Runner) stopDaemonBeforeRemoval(ctx context.Context) error {
 	}
 
 	daemonStateDir := paths.ResolveDaemonStateDir(home, getenv)
-	client, err := daemonclient.NewDefaultClient(daemonStateDir, getenv)
+	client, err := newDefaultDaemonClientFn(daemonStateDir, getenv)
 	if err != nil {
 		return fmt.Errorf("create daemon client: %w", err)
 	}
@@ -39,10 +45,10 @@ func (r *Runner) stopDaemonBeforeRemoval(ctx context.Context) error {
 	if _, err := client.Shutdown(ctx); err != nil && !isDaemonDownOrUnavailable(err) {
 		return fmt.Errorf("shutdown daemon: %w", err)
 	}
-	if err := daemonctl.WaitForStop(ctx, daemonStateDir, 4*time.Second); err != nil && !isDaemonDownOrUnavailable(err) {
+	if err := waitForDaemonStopFn(ctx, daemonStateDir, 4*time.Second); err != nil && !isDaemonDownOrUnavailable(err) {
 		return fmt.Errorf("wait for daemon stop: %w", err)
 	}
-	if err := daemonctl.StopRegisteredProcesses(ctx, daemonStateDir, []string{"web", "mcp"}); err != nil {
+	if err := stopRegisteredProcessesFn(ctx, daemonStateDir, []string{"web", "mcp"}); err != nil {
 		if daemonctl.IsOnlyProcessRegistryMetadataIssues(err) {
 			r.reportWarning("Ignoring stale daemon process metadata", err.Error())
 		} else {

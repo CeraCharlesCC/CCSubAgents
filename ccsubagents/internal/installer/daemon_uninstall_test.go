@@ -3,33 +3,31 @@ package installer
 import (
 	"bytes"
 	"context"
-	"os"
-	"path/filepath"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
-	pathslib "github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/paths"
+	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/daemonclient"
+	"github.com/CeraCharlesCC/CCSubAgents/ccsubagents/internal/daemonctl"
 )
 
 func TestStopDaemonBeforeRemoval_IgnoresMetadataOnlyRegistryIssues(t *testing.T) {
-	stateDir := t.TempDir()
-	roleDir := filepath.Join(stateDir, "daemon", "processes", "web")
-	if err := os.MkdirAll(roleDir, stateDirPerm); err != nil {
-		t.Fatalf("create role dir: %v", err)
+	resetDaemonUninstallHooks(t)
+	newDefaultDaemonClientFn = func(string, func(string) string) (*daemonclient.Client, error) {
+		return daemonclient.NewUnavailableClient(errors.New("already unavailable")), nil
 	}
-	if err := os.WriteFile(filepath.Join(roleDir, "abc.pid"), []byte("invalid\n"), stateFilePerm); err != nil {
-		t.Fatalf("write invalid pid file: %v", err)
+	waitForDaemonStopFn = func(context.Context, string, time.Duration) error {
+		return nil
+	}
+	stopRegisteredProcessesFn = func(context.Context, string, []string) error {
+		return fmt.Errorf("%w: skip invalid pid filename /tmp/web/abc.pid: parse pid", daemonctl.ErrProcessRegistryMetadata)
 	}
 
 	var status bytes.Buffer
 	runner := &Runner{
-		homeDir: func() (string, error) { return t.TempDir(), nil },
-		getenv: func(key string) string {
-			if key == pathslib.EnvStateDir {
-				return stateDir
-			}
-			return ""
-		},
+		homeDir:   func() (string, error) { return t.TempDir(), nil },
 		statusOut: &status,
 	}
 
@@ -42,23 +40,19 @@ func TestStopDaemonBeforeRemoval_IgnoresMetadataOnlyRegistryIssues(t *testing.T)
 }
 
 func TestStopDaemonBeforeRemoval_FailsOnNonMetadataRegistryErrors(t *testing.T) {
-	stateDir := t.TempDir()
-	rolePath := filepath.Join(stateDir, "daemon", "processes", "web")
-	if err := os.MkdirAll(filepath.Dir(rolePath), stateDirPerm); err != nil {
-		t.Fatalf("create processes parent dir: %v", err)
+	resetDaemonUninstallHooks(t)
+	newDefaultDaemonClientFn = func(string, func(string) string) (*daemonclient.Client, error) {
+		return daemonclient.NewUnavailableClient(errors.New("already unavailable")), nil
 	}
-	if err := os.WriteFile(rolePath, []byte("not-a-directory\n"), stateFilePerm); err != nil {
-		t.Fatalf("write blocking role file: %v", err)
+	waitForDaemonStopFn = func(context.Context, string, time.Duration) error {
+		return nil
+	}
+	stopRegisteredProcessesFn = func(context.Context, string, []string) error {
+		return errors.New("failed to enumerate registered processes")
 	}
 
 	runner := &Runner{
 		homeDir: func() (string, error) { return t.TempDir(), nil },
-		getenv: func(key string) string {
-			if key == pathslib.EnvStateDir {
-				return stateDir
-			}
-			return ""
-		},
 	}
 
 	err := runner.stopDaemonBeforeRemoval(context.Background())
@@ -68,4 +62,19 @@ func TestStopDaemonBeforeRemoval_FailsOnNonMetadataRegistryErrors(t *testing.T) 
 	if !strings.Contains(err.Error(), "stop registered daemon processes") {
 		t.Fatalf("expected stop registered daemon processes error, got %v", err)
 	}
+	if !strings.Contains(err.Error(), "failed to enumerate registered processes") {
+		t.Fatalf("expected wrapped registry failure, got %v", err)
+	}
+}
+
+func resetDaemonUninstallHooks(t *testing.T) {
+	t.Helper()
+	origNewDefaultDaemonClientFn := newDefaultDaemonClientFn
+	origWaitForDaemonStopFn := waitForDaemonStopFn
+	origStopRegisteredProcessesFn := stopRegisteredProcessesFn
+	t.Cleanup(func() {
+		newDefaultDaemonClientFn = origNewDefaultDaemonClientFn
+		waitForDaemonStopFn = origWaitForDaemonStopFn
+		stopRegisteredProcessesFn = origStopRegisteredProcessesFn
+	})
 }
