@@ -89,6 +89,42 @@ func tempUnixSocketPath(t *testing.T, prefix string) string {
 	return filepath.Join(socketDir, "daemon.sock")
 }
 
+type daemonRunFixture struct {
+	StoreRoot string
+	StateDir  string
+	Socket    string
+}
+
+func newDaemonRunFixture(t *testing.T, socketPrefix string) daemonRunFixture {
+	t.Helper()
+	root := t.TempDir()
+	return daemonRunFixture{
+		StoreRoot: filepath.Join(root, "store"),
+		StateDir:  filepath.Join(root, "state"),
+		Socket:    tempUnixSocketPath(t, socketPrefix),
+	}
+}
+
+func startDaemonAsync(cfg RunConfig) <-chan error {
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- Run(context.Background(), cfg)
+	}()
+	return errCh
+}
+
+func waitForDaemonStop(t *testing.T, errCh <-chan error, name string) {
+	t.Helper()
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("%s returned error: %v", name, err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatalf("%s did not stop before timeout", name)
+	}
+}
+
 func TestCleanupStaleSocket_RemovesStaleSocketOnConnRefused(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("unix socket-based test")
@@ -188,30 +224,18 @@ func TestRun_ShutdownEndpointStopsDaemon(t *testing.T) {
 		t.Skip("unix socket-based test")
 	}
 
-	storeRoot := filepath.Join(t.TempDir(), "store")
-	stateDir := filepath.Join(t.TempDir(), "state")
-	socketDir, err := os.MkdirTemp("/tmp", "ccsubagentsd-test-")
-	if err != nil {
-		t.Fatalf("create socket temp dir: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = os.RemoveAll(socketDir)
-	})
-	socket := filepath.Join(socketDir, "daemon.sock")
+	fixture := newDaemonRunFixture(t, "ccsubagentsd-test-")
 	token := "test-shutdown-token"
 
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- Run(context.Background(), RunConfig{
-			StoreRoot: storeRoot,
-			StateDir:  stateDir,
-			APISocket: socket,
-			Token:     token,
-			Stderr:    io.Discard,
-		})
-	}()
+	errCh := startDaemonAsync(RunConfig{
+		StoreRoot: fixture.StoreRoot,
+		StateDir:  fixture.StateDir,
+		APISocket: fixture.Socket,
+		Token:     token,
+		Stderr:    io.Discard,
+	})
 
-	client := NewUnixSocketClient(socket, token)
+	client := NewUnixSocketClient(fixture.Socket, token)
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		healthCtx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
@@ -234,15 +258,7 @@ func TestRun_ShutdownEndpointStopsDaemon(t *testing.T) {
 	if _, err := client.Shutdown(context.Background()); err != nil {
 		t.Fatalf("shutdown request failed: %v", err)
 	}
-
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Fatalf("daemon run returned error: %v", err)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("daemon did not stop after shutdown request")
-	}
+	waitForDaemonStop(t, errCh, "daemon")
 }
 
 func TestRun_WebOnlyModeWhenAPISocketAlreadyActive(t *testing.T) {
@@ -250,43 +266,28 @@ func TestRun_WebOnlyModeWhenAPISocketAlreadyActive(t *testing.T) {
 		t.Skip("unix socket-based test")
 	}
 
-	storeRoot := filepath.Join(t.TempDir(), "store")
-	stateDir := filepath.Join(t.TempDir(), "state")
-	socketDir, err := os.MkdirTemp("/tmp", "ccsubagentsd-webonly-")
-	if err != nil {
-		t.Fatalf("create socket temp dir: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = os.RemoveAll(socketDir)
+	fixture := newDaemonRunFixture(t, "ccsubagentsd-webonly-")
+
+	primaryErrCh := startDaemonAsync(RunConfig{
+		StoreRoot:   fixture.StoreRoot,
+		StateDir:    fixture.StateDir,
+		APISocket:   fixture.Socket,
+		DisableAuth: true,
+		Stderr:      io.Discard,
 	})
-	socket := filepath.Join(socketDir, "daemon.sock")
 
-	primaryErrCh := make(chan error, 1)
-	go func() {
-		primaryErrCh <- Run(context.Background(), RunConfig{
-			StoreRoot:   storeRoot,
-			StateDir:    stateDir,
-			APISocket:   socket,
-			DisableAuth: true,
-			Stderr:      io.Discard,
-		})
-	}()
-
-	client := NewUnixSocketClient(socket, "")
+	client := NewUnixSocketClient(fixture.Socket, "")
 	waitForDaemonReady(t, client, primaryErrCh)
 
 	webAddr := reserveLoopbackAddr(t)
-	secondaryErrCh := make(chan error, 1)
-	go func() {
-		secondaryErrCh <- Run(context.Background(), RunConfig{
-			StoreRoot:   storeRoot,
-			StateDir:    stateDir,
-			APISocket:   socket,
-			WebAddr:     webAddr,
-			DisableAuth: true,
-			Stderr:      io.Discard,
-		})
-	}()
+	secondaryErrCh := startDaemonAsync(RunConfig{
+		StoreRoot:   fixture.StoreRoot,
+		StateDir:    fixture.StateDir,
+		APISocket:   fixture.Socket,
+		WebAddr:     webAddr,
+		DisableAuth: true,
+		Stderr:      io.Discard,
+	})
 
 	waitForWebHealth(t, webAddr)
 
@@ -303,15 +304,7 @@ func TestRun_WebOnlyModeWhenAPISocketAlreadyActive(t *testing.T) {
 	if resp.StatusCode != http.StatusAccepted {
 		t.Fatalf("shutdown status mismatch: got=%d want=%d", resp.StatusCode, http.StatusAccepted)
 	}
-
-	select {
-	case err := <-secondaryErrCh:
-		if err != nil {
-			t.Fatalf("web-only daemon returned error: %v", err)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("web-only daemon did not stop after shutdown request")
-	}
+	waitForDaemonStop(t, secondaryErrCh, "web-only daemon")
 
 	if err := client.Health(context.Background()); err != nil {
 		t.Fatalf("primary daemon should still be healthy after web-only shutdown: %v", err)
@@ -320,14 +313,7 @@ func TestRun_WebOnlyModeWhenAPISocketAlreadyActive(t *testing.T) {
 	if _, err := client.Shutdown(context.Background()); err != nil {
 		t.Fatalf("shutdown primary daemon: %v", err)
 	}
-	select {
-	case err := <-primaryErrCh:
-		if err != nil {
-			t.Fatalf("primary daemon returned error: %v", err)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("primary daemon did not stop after shutdown")
-	}
+	waitForDaemonStop(t, primaryErrCh, "primary daemon")
 }
 
 func TestRun_WithoutWebAddrStillErrorsWhenAPISocketAlreadyActive(t *testing.T) {
@@ -335,35 +321,23 @@ func TestRun_WithoutWebAddrStillErrorsWhenAPISocketAlreadyActive(t *testing.T) {
 		t.Skip("unix socket-based test")
 	}
 
-	storeRoot := filepath.Join(t.TempDir(), "store")
-	stateDir := filepath.Join(t.TempDir(), "state")
-	socketDir, err := os.MkdirTemp("/tmp", "ccsubagentsd-api-busy-")
-	if err != nil {
-		t.Fatalf("create socket temp dir: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = os.RemoveAll(socketDir)
+	fixture := newDaemonRunFixture(t, "ccsubagentsd-api-busy-")
+
+	primaryErrCh := startDaemonAsync(RunConfig{
+		StoreRoot:   fixture.StoreRoot,
+		StateDir:    fixture.StateDir,
+		APISocket:   fixture.Socket,
+		DisableAuth: true,
+		Stderr:      io.Discard,
 	})
-	socket := filepath.Join(socketDir, "daemon.sock")
 
-	primaryErrCh := make(chan error, 1)
-	go func() {
-		primaryErrCh <- Run(context.Background(), RunConfig{
-			StoreRoot:   storeRoot,
-			StateDir:    stateDir,
-			APISocket:   socket,
-			DisableAuth: true,
-			Stderr:      io.Discard,
-		})
-	}()
-
-	client := NewUnixSocketClient(socket, "")
+	client := NewUnixSocketClient(fixture.Socket, "")
 	waitForDaemonReady(t, client, primaryErrCh)
 
-	err = Run(context.Background(), RunConfig{
-		StoreRoot:   storeRoot,
-		StateDir:    stateDir,
-		APISocket:   socket,
+	err := Run(context.Background(), RunConfig{
+		StoreRoot:   fixture.StoreRoot,
+		StateDir:    fixture.StateDir,
+		APISocket:   fixture.Socket,
 		DisableAuth: true,
 		Stderr:      io.Discard,
 	})
@@ -375,14 +349,7 @@ func TestRun_WithoutWebAddrStillErrorsWhenAPISocketAlreadyActive(t *testing.T) {
 	if _, err := client.Shutdown(context.Background()); err != nil {
 		t.Fatalf("shutdown primary daemon: %v", err)
 	}
-	select {
-	case err := <-primaryErrCh:
-		if err != nil {
-			t.Fatalf("primary daemon returned error: %v", err)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("primary daemon did not stop after shutdown")
-	}
+	waitForDaemonStop(t, primaryErrCh, "primary daemon")
 }
 
 func waitForDaemonReady(t *testing.T, client *Client, daemonErrCh <-chan error) {

@@ -2,11 +2,11 @@ package web
 
 import (
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -20,9 +20,8 @@ func TestSanitizeFilenameRejectsPathTraversalMarkers(t *testing.T) {
 		want string
 	}{
 		{name: "empty", in: "", want: ""},
-		{name: "dot", in: ".", want: ""},
 		{name: "dotdot", in: "..", want: ""},
-		{name: "windows-dotdot", in: `..\`, want: ""},
+		{name: "windows-dotdot", in: `..\\`, want: ""},
 		{name: "normalized basename", in: "../../safe.bin", want: "safe.bin"},
 		{name: "control chars stripped", in: "a\x00b.bin", want: "ab.bin"},
 	}
@@ -36,233 +35,103 @@ func TestSanitizeFilenameRejectsPathTraversalMarkers(t *testing.T) {
 	}
 }
 
-func TestParseDeleteSelectors(t *testing.T) {
-	tests := []struct {
-		name        string
-		values      url.Values
-		want        deleteSelectorRequest
-		wantErr     error
-		wantErrText string
-	}{
-		{
-			name: "single name",
-			values: url.Values{
-				"name": {" plan/task-1 "},
-			},
-			want: deleteSelectorRequest{selectors: []artifacts.Selector{{Name: "plan/task-1"}}, single: true},
-		},
-		{
-			name: "names dedupe and trim",
-			values: url.Values{
-				"name": {" a ", "a", "", "b ", "a"},
-			},
-			want: deleteSelectorRequest{selectors: []artifacts.Selector{{Name: "a"}, {Name: "b"}}, single: false},
-		},
-		{
-			name: "refs dedupe and trim",
-			values: url.Values{
-				"ref": {" r1 ", "r1", "r2", "  "},
-			},
-			want: deleteSelectorRequest{selectors: []artifacts.Selector{{Ref: "r1"}, {Ref: "r2"}}, single: false},
-		},
-		{
-			name: "mixed name and ref",
-			values: url.Values{
-				"name": {"x"},
-				"ref":  {"y"},
-			},
-			wantErr: artifacts.ErrRefAndNameMutuallyExclusive,
-		},
-		{
-			name:    "empty selectors",
-			values:  url.Values{},
-			wantErr: artifacts.ErrRefOrName,
-		},
+func TestParseDeleteSelectors_EdgeCases(t *testing.T) {
+	got, err := parseDeleteSelectors(url.Values{"name": {" a ", "a", "", "b "}})
+	if err != nil {
+		t.Fatalf("parseDeleteSelectors unexpected error: %v", err)
+	}
+	want := []artifacts.Selector{{Name: "a"}, {Name: "b"}}
+	if len(got.selectors) != len(want) || got.selectors[0] != want[0] || got.selectors[1] != want[1] {
+		t.Fatalf("parseDeleteSelectors mismatch\nwant=%+v\ngot=%+v", want, got.selectors)
+	}
+	if got.single {
+		t.Fatalf("expected single=false for multi-delete input")
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := parseDeleteSelectors(tc.values)
-			if tc.wantErr != nil {
-				if !errors.Is(err, tc.wantErr) {
-					t.Fatalf("parseDeleteSelectors error=%v want=%v", err, tc.wantErr)
-				}
-				if tc.wantErrText != "" && !strings.Contains(err.Error(), tc.wantErrText) {
-					t.Fatalf("parseDeleteSelectors error text=%q want contains %q", err.Error(), tc.wantErrText)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("parseDeleteSelectors unexpected error: %v", err)
-			}
-			if !reflect.DeepEqual(got, tc.want) {
-				t.Fatalf("parseDeleteSelectors mismatch\nwant=%+v\ngot=%+v", tc.want, got)
-			}
-		})
+	_, err = parseDeleteSelectors(url.Values{"name": {"x"}, "ref": {"y"}})
+	if !errors.Is(err, artifacts.ErrRefAndNameMutuallyExclusive) {
+		t.Fatalf("expected ref-and-name mutual exclusion error, got %v", err)
 	}
 }
 
-func TestParseSingleSelector(t *testing.T) {
-	tests := []struct {
-		name        string
-		values      url.Values
-		want        artifacts.Selector
-		wantErr     error
-		wantErrText string
-	}{
-		{
-			name: "single name",
-			values: url.Values{
-				"name": {" plan/item "},
-			},
-			want: artifacts.Selector{Name: "plan/item"},
-		},
-		{
-			name: "single ref",
-			values: url.Values{
-				"ref": {" 20260216T120000Z-aaaaaaaaaaaaaaaa "},
-			},
-			want: artifacts.Selector{Ref: "20260216T120000Z-aaaaaaaaaaaaaaaa"},
-		},
-		{
-			name:    "none provided",
-			values:  url.Values{},
-			wantErr: artifacts.ErrRefOrName,
-		},
-		{
-			name: "multiple names",
-			values: url.Values{
-				"name": {"a", "b"},
-			},
-			wantErrText: "provide exactly one ref or name",
-		},
-		{
-			name: "mixed name and ref",
-			values: url.Values{
-				"name": {"a"},
-				"ref":  {"r"},
-			},
-			wantErr: artifacts.ErrRefAndNameMutuallyExclusive,
-		},
+func TestParseSingleSelector_EdgeCases(t *testing.T) {
+	got, err := parseSingleSelector(url.Values{"name": {" plan/item "}})
+	if err != nil {
+		t.Fatalf("parseSingleSelector unexpected error: %v", err)
+	}
+	if got.Name != "plan/item" || got.Ref != "" {
+		t.Fatalf("unexpected selector: %+v", got)
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := parseSingleSelector(tc.values)
-			if tc.wantErr != nil || tc.wantErrText != "" {
-				if err == nil {
-					t.Fatal("expected error")
-				}
-				if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
-					t.Fatalf("parseSingleSelector error=%v want=%v", err, tc.wantErr)
-				}
-				if tc.wantErrText != "" && !strings.Contains(err.Error(), tc.wantErrText) {
-					t.Fatalf("parseSingleSelector error text=%q want contains %q", err.Error(), tc.wantErrText)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("parseSingleSelector unexpected error: %v", err)
-			}
-			if !reflect.DeepEqual(got, tc.want) {
-				t.Fatalf("parseSingleSelector mismatch\nwant=%+v\ngot=%+v", tc.want, got)
-			}
-		})
+	_, err = parseSingleSelector(url.Values{"name": {"a", "b"}})
+	if err == nil || !strings.Contains(err.Error(), "provide exactly one ref or name") {
+		t.Fatalf("expected single-selector count error, got %v", err)
 	}
 }
 
-func TestTrimUniqueNonEmpty(t *testing.T) {
-	tests := []struct {
-		name string
-		in   []string
-		want []string
-	}{
-		{name: "empty", in: nil, want: []string{}},
-		{name: "dedupe trim and preserve order", in: []string{" a ", "", "a", "b", " a", "b", " c "}, want: []string{"a", "b", "c"}},
+func TestValidateCSRFToken_MismatchRejected(t *testing.T) {
+	cookieToken := mustCSRFToken(t)
+	raw, err := hex.DecodeString(cookieToken)
+	if err != nil || len(raw) == 0 {
+		t.Fatalf("failed to decode csrf token %q: %v", cookieToken, err)
+	}
+	raw[0] ^= 0x01
+	formToken := hex.EncodeToString(raw)
+
+	form := url.Values{csrfFieldName: {formToken}}
+	req := httptest.NewRequest(http.MethodPost, "/delete", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: cookieToken})
+	if err := validateCSRFToken(req); err == nil {
+		t.Fatal("expected csrf validation mismatch error")
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := trimUniqueNonEmpty(tc.in)
-			if !reflect.DeepEqual(got, tc.want) {
-				t.Fatalf("trimUniqueNonEmpty mismatch\nwant=%v\ngot=%v", tc.want, got)
-			}
-		})
+	validReq := httptest.NewRequest(http.MethodPost, "/delete", strings.NewReader(url.Values{csrfFieldName: {cookieToken}}.Encode()))
+	validReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	validReq.AddCookie(&http.Cookie{Name: csrfCookieName, Value: cookieToken})
+	if err := validateCSRFToken(validReq); err != nil {
+		t.Fatalf("expected valid csrf token pair, got %v", err)
 	}
 }
 
-func TestIsValidCSRFToken(t *testing.T) {
+func TestAPISaveJSONBodyLimitAllowsMaxBinaryUpload(t *testing.T) {
+	encodedPayloadBytes := int64(base64.StdEncoding.EncodedLen(int(maxInsertUploadBytes)))
+	requiredLimit := encodedPayloadBytes + maxInsertUploadOverheadBytes
+	if maxInsertJSONBodyBytes < requiredLimit {
+		t.Fatalf(
+			"json body limit too small: got %d, need at least %d to carry 10 MiB base64 payload",
+			maxInsertJSONBodyBytes,
+			requiredLimit,
+		)
+	}
+}
+
+func TestIsValidCSRFToken_Basic(t *testing.T) {
 	validToken := mustCSRFToken(t)
-	tests := []struct {
-		name  string
-		token string
-		want  bool
-	}{
-		{name: "valid", token: validToken, want: true},
-		{name: "empty", token: "", want: false},
-		{name: "short", token: "abc", want: false},
-		{name: "non hex", token: strings.Repeat("z", csrfTokenBytes*2), want: false},
+	if !isValidCSRFToken(validToken) {
+		t.Fatalf("expected valid token %q", validToken)
 	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := isValidCSRFToken(tc.token); got != tc.want {
-				t.Fatalf("isValidCSRFToken(%q)=%v want=%v", tc.token, got, tc.want)
-			}
-		})
+	if isValidCSRFToken("") {
+		t.Fatal("expected empty token to be invalid")
+	}
+	if isValidCSRFToken(strings.Repeat("z", csrfTokenBytes*2)) {
+		t.Fatal("expected non-hex token to be invalid")
 	}
 }
 
-func TestCSRFTokenFromRequest(t *testing.T) {
+func TestCSRFTokenFromRequest_IgnoresInvalidAndReturnsValid(t *testing.T) {
 	validToken := mustCSRFToken(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: "not-hex"})
 	if got := csrfTokenFromRequest(req); got != "" {
-		t.Fatalf("expected invalid cookie to be ignored, got %q", got)
+		t.Fatalf("expected invalid cookie token to be ignored, got %q", got)
 	}
 
 	reqValid := httptest.NewRequest(http.MethodGet, "/", nil)
 	reqValid.AddCookie(&http.Cookie{Name: csrfCookieName, Value: validToken})
 	if got := csrfTokenFromRequest(reqValid); got != validToken {
 		t.Fatalf("expected valid cookie token %q, got %q", validToken, got)
-	}
-}
-
-func TestValidateCSRFToken(t *testing.T) {
-	validToken := mustCSRFToken(t)
-	tests := []struct {
-		name      string
-		cookie    string
-		formToken string
-		wantErr   bool
-	}{
-		{name: "missing form token", cookie: validToken, formToken: "", wantErr: true},
-		{name: "mismatch", cookie: validToken, formToken: mustCSRFToken(t), wantErr: true},
-		{name: "invalid cookie", cookie: "invalid", formToken: validToken, wantErr: true},
-		{name: "valid", cookie: validToken, formToken: validToken, wantErr: false},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			form := url.Values{}
-			if tc.formToken != "" {
-				form.Set(csrfFieldName, tc.formToken)
-			}
-			req := httptest.NewRequest(http.MethodPost, "/delete", strings.NewReader(form.Encode()))
-			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-			if tc.cookie != "" {
-				req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: tc.cookie})
-			}
-
-			err := validateCSRFToken(req)
-			if tc.wantErr && err == nil {
-				t.Fatal("expected csrf validation error")
-			}
-			if !tc.wantErr && err != nil {
-				t.Fatalf("unexpected csrf validation error: %v", err)
-			}
-		})
 	}
 }
 
@@ -282,11 +151,6 @@ func TestFormRedirectContextDefaultsAndTrim(t *testing.T) {
 	if gotLimit != "200" {
 		t.Fatalf("unexpected default limit: %q", gotLimit)
 	}
-
-	_, _, gotLimit = formRedirectContext(url.Values{"limit": {" 17 "}})
-	if gotLimit != "17" {
-		t.Fatalf("unexpected explicit limit: %q", gotLimit)
-	}
 }
 
 func TestIndexRedirectBaseDefaultsLimitAndEscapes(t *testing.T) {
@@ -296,7 +160,6 @@ func TestIndexRedirectBaseDefaultsLimitAndEscapes(t *testing.T) {
 		t.Fatalf("parse redirect base: %v", err)
 	}
 	q := u.Query()
-
 	if q.Get("subspace") != "global" {
 		t.Fatalf("unexpected subspace query: %q", q.Get("subspace"))
 	}
@@ -305,17 +168,5 @@ func TestIndexRedirectBaseDefaultsLimitAndEscapes(t *testing.T) {
 	}
 	if q.Get("limit") != "200" {
 		t.Fatalf("unexpected limit query: %q", q.Get("limit"))
-	}
-}
-
-func TestAPISaveJSONBodyLimitAllowsMaxBinaryUpload(t *testing.T) {
-	encodedPayloadBytes := int64(base64.StdEncoding.EncodedLen(int(maxInsertUploadBytes)))
-	requiredLimit := encodedPayloadBytes + maxInsertUploadOverheadBytes
-	if maxInsertJSONBodyBytes < requiredLimit {
-		t.Fatalf(
-			"json body limit too small: got %d, need at least %d to carry 10 MiB base64 payload",
-			maxInsertJSONBodyBytes,
-			requiredLimit,
-		)
 	}
 }

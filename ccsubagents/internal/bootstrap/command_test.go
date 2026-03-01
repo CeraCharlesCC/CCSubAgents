@@ -5,84 +5,60 @@ import (
 	"testing"
 )
 
+func requireErrContains(t *testing.T, err error, substr string) {
+	t.Helper()
+	if err == nil || !strings.Contains(err.Error(), substr) {
+		t.Fatalf("expected error containing %q, got %v", substr, err)
+	}
+}
+
 func TestParseCommand(t *testing.T) {
 	tests := []struct {
-		name    string
-		input   string
-		want    Command
-		wantErr string
+		input string
+		want  Command
+		err   string
 	}{
-		{name: "install", input: "install", want: CommandInstall},
-		{name: "update", input: "update", want: CommandUpdate},
-		{name: "uninstall", input: "uninstall", want: CommandUninstall},
-		{name: "trimmed", input: "  install  ", want: CommandInstall},
-		{name: "invalid", input: "upgrade", wantErr: "unknown command"},
+		{input: "install", want: CommandInstall},
+		{input: "update", want: CommandUpdate},
+		{input: "uninstall", want: CommandUninstall},
+		{input: "  install  ", want: CommandInstall},
+		{input: "upgrade", err: "unknown command"},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := ParseCommand(tc.input)
-			if tc.wantErr != "" {
-				if err == nil {
-					t.Fatalf("expected error")
-				}
-				if !strings.Contains(err.Error(), tc.wantErr) {
-					t.Fatalf("expected error containing %q, got %q", tc.wantErr, err.Error())
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("ParseCommand returned error: %v", err)
-			}
-			if got != tc.want {
-				t.Fatalf("expected %q, got %q", tc.want, got)
-			}
-		})
+	for i, tc := range tests {
+		got, err := ParseCommand(tc.input)
+		if tc.err != "" {
+			requireErrContains(t, err, tc.err)
+			continue
+		}
+		if err != nil || got != tc.want {
+			t.Fatalf("case %d: got %q/%v want %q/<nil>", i, got, err, tc.want)
+		}
 	}
 }
 
 func TestResolveScope(t *testing.T) {
-	t.Run("defaults", func(t *testing.T) {
-		tests := []struct {
-			name    string
-			command Command
-			want    Scope
-		}{
-			{name: "install defaults local", command: CommandInstall, want: ScopeLocal},
-			{name: "update defaults global", command: CommandUpdate, want: ScopeGlobal},
-			{name: "uninstall defaults global", command: CommandUninstall, want: ScopeGlobal},
-		}
+	tests := []struct {
+		command Command
+		raw     string
+		want    Scope
+		err     string
+	}{
+		{command: CommandInstall, want: ScopeLocal},
+		{command: CommandUpdate, want: ScopeGlobal},
+		{command: CommandUninstall, want: ScopeGlobal},
+		{command: CommandInstall, raw: " global ", want: ScopeGlobal},
+		{command: CommandInstall, raw: "team", err: "unknown scope"},
+	}
 
-		for _, tc := range tests {
-			t.Run(tc.name, func(t *testing.T) {
-				got, err := ResolveScope(tc.command, "")
-				if err != nil {
-					t.Fatalf("ResolveScope returned error: %v", err)
-				}
-				if got != tc.want {
-					t.Fatalf("expected %q, got %q", tc.want, got)
-				}
-			})
+	for i, tc := range tests {
+		got, err := ResolveScope(tc.command, tc.raw)
+		if tc.err != "" {
+			requireErrContains(t, err, tc.err)
+			continue
 		}
-	})
-
-	t.Run("explicit override", func(t *testing.T) {
-		got, err := ResolveScope(CommandInstall, " global ")
-		if err != nil {
-			t.Fatalf("ResolveScope returned error: %v", err)
+		if err != nil || got != tc.want {
+			t.Fatalf("case %d: got %q/%v want %q/<nil>", i, got, err, tc.want)
 		}
-		if got != ScopeGlobal {
-			t.Fatalf("expected %q, got %q", ScopeGlobal, got)
-		}
-	})
-
-	t.Run("invalid scope", func(t *testing.T) {
-		_, err := ResolveScope(CommandInstall, "team")
-		if err == nil {
-			t.Fatalf("expected error")
-		}
-		if !strings.Contains(err.Error(), "unknown scope") {
-			t.Fatalf("expected unknown scope error, got %q", err.Error())
-		}
-	})
+	}
 }

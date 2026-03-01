@@ -3,33 +3,23 @@ package mcp
 import (
 	"context"
 	"encoding/base64"
-	"strings"
+	"fmt"
 	"testing"
 )
 
-func TestToolsCall_TodoRegistryPathSupportsCanonicalAndAlias(t *testing.T) {
+var todoToolNames = []string{toolArtifactTodo, "artifact.todo"}
+
+func TestTodoTool_ReadMissingSupportsCanonicalAndAlias(t *testing.T) {
 	ctx := context.Background()
 	s := newDaemonBackedServer(t)
 
-	for _, toolName := range []string{toolArtifactTodo, "artifact.todo"} {
+	for _, toolName := range todoToolNames {
 		toolName := toolName
 		t.Run(toolName, func(t *testing.T) {
-			respAny, rpcErr := s.handleToolsCall(ctx, mustRawJSON(t, map[string]any{
-				"name": toolName,
-				"arguments": map[string]any{
-					"operation": "read",
-					"artifact":  map[string]any{"name": "plan/task-registry-path"},
-				},
+			resp := requireToolOK(t, callToolsCall(t, s, ctx, toolName, map[string]any{
+				"operation": "read",
+				"artifact":  map[string]any{"name": "plan/task-registry-path"},
 			}))
-			if rpcErr != nil {
-				t.Fatalf("tools/call %q rpc error: %+v", toolName, rpcErr)
-			}
-
-			resp := respAny.(toolResult)
-			if resp.IsError {
-				t.Fatalf("tools/call %q unexpectedly returned tool error: %+v", toolName, resp)
-			}
-
 			out, ok := resp.StructuredContent.(todoOut)
 			if !ok {
 				t.Fatalf("tools/call %q expected todoOut structured content, got %T", toolName, resp.StructuredContent)
@@ -46,93 +36,59 @@ func TestToolsCall_TodoRegistryPathSupportsCanonicalAndAlias(t *testing.T) {
 			if out.URIByName == "" {
 				t.Fatalf("tools/call %q expected uriByName to be populated", toolName)
 			}
+			requireContentTextEq(t, resp, "todo list not found; returning empty list")
 		})
 	}
 }
 
-func TestToolTodo_ReadMissingReturnsEmptyList(t *testing.T) {
+func TestTodoTool_WriteThenReadRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	s := newDaemonBackedServer(t)
 
-	respAny, rpcErr := s.toolTodo(ctx, mustRawJSON(t, map[string]any{
-		"operation": "read",
-		"artifact":  map[string]any{"name": "plan/task-123"},
-	}))
-	if rpcErr != nil {
-		t.Fatalf("todo read rpc error: %+v", rpcErr)
-	}
-	resp := respAny.(toolResult)
-	if resp.IsError {
-		t.Fatalf("todo read unexpectedly returned tool error: %+v", resp)
-	}
-	out := resp.StructuredContent.(todoOut)
-	if out.Exists {
-		t.Fatal("expected exists=false for missing todo artifact")
-	}
-	if len(out.TodoList) != 0 {
-		t.Fatalf("expected empty todoList, got %+v", out.TodoList)
-	}
-	if out.Name != "plan/task-123/todo" {
-		t.Fatalf("unexpected todo artifact name: %q", out.Name)
-	}
-	if got := firstContentText(resp); got != "todo list not found; returning empty list" {
-		t.Fatalf("unexpected read-missing content text: %q", got)
-	}
-}
+	for idx, toolName := range todoToolNames {
+		toolName := toolName
+		t.Run(toolName, func(t *testing.T) {
+			artifactName := fmt.Sprintf("plan/task-123-roundtrip-%d", idx)
 
-func TestToolTodo_WriteThenReadRoundTrip(t *testing.T) {
-	ctx := context.Background()
-	s := newDaemonBackedServer(t)
+			writeResp := requireToolOK(t, callToolsCall(t, s, ctx, toolName, map[string]any{
+				"operation": "write",
+				"artifact":  map[string]any{"name": artifactName},
+				"todoList": []map[string]any{
+					{"id": 1, "title": "Draft plan", "status": "not-started"},
+					{"id": 2, "title": "Implement", "status": "in-progress"},
+				},
+			}))
+			writeOut, ok := writeResp.StructuredContent.(todoOut)
+			if !ok {
+				t.Fatalf("%s write expected todoOut structured content, got %T", toolName, writeResp.StructuredContent)
+			}
+			if !writeOut.Exists || writeOut.Ref == "" || writeOut.URIByRef == "" || writeOut.URIByName == "" {
+				t.Fatalf("%s unexpected write metadata: %+v", toolName, writeOut)
+			}
+			if writeOut.Name != artifactName+"/todo" {
+				t.Fatalf("%s unexpected todo artifact name: %q", toolName, writeOut.Name)
+			}
+			if len(writeOut.TodoList) != 2 {
+				t.Fatalf("%s expected two todo items, got %d", toolName, len(writeOut.TodoList))
+			}
+			requireContentTextEq(t, writeResp, "todo list saved (2 items)")
 
-	writeRespAny, rpcErr := s.toolTodo(ctx, mustRawJSON(t, map[string]any{
-		"operation": "write",
-		"artifact":  map[string]any{"name": "plan/task-123"},
-		"todoList": []map[string]any{
-			{"id": 1, "title": "Draft plan", "status": "not-started"},
-			{"id": 2, "title": "Implement", "status": "in-progress"},
-		},
-	}))
-	if rpcErr != nil {
-		t.Fatalf("todo write rpc error: %+v", rpcErr)
-	}
-	writeResp := writeRespAny.(toolResult)
-	if writeResp.IsError {
-		t.Fatalf("todo write unexpectedly returned tool error: %+v", writeResp)
-	}
-	writeOut := writeResp.StructuredContent.(todoOut)
-	if !writeOut.Exists || writeOut.Ref == "" || writeOut.URIByRef == "" || writeOut.URIByName == "" {
-		t.Fatalf("unexpected write metadata: %+v", writeOut)
-	}
-	if writeOut.Name != "plan/task-123/todo" {
-		t.Fatalf("unexpected todo artifact name: %q", writeOut.Name)
-	}
-	if len(writeOut.TodoList) != 2 {
-		t.Fatalf("expected two todo items, got %d", len(writeOut.TodoList))
-	}
-	if got := firstContentText(writeResp); got != "todo list saved (2 items)" {
-		t.Fatalf("unexpected write content text: %q", got)
-	}
-
-	readRespAny, rpcErr := s.toolTodo(ctx, mustRawJSON(t, map[string]any{
-		"operation": "read",
-		"artifact":  map[string]any{"name": "plan/task-123"},
-	}))
-	if rpcErr != nil {
-		t.Fatalf("todo read rpc error: %+v", rpcErr)
-	}
-	readResp := readRespAny.(toolResult)
-	if readResp.IsError {
-		t.Fatalf("todo read unexpectedly returned tool error: %+v", readResp)
-	}
-	readOut := readResp.StructuredContent.(todoOut)
-	if !readOut.Exists || readOut.Ref != writeOut.Ref {
-		t.Fatalf("unexpected read metadata: %+v", readOut)
-	}
-	if len(readOut.TodoList) != 2 || readOut.TodoList[1].Status != "in-progress" {
-		t.Fatalf("unexpected read todo list: %+v", readOut.TodoList)
-	}
-	if got := firstContentText(readResp); got != "todo list loaded (2 items)" {
-		t.Fatalf("unexpected read content text: %q", got)
+			readResp := requireToolOK(t, callToolsCall(t, s, ctx, toolName, map[string]any{
+				"operation": "read",
+				"artifact":  map[string]any{"name": artifactName},
+			}))
+			readOut, ok := readResp.StructuredContent.(todoOut)
+			if !ok {
+				t.Fatalf("%s read expected todoOut structured content, got %T", toolName, readResp.StructuredContent)
+			}
+			if !readOut.Exists || readOut.Ref != writeOut.Ref {
+				t.Fatalf("%s unexpected read metadata: %+v", toolName, readOut)
+			}
+			if len(readOut.TodoList) != 2 || readOut.TodoList[1].Status != "in-progress" {
+				t.Fatalf("%s unexpected read todo list: %+v", toolName, readOut.TodoList)
+			}
+			requireContentTextEq(t, readResp, "todo list loaded (2 items)")
+		})
 	}
 }
 
@@ -147,186 +103,153 @@ func TestToolTodo_WriteWithRefSelectorResolvesBaseName(t *testing.T) {
 	if rpcErr != nil {
 		t.Fatalf("base save rpc error: %+v", rpcErr)
 	}
-	baseOut := baseRespAny.(toolResult).StructuredContent.(saveOut)
+	baseResp := requireToolOK(t, baseRespAny.(toolResult))
+	baseOut, ok := baseResp.StructuredContent.(saveOut)
+	if !ok {
+		t.Fatalf("expected saveOut structured content, got %T", baseResp.StructuredContent)
+	}
 
-	writeRespAny, rpcErr := s.toolTodo(ctx, mustRawJSON(t, map[string]any{
-		"operation": "write",
-		"artifact":  map[string]any{"ref": baseOut.Ref},
-		"todoList": []map[string]any{
-			{"id": 1, "title": "Linked task", "status": "completed"},
-		},
-	}))
-	if rpcErr != nil {
-		t.Fatalf("todo write by ref rpc error: %+v", rpcErr)
-	}
-	writeResp := writeRespAny.(toolResult)
-	if writeResp.IsError {
-		t.Fatalf("todo write by ref unexpectedly returned tool error: %+v", writeResp)
-	}
-	writeOut := writeResp.StructuredContent.(todoOut)
-	if writeOut.Name != "plan/task-by-ref/todo" {
-		t.Fatalf("unexpected resolved todo name: %q", writeOut.Name)
+	for _, toolName := range todoToolNames {
+		toolName := toolName
+		t.Run(toolName, func(t *testing.T) {
+			writeResp := requireToolOK(t, callToolsCall(t, s, ctx, toolName, map[string]any{
+				"operation": "write",
+				"artifact":  map[string]any{"ref": baseOut.Ref},
+				"todoList": []map[string]any{
+					{"id": 1, "title": "Linked task", "status": "completed"},
+				},
+			}))
+			writeOut, ok := writeResp.StructuredContent.(todoOut)
+			if !ok {
+				t.Fatalf("%s expected todoOut structured content, got %T", toolName, writeResp.StructuredContent)
+			}
+			if writeOut.Name != "plan/task-by-ref/todo" {
+				t.Fatalf("%s unexpected resolved todo name: %q", toolName, writeOut.Name)
+			}
+		})
 	}
 }
 
-func TestToolTodo_StaleExpectedPrevRefReturnsConflict(t *testing.T) {
+func TestToolTodo_StaleExpectedPrevRefReturnsConflictAndIsNonMutating(t *testing.T) {
 	ctx := context.Background()
-	s := newDaemonBackedServer(t)
 
-	firstAny, rpcErr := s.toolTodo(ctx, mustRawJSON(t, map[string]any{
-		"operation": "write",
-		"artifact":  map[string]any{"name": "plan/task-guard"},
-		"todoList":  []map[string]any{{"id": 1, "title": "First", "status": "not-started"}},
-	}))
-	if rpcErr != nil {
-		t.Fatalf("first todo write rpc error: %+v", rpcErr)
-	}
-	first := firstAny.(toolResult).StructuredContent.(todoOut)
+	for _, toolName := range todoToolNames {
+		toolName := toolName
+		t.Run(toolName, func(t *testing.T) {
+			s := newDaemonBackedServer(t)
+			firstResp := requireToolOK(t, callToolsCall(t, s, ctx, toolName, map[string]any{
+				"operation": "write",
+				"artifact":  map[string]any{"name": "plan/task-guard"},
+				"todoList":  []map[string]any{{"id": 1, "title": "First", "status": "not-started"}},
+			}))
+			firstOut, ok := firstResp.StructuredContent.(todoOut)
+			if !ok {
+				t.Fatalf("%s expected todoOut structured content, got %T", toolName, firstResp.StructuredContent)
+			}
 
-	secondAny, rpcErr := s.toolTodo(ctx, mustRawJSON(t, map[string]any{
-		"operation":       "write",
-		"artifact":        map[string]any{"name": "plan/task-guard"},
-		"todoList":        []map[string]any{{"id": 1, "title": "Second", "status": "in-progress"}},
-		"expectedPrevRef": "20260216T101019Z-cccccccccccccccc",
-	}))
-	if rpcErr != nil {
-		t.Fatalf("second todo write rpc error: %+v", rpcErr)
-	}
-	second := secondAny.(toolResult)
-	if !second.IsError {
-		t.Fatalf("expected stale expectedPrevRef to return tool error, got %+v", second)
-	}
-	if !contentContains(second, "conflict") {
-		t.Fatalf("expected conflict message, got %+v", second.Content)
-	}
+			secondResp := requireToolErr(t, callToolsCall(t, s, ctx, toolName, map[string]any{
+				"operation":       "write",
+				"artifact":        map[string]any{"name": "plan/task-guard"},
+				"todoList":        []map[string]any{{"id": 1, "title": "Second", "status": "in-progress"}},
+				"expectedPrevRef": "20260216T101019Z-cccccccccccccccc",
+			}))
+			requireContentTextContains(t, secondResp, "conflict")
 
-	readAny, rpcErr := s.toolTodo(ctx, mustRawJSON(t, map[string]any{
-		"operation": "read",
-		"artifact":  map[string]any{"name": "plan/task-guard"},
-	}))
-	if rpcErr != nil {
-		t.Fatalf("todo read rpc error: %+v", rpcErr)
-	}
-	readOut := readAny.(toolResult).StructuredContent.(todoOut)
-	if readOut.Ref != first.Ref {
-		t.Fatalf("expected latest ref to remain %q, got %q", first.Ref, readOut.Ref)
+			readResp := requireToolOK(t, callToolsCall(t, s, ctx, toolName, map[string]any{
+				"operation": "read",
+				"artifact":  map[string]any{"name": "plan/task-guard"},
+			}))
+			readOut, ok := readResp.StructuredContent.(todoOut)
+			if !ok {
+				t.Fatalf("%s expected todoOut structured content, got %T", toolName, readResp.StructuredContent)
+			}
+			if readOut.Ref != firstOut.Ref {
+				t.Fatalf("%s expected latest ref to remain %q, got %q", toolName, firstOut.Ref, readOut.Ref)
+			}
+		})
 	}
 }
 
-func TestToolTodo_WriteWithoutTodoListReturnsInvalidInput(t *testing.T) {
+func TestTodoTool_WriteWithoutTodoListReturnsInvalidArgumentsAndIsNonMutating(t *testing.T) {
 	ctx := context.Background()
 	s := newDaemonBackedServer(t)
 
-	writeRespAny, rpcErr := s.toolTodo(ctx, mustRawJSON(t, map[string]any{
-		"operation": "write",
-		"artifact":  map[string]any{"name": "plan/task-no-list"},
-	}))
-	if rpcErr != nil {
-		t.Fatalf("todo write rpc error: %+v", rpcErr)
-	}
-	writeResp := writeRespAny.(toolResult)
-	if !writeResp.IsError {
-		t.Fatalf("expected todo write without todoList to return tool error, got %+v", writeResp)
-	}
-	if !contentContains(writeResp, "invalid input") || !contentContains(writeResp, "todoList is required for write") {
-		t.Fatalf("expected invalid-input todoList-required message, got %+v", writeResp.Content)
-	}
+	for _, toolName := range todoToolNames {
+		toolName := toolName
+		t.Run(toolName, func(t *testing.T) {
+			writeResp := requireToolErr(t, callToolsCall(t, s, ctx, toolName, map[string]any{
+				"operation": "write",
+				"artifact":  map[string]any{"name": "plan/task-no-list"},
+			}))
+			requireContentTextEq(t, writeResp, todoInvalidArgumentsMessage)
 
-	readRespAny, rpcErr := s.toolTodo(ctx, mustRawJSON(t, map[string]any{
-		"operation": "read",
-		"artifact":  map[string]any{"name": "plan/task-no-list"},
-	}))
-	if rpcErr != nil {
-		t.Fatalf("todo read rpc error: %+v", rpcErr)
-	}
-	readResp := readRespAny.(toolResult)
-	if readResp.IsError {
-		t.Fatalf("todo read unexpectedly returned tool error after failed write: %+v", readResp)
-	}
-	readOut := readResp.StructuredContent.(todoOut)
-	if readOut.Exists {
-		t.Fatalf("expected todo artifact to remain absent after failed write, got %+v", readOut)
+			readResp := requireToolOK(t, callToolsCall(t, s, ctx, toolName, map[string]any{
+				"operation": "read",
+				"artifact":  map[string]any{"name": "plan/task-no-list"},
+			}))
+			readOut, ok := readResp.StructuredContent.(todoOut)
+			if !ok {
+				t.Fatalf("%s expected todoOut structured content, got %T", toolName, readResp.StructuredContent)
+			}
+			if readOut.Exists {
+				t.Fatalf("%s expected todo artifact to remain absent after failed write, got %+v", toolName, readOut)
+			}
+		})
 	}
 }
 
-func TestToolTodo_RejectsUnknownTopLevelField(t *testing.T) {
+func TestTodoTool_InvalidArguments_UnknownFields(t *testing.T) {
 	ctx := context.Background()
 	s := newDaemonBackedServer(t)
 
-	respAny, rpcErr := s.toolTodo(ctx, mustRawJSON(t, map[string]any{
-		"operation": "read",
-		"artifact":  map[string]any{"name": "plan/task-unknown-top"},
-		"unknown":   true,
-	}))
-	if rpcErr != nil {
-		t.Fatalf("todo read rpc error: %+v", rpcErr)
-	}
-
-	resp := respAny.(toolResult)
-	if !resp.IsError {
-		t.Fatalf("expected unknown top-level field to return tool error, got %+v", resp)
-	}
-
-	const expected = "Invalid arguments: expected {operation, artifact, todoList?, expectedPrevRef?}"
-	if firstContentText(resp) != expected {
-		t.Fatalf("expected invalid-arguments contract %q, got %+v", expected, resp.Content)
-	}
-}
-
-func TestToolTodo_RejectsUnknownArtifactSelectorField(t *testing.T) {
-	ctx := context.Background()
-	s := newDaemonBackedServer(t)
-
-	respAny, rpcErr := s.toolTodo(ctx, mustRawJSON(t, map[string]any{
-		"operation": "read",
-		"artifact": map[string]any{
-			"name":    "plan/task-unknown-artifact",
-			"unknown": "x",
-		},
-	}))
-	if rpcErr != nil {
-		t.Fatalf("todo read rpc error: %+v", rpcErr)
-	}
-
-	resp := respAny.(toolResult)
-	if !resp.IsError {
-		t.Fatalf("expected unknown artifact field to return tool error, got %+v", resp)
-	}
-
-	const expected = "Invalid arguments: expected {operation, artifact, todoList?, expectedPrevRef?}"
-	if firstContentText(resp) != expected {
-		t.Fatalf("expected invalid-arguments contract %q, got %+v", expected, resp.Content)
-	}
-}
-
-func TestToolTodo_RejectsUnknownTodoItemField(t *testing.T) {
-	ctx := context.Background()
-	s := newDaemonBackedServer(t)
-
-	respAny, rpcErr := s.toolTodo(ctx, mustRawJSON(t, map[string]any{
-		"operation": "write",
-		"artifact":  map[string]any{"name": "plan/task-unknown-item"},
-		"todoList": []map[string]any{
-			{
-				"id":      1,
-				"title":   "Task",
-				"status":  "not-started",
-				"unknown": "x",
+	testCases := []struct {
+		name string
+		args map[string]any
+	}{
+		{
+			name: "unknown top-level field",
+			args: map[string]any{
+				"operation": "read",
+				"artifact":  map[string]any{"name": "plan/task-unknown-top"},
+				"unknown":   true,
 			},
 		},
-	}))
-	if rpcErr != nil {
-		t.Fatalf("todo write rpc error: %+v", rpcErr)
+		{
+			name: "unknown artifact selector field",
+			args: map[string]any{
+				"operation": "read",
+				"artifact": map[string]any{
+					"name":    "plan/task-unknown-artifact",
+					"unknown": "x",
+				},
+			},
+		},
+		{
+			name: "unknown todo item field",
+			args: map[string]any{
+				"operation": "write",
+				"artifact":  map[string]any{"name": "plan/task-unknown-item"},
+				"todoList": []map[string]any{
+					{
+						"id":      1,
+						"title":   "Task",
+						"status":  "not-started",
+						"unknown": "x",
+					},
+				},
+			},
+		},
 	}
 
-	resp := respAny.(toolResult)
-	if !resp.IsError {
-		t.Fatalf("expected unknown todo item field to return tool error, got %+v", resp)
-	}
-
-	const expected = "Invalid arguments: expected {operation, artifact, todoList?, expectedPrevRef?}"
-	if firstContentText(resp) != expected {
-		t.Fatalf("expected invalid-arguments contract %q, got %+v", expected, resp.Content)
+	for _, tc := range testCases {
+		tc := tc
+		for _, toolName := range todoToolNames {
+			toolName := toolName
+			t.Run(tc.name+"/"+toolName, func(t *testing.T) {
+				resp := requireToolErr(t, callToolsCall(t, s, ctx, toolName, tc.args))
+				requireContentTextEq(t, resp, todoInvalidArgumentsMessage)
+			})
+		}
 	}
 }
 
@@ -335,50 +258,36 @@ func TestToolTodo_WriteRejectsOmittedRequiredTodoItemFields(t *testing.T) {
 	s := newDaemonBackedServer(t)
 
 	testCases := []struct {
-		name           string
-		item           map[string]any
-		messageSnippet string
+		name string
+		item map[string]any
 	}{
 		{
-			name:           "missing id",
-			item:           map[string]any{"title": "Task", "status": "not-started"},
-			messageSnippet: "todoList[0].id is required",
+			name: "missing id",
+			item: map[string]any{"title": "Task", "status": "not-started"},
 		},
 		{
-			name:           "missing title",
-			item:           map[string]any{"id": 1, "status": "not-started"},
-			messageSnippet: "todoList[0].title is required",
+			name: "missing title",
+			item: map[string]any{"id": 1, "status": "not-started"},
 		},
 		{
-			name:           "missing status",
-			item:           map[string]any{"id": 1, "title": "Task"},
-			messageSnippet: "todoList[0].status must be one of",
+			name: "missing status",
+			item: map[string]any{"id": 1, "title": "Task"},
 		},
 	}
 
 	for _, tc := range testCases {
 		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			respAny, rpcErr := s.toolTodo(ctx, mustRawJSON(t, map[string]any{
-				"operation": "write",
-				"artifact":  map[string]any{"name": "plan/task-missing-required-field"},
-				"todoList":  []map[string]any{tc.item},
-			}))
-			if rpcErr != nil {
-				t.Fatalf("todo write rpc error: %+v", rpcErr)
-			}
-
-			resp := respAny.(toolResult)
-			if !resp.IsError {
-				t.Fatalf("expected omitted required todo field to return tool error, got %+v", resp)
-			}
-			if !contentContains(resp, "invalid input") {
-				t.Fatalf("expected invalid-input error for omitted required field, got %+v", resp.Content)
-			}
-			if !contentContains(resp, tc.messageSnippet) {
-				t.Fatalf("expected detailed field validation message %q, got %+v", tc.messageSnippet, resp.Content)
-			}
-		})
+		for _, toolName := range todoToolNames {
+			toolName := toolName
+			t.Run(tc.name+"/"+toolName, func(t *testing.T) {
+				resp := requireToolErr(t, callToolsCall(t, s, ctx, toolName, map[string]any{
+					"operation": "write",
+					"artifact":  map[string]any{"name": "plan/task-missing-required-field"},
+					"todoList":  []map[string]any{tc.item},
+				}))
+				requireContentTextEq(t, resp, todoInvalidArgumentsMessage)
+			})
+		}
 	}
 }
 
@@ -386,62 +295,16 @@ func TestToolTodo_WriteRejectsNullTodoItemPayload(t *testing.T) {
 	ctx := context.Background()
 	s := newDaemonBackedServer(t)
 
-	respAny, rpcErr := s.toolTodo(ctx, mustRawJSON(t, map[string]any{
-		"operation": "write",
-		"artifact":  map[string]any{"name": "plan/task-null-item"},
-		"todoList":  []any{nil},
-	}))
-	if rpcErr != nil {
-		t.Fatalf("todo write rpc error: %+v", rpcErr)
-	}
-
-	resp := respAny.(toolResult)
-	if !resp.IsError {
-		t.Fatalf("expected null todo item payload to return tool error, got %+v", resp)
-	}
-	if !contentContains(resp, "invalid input") {
-		t.Fatalf("expected invalid-input error for null todo item payload, got %+v", resp.Content)
-	}
-	if !contentContains(resp, "todoList[0].id is required") {
-		t.Fatalf("expected required-field message for null todo item payload, got %+v", resp.Content)
-	}
-}
-
-func TestToolsCall_TodoUnknownFieldRejectionParity_CanonicalAndAlias(t *testing.T) {
-	ctx := context.Background()
-	s := newDaemonBackedServer(t)
-
-	const expected = "Invalid arguments: expected {operation, artifact, todoList?, expectedPrevRef?}"
-	messages := map[string]string{}
-
-	for _, toolName := range []string{toolArtifactTodo, "artifact.todo"} {
+	for _, toolName := range todoToolNames {
 		toolName := toolName
-		respAny, rpcErr := s.handleToolsCall(ctx, mustRawJSON(t, map[string]any{
-			"name": toolName,
-			"arguments": map[string]any{
-				"operation": "read",
-				"artifact":  map[string]any{"name": "plan/task-unknown-parity"},
-				"unknown":   true,
-			},
-		}))
-		if rpcErr != nil {
-			t.Fatalf("tools/call %q rpc error: %+v", toolName, rpcErr)
-		}
-
-		resp := respAny.(toolResult)
-		if !resp.IsError {
-			t.Fatalf("tools/call %q expected tool error for unknown field, got %+v", toolName, resp)
-		}
-
-		msg := firstContentText(resp)
-		if msg != expected {
-			t.Fatalf("tools/call %q expected invalid-arguments contract %q, got %+v", toolName, expected, resp.Content)
-		}
-		messages[toolName] = msg
-	}
-
-	if messages[toolArtifactTodo] != messages["artifact.todo"] {
-		t.Fatalf("expected canonical and alias todo invalid-arguments messages to match, got %q vs %q", messages[toolArtifactTodo], messages["artifact.todo"])
+		t.Run(toolName, func(t *testing.T) {
+			resp := requireToolErr(t, callToolsCall(t, s, ctx, toolName, map[string]any{
+				"operation": "write",
+				"artifact":  map[string]any{"name": "plan/task-null-item"},
+				"todoList":  []any{nil},
+			}))
+			requireContentTextEq(t, resp, todoInvalidArgumentsMessage)
+		})
 	}
 }
 
@@ -462,19 +325,15 @@ func TestToolTodo_ReadMalformedStoredTODOJSONReturnsError(t *testing.T) {
 		t.Fatalf("save blob unexpectedly returned tool error: %+v", saveResp)
 	}
 
-	readRespAny, rpcErr := s.toolTodo(ctx, mustRawJSON(t, map[string]any{
-		"operation": "read",
-		"artifact":  map[string]any{"name": "plan/task-malformed"},
-	}))
-	if rpcErr != nil {
-		t.Fatalf("todo read rpc error: %+v", rpcErr)
-	}
-	readResp := readRespAny.(toolResult)
-	if !readResp.IsError {
-		t.Fatalf("expected malformed stored todo payload to return tool error, got %+v", readResp)
-	}
-	if !contentContains(readResp, "internal error: invalid stored todo artifact") {
-		t.Fatalf("expected deterministic malformed-stored-todo error, got %+v", readResp.Content)
+	for _, toolName := range todoToolNames {
+		toolName := toolName
+		t.Run(toolName, func(t *testing.T) {
+			readResp := requireToolErr(t, callToolsCall(t, s, ctx, toolName, map[string]any{
+				"operation": "read",
+				"artifact":  map[string]any{"name": "plan/task-malformed"},
+			}))
+			requireContentTextContains(t, readResp, "internal error: invalid stored todo artifact")
+		})
 	}
 }
 
@@ -482,43 +341,61 @@ func TestToolTodo_ValidationErrors(t *testing.T) {
 	ctx := context.Background()
 	s := newDaemonBackedServer(t)
 
-	cases := []map[string]any{
+	cases := []struct {
+		name                 string
+		args                 map[string]any
+		expectInvalidArgsErr bool
+	}{
 		{
-			"operation": "write",
-			"artifact":  map[string]any{"name": "plan/task-invalid"},
-			"todoList":  []map[string]any{{"id": 1, "title": "", "status": "not-started"}},
-		},
-		{
-			"operation": "write",
-			"artifact":  map[string]any{"name": "plan/task-invalid"},
-			"todoList":  []map[string]any{{"id": 1, "title": "A", "status": "done"}},
-		},
-		{
-			"operation": "write",
-			"artifact":  map[string]any{"name": "plan/task-invalid"},
-			"todoList": []map[string]any{
-				{"id": 1, "title": "A", "status": "not-started"},
-				{"id": 1, "title": "B", "status": "completed"},
+			name: "empty title is rejected by handler validation",
+			args: map[string]any{
+				"operation": "write",
+				"artifact":  map[string]any{"name": "plan/task-invalid"},
+				"todoList":  []map[string]any{{"id": 1, "title": "", "status": "not-started"}},
 			},
 		},
 		{
-			"operation": "write",
-			"artifact":  map[string]any{"name": "plan/task-invalid", "ref": "20260216T101019Z-cccccccccccccccc"},
-			"todoList":  []map[string]any{{"id": 1, "title": "A", "status": "not-started"}},
+			name: "invalid status is rejected by schema validation",
+			args: map[string]any{
+				"operation": "write",
+				"artifact":  map[string]any{"name": "plan/task-invalid"},
+				"todoList":  []map[string]any{{"id": 1, "title": "A", "status": "done"}},
+			},
+			expectInvalidArgsErr: true,
+		},
+		{
+			name: "duplicate IDs are rejected by handler validation",
+			args: map[string]any{
+				"operation": "write",
+				"artifact":  map[string]any{"name": "plan/task-invalid"},
+				"todoList": []map[string]any{
+					{"id": 1, "title": "A", "status": "not-started"},
+					{"id": 1, "title": "B", "status": "completed"},
+				},
+			},
+		},
+		{
+			name: "name and ref conflict is rejected by handler validation",
+			args: map[string]any{
+				"operation": "write",
+				"artifact":  map[string]any{"name": "plan/task-invalid", "ref": "20260216T101019Z-cccccccccccccccc"},
+				"todoList":  []map[string]any{{"id": 1, "title": "A", "status": "not-started"}},
+			},
 		},
 	}
 
-	for idx, tc := range cases {
-		respAny, rpcErr := s.toolTodo(ctx, mustRawJSON(t, tc))
-		if rpcErr != nil {
-			t.Fatalf("case %d rpc error: %+v", idx, rpcErr)
-		}
-		resp := respAny.(toolResult)
-		if !resp.IsError {
-			t.Fatalf("case %d expected tool error, got %+v", idx, resp)
-		}
-		if !contentContains(resp, "invalid input") {
-			t.Fatalf("case %d expected invalid input message, got %+v", idx, resp.Content)
+	for _, tc := range cases {
+		tc := tc
+		for _, toolName := range todoToolNames {
+			toolName := toolName
+			t.Run(tc.name+"/"+toolName, func(t *testing.T) {
+				resp := requireToolErr(t, callToolsCall(t, s, ctx, toolName, tc.args))
+				if tc.expectInvalidArgsErr {
+					requireContentTextEq(t, resp, todoInvalidArgumentsMessage)
+					return
+				}
+				requireContentTextContains(t, resp, "invalid input")
+			})
 		}
 	}
 }
@@ -554,32 +431,4 @@ func TestToolsList_ExposesTodoDefinitionWithStrictNestedSchemas(t *testing.T) {
 	if itemSchema["additionalProperties"] != false {
 		t.Fatalf("expected strict todo item schema, got %+v", itemSchema)
 	}
-}
-
-func contentContains(result toolResult, needle string) bool {
-	for _, entry := range result.Content {
-		contentMap, ok := entry.(map[string]any)
-		if !ok {
-			continue
-		}
-		text, _ := contentMap["text"].(string)
-		if strings.Contains(strings.ToLower(text), strings.ToLower(needle)) {
-			return true
-		}
-	}
-	return false
-}
-
-func firstContentText(result toolResult) string {
-	for _, entry := range result.Content {
-		contentMap, ok := entry.(map[string]any)
-		if !ok {
-			continue
-		}
-		text, _ := contentMap["text"].(string)
-		if text != "" {
-			return text
-		}
-	}
-	return ""
 }
