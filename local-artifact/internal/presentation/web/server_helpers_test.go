@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -70,10 +71,12 @@ func TestParseSingleSelector_EdgeCases(t *testing.T) {
 
 func TestValidateCSRFToken_MismatchRejected(t *testing.T) {
 	cookieToken := mustCSRFToken(t)
-	formToken := mustCSRFToken(t)
-	if cookieToken == formToken {
-		t.Fatal("expected distinct CSRF tokens for mismatch test")
+	raw, err := hex.DecodeString(cookieToken)
+	if err != nil || len(raw) == 0 {
+		t.Fatalf("failed to decode csrf token %q: %v", cookieToken, err)
 	}
+	raw[0] ^= 0x01
+	formToken := hex.EncodeToString(raw)
 
 	form := url.Values{csrfFieldName: {formToken}}
 	req := httptest.NewRequest(http.MethodPost, "/delete", strings.NewReader(form.Encode()))
