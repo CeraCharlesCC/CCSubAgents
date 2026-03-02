@@ -15,6 +15,11 @@ func (s *Server) resolveSessionStore(ctx context.Context, force bool) {
 	s.resolveMu.Lock()
 	defer s.resolveMu.Unlock()
 
+	if s.workspaceOverrideID != "" {
+		s.setSessionWorkspace(daemon.WorkspaceSelector{WorkspaceID: s.workspaceOverrideID}, true)
+		return
+	}
+
 	if !s.isInitialized() {
 		return
 	}

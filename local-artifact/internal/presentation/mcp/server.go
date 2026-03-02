@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"log"
+	"os"
 	"sync"
 
 	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/core/workspaces"
@@ -14,8 +15,9 @@ import (
 )
 
 type Server struct {
-	baseStoreRoot string
-	daemonClient  *daemon.Client
+	baseStoreRoot       string
+	daemonClient        *daemon.Client
+	workspaceOverrideID string
 
 	sessionMu sync.RWMutex
 	workspace daemon.WorkspaceSelector
@@ -46,13 +48,29 @@ func NewWithClient(baseStoreRoot string, daemonClient *daemon.Client) *Server {
 	if daemonClient == nil {
 		daemonClient = daemon.NewUnavailableClient(errors.New("daemon client not configured"))
 	}
+	workspace := daemon.WorkspaceSelector{
+		WorkspaceID: workspaces.GlobalWorkspaceID,
+	}
+	sessionResolved := false
+
+	workspaceOverrideID, err := resolveWorkspaceHashOverrideFromEnv(os.Getenv)
+	if err != nil {
+		log.Printf("event=workspace_hash_override_invalid env=%s error=%q", workspaceHashOverrideEnv, err.Error())
+		workspaceOverrideID = ""
+	}
+	if workspaceOverrideID != "" {
+		workspace.WorkspaceID = workspaceOverrideID
+		sessionResolved = true
+		log.Printf("event=workspace_hash_override_configured env=%s subspace_hash=%s", workspaceHashOverrideEnv, workspaceOverrideID)
+	}
+
 	return &Server{
-		baseStoreRoot: baseStoreRoot,
-		daemonClient:  daemonClient,
-		workspace: daemon.WorkspaceSelector{
-			WorkspaceID: workspaces.GlobalWorkspaceID,
-		},
-		pending: map[string]chan jsonRPCResponse{},
+		baseStoreRoot:       baseStoreRoot,
+		daemonClient:        daemonClient,
+		workspaceOverrideID: workspaceOverrideID,
+		workspace:           workspace,
+		sessionResolved:     sessionResolved,
+		pending:             map[string]chan jsonRPCResponse{},
 	}
 }
 

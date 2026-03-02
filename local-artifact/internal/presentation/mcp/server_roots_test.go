@@ -296,6 +296,38 @@ func TestRootsListProtocol_SuccessUsesScopedStore(t *testing.T) {
 	}
 }
 
+func TestWorkspaceHashOverrideProtocol_UsesOverrideAndSkipsRootsList(t *testing.T) {
+	storeRoot := t.TempDir()
+	overrideHash := strings.Repeat("d", 64)
+	t.Setenv(workspaceHashOverrideEnv, strings.ToUpper(overrideHash))
+
+	h := newProtocolHarness(t, storeRoot)
+
+	initializeResp := h.initializeRootsCap(true)
+	if string(initializeResp.ID) != "1" || initializeResp.Error != nil {
+		t.Fatalf("unexpected initialize response: %+v", initializeResp)
+	}
+
+	h.notifyInitialized()
+	toolResp := h.callTool(2, toolArtifactSaveText, map[string]any{"name": "tests/override-hash", "text": "ok"})
+	if toolResp.Method == "roots/list" {
+		t.Fatalf("unexpected roots/list request when workspace override is set: %+v", toolResp)
+	}
+	if string(toolResp.ID) != "2" || toolResp.Error != nil {
+		t.Fatalf("unexpected tool response: %+v", toolResp)
+	}
+
+	overrideNames := readActiveArtifactNames(t, filepath.Join(storeRoot, overrideHash, "meta.sqlite"))
+	if _, ok := overrideNames["tests/override-hash"]; !ok {
+		t.Fatalf("expected override hash sqlite metadata to include artifact, got: %+v", overrideNames)
+	}
+
+	globalNames := readActiveArtifactNames(t, filepath.Join(storeRoot, "meta.sqlite"))
+	if _, ok := globalNames["tests/override-hash"]; ok {
+		t.Fatalf("expected override hash write not to appear in global metadata")
+	}
+}
+
 func TestRootsListProtocol_DefersRootsListUntilInitializedNotification(t *testing.T) {
 	storeRoot := t.TempDir()
 	h := newProtocolHarness(t, storeRoot)
