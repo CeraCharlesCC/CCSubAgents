@@ -31,6 +31,8 @@ All MCP/Web requests are routed through a background daemon (`ccsubagentsd`), wh
 
 When MCP client roots are available, the daemon normalizes the root URIs, hashes them with SHA-256, and maintains `meta.sqlite` under `$LOCAL_ARTIFACT_STORE_DIR/<hash>/`. If `roots/list` is unavailable or errors out, the server falls back to the `global` subspace (`$LOCAL_ARTIFACT_STORE_DIR/global/`).
 
+To force workspace separation for MCP clients that do not provide roots/working-directory context (for example Codex CLI), set `LOCAL_ARTIFACT_MCP_OVERRIDE_WORKSPACE_HASH=<64-hex>`. When set, this override is used with highest priority and `roots/list` is not used for workspace selection.
+
 ## Exposed MCP tools
 
 - `save_artifact_text`
