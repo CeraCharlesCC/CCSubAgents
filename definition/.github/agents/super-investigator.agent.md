@@ -61,7 +61,7 @@ Explore the codebase to achieve the objective. Read relevant files and modules, 
 
 If new uncertainties or points needing clarification arise during the analysis, do not hesitate to ask the user via `#tool:vscode/askQuestions`. Resolving all unknowns before proceeding with the investigation is important.
 
-When the investigation spans a wide area or crosses multiple domains, consider using `#tool:agent/runSubagent` to spin up an `agent: investigator` subagent and delegate a specific scope of investigation. Provide each subagent with the investigation objective (via a name ref to the objective artifact), the scope (via the prompt), and pointers to relevant code (if any). When the subagent finishes, it saves a report to an artifact named `subreport/<slug>` and returns the name ref to you. Multiple subagents can be launched concurrently.
+When the investigation spans a wide area or crosses multiple domains, consider using `#tool:agent/runSubagent` to spin up an `agent: investigator` subagent and delegate a specific scope of investigation. Provide each subagent with the investigation objective (via a name ref to the objective artifact), the scope (via the prompt), and pointers to relevant code (if any). When the subagent finishes, it saves a report to an artifact named `subreport/<slug>` and returns the name ref to you. Multiple subagents can be launched concurrently via multi_tool_use.parallel tool.
 
 You should give subagents the following information:
 - Investigation objective and scope: pass these via a name ref to the objective artifact. If you are narrowing the scope, supplement the prompt with references to the specific parts of the objective artifact they should focus on.
