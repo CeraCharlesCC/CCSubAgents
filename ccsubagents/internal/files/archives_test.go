@@ -1,6 +1,12 @@
 package files
 
-import "testing"
+import (
+	"archive/zip"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 func TestHasWindowsDrivePrefix(t *testing.T) {
 	t.Parallel()
@@ -44,5 +50,58 @@ func TestCleanZipPath_WindowsDrivePrefixHandling(t *testing.T) {
 	}
 	if got != "1:/agents/file.txt" {
 		t.Fatalf("expected cleaned path 1:/agents/file.txt, got %q", got)
+	}
+}
+
+func TestExtractBundleBinaries_MaxSizeLimit(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	zipPath := filepath.Join(tmpDir, "bundle.zip")
+	zipFile, err := os.Create(zipPath)
+	if err != nil {
+		t.Fatalf("create zip: %v", err)
+	}
+	zw := zip.NewWriter(zipFile)
+
+	entry, err := zw.Create("ccsubagents-mcp")
+	if err != nil {
+		t.Fatalf("create zip entry: %v", err)
+	}
+	chunk := strings.Repeat("a", 1<<20)
+	remaining := int64(maxBundleBinarySize + 1)
+	for remaining > 0 {
+		toWrite := int64(len(chunk))
+		if remaining < toWrite {
+			toWrite = remaining
+		}
+		if _, err := entry.Write([]byte(chunk[:toWrite])); err != nil {
+			t.Fatalf("write zip entry: %v", err)
+		}
+		remaining -= toWrite
+	}
+
+	if err := zw.Close(); err != nil {
+		t.Fatalf("close zip writer: %v", err)
+	}
+	if err := zipFile.Close(); err != nil {
+		t.Fatalf("close zip file: %v", err)
+	}
+
+	destDir := filepath.Join(tmpDir, "out")
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		t.Fatalf("create dest dir: %v", err)
+	}
+
+	_, err = ExtractBundleBinaries(zipPath, destDir, []string{"ccsubagents-mcp"}, 0o755)
+	if err == nil {
+		t.Fatalf("expected oversized archive entry error")
+	}
+	if !strings.Contains(err.Error(), "exceeds maximum size") {
+		t.Fatalf("expected max size error, got %v", err)
+	}
+
+	if _, statErr := os.Stat(filepath.Join(destDir, "ccsubagents-mcp")); !os.IsNotExist(statErr) {
+		t.Fatalf("expected extracted file cleanup on error, stat err=%v", statErr)
 	}
 }
