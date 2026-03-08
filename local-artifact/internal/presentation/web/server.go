@@ -658,6 +658,11 @@ type apiSaveRequest struct {
 }
 
 func (s *Server) handleAPISave(w http.ResponseWriter, r *http.Request) {
+	if err := validateMutationOrigin(r); err != nil {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": err.Error()})
+		return
+	}
+
 	svc, err := s.serviceFromQuerySubspace(r.URL.Query().Get("subspace"))
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
@@ -1049,6 +1054,24 @@ func validateCSRFToken(r *http.Request) error {
 	}
 	if subtle.ConstantTimeCompare([]byte(cookieToken), []byte(formToken)) != 1 {
 		return errors.New("invalid csrf token")
+	}
+	return nil
+}
+
+func validateMutationOrigin(r *http.Request) error {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		return nil
+	}
+	parsedOrigin, err := url.Parse(origin)
+	if err != nil {
+		return errors.New("cross-origin request blocked")
+	}
+	if !parsedOrigin.IsAbs() || parsedOrigin.Host == "" || (parsedOrigin.Scheme != "http" && parsedOrigin.Scheme != "https") {
+		return errors.New("cross-origin request blocked")
+	}
+	if !strings.EqualFold(parsedOrigin.Host, r.Host) {
+		return errors.New("cross-origin request blocked")
 	}
 	return nil
 }
