@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -1070,10 +1071,66 @@ func validateMutationOrigin(r *http.Request) error {
 	if !parsedOrigin.IsAbs() || parsedOrigin.Host == "" || (parsedOrigin.Scheme != "http" && parsedOrigin.Scheme != "https") {
 		return errors.New("cross-origin request blocked")
 	}
-	if !strings.EqualFold(parsedOrigin.Host, r.Host) {
+	if !isTrustedLoopbackAuthority(r.Host) {
+		return errors.New("cross-origin request blocked")
+	}
+	if !sameAuthority(parsedOrigin.Host, r.Host) {
 		return errors.New("cross-origin request blocked")
 	}
 	return nil
+}
+
+func sameAuthority(a, b string) bool {
+	aHost, aPort, err := splitAuthority(a)
+	if err != nil {
+		return false
+	}
+	bHost, bPort, err := splitAuthority(b)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(aHost, bHost) && aPort == bPort
+}
+
+func isTrustedLoopbackAuthority(authority string) bool {
+	host, _, err := splitAuthority(authority)
+	if err != nil {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func splitAuthority(authority string) (string, string, error) {
+	authority = strings.TrimSpace(authority)
+	if authority == "" || strings.ContainsAny(authority, `/\?#@ `) {
+		return "", "", errors.New("invalid authority")
+	}
+
+	if strings.Count(authority, ":") == 0 {
+		return authority, "", nil
+	}
+	if host, port, err := net.SplitHostPort(authority); err == nil {
+		host = strings.Trim(host, "[]")
+		if host == "" {
+			return "", "", errors.New("invalid authority")
+		}
+		return host, port, nil
+	}
+	if strings.HasPrefix(authority, "[") && strings.HasSuffix(authority, "]") {
+		host := strings.Trim(authority, "[]")
+		if host == "" {
+			return "", "", errors.New("invalid authority")
+		}
+		return host, "", nil
+	}
+	if ip := net.ParseIP(authority); ip != nil {
+		return ip.String(), "", nil
+	}
+	return "", "", errors.New("invalid authority")
 }
 
 func (s *Server) serviceFromSelectedSubspace(rawSubspace string) (*artifacts.Service, error) {

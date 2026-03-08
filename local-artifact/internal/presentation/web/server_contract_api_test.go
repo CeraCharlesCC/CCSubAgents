@@ -59,6 +59,22 @@ func TestAPISaveRejectsCrossOriginMutation(t *testing.T) {
 	}
 }
 
+func TestAPISaveRejectsRebindingMutation(t *testing.T) {
+	h := newWebHarness(t)
+
+	rr := h.request(http.MethodPost, "/api/artifacts?subspace=global", strings.NewReader(`{"name":"api/text","text":"hello"}`), func(req *http.Request) {
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Origin", "http://attacker.invalid:8080")
+		req.Host = "attacker.invalid:8080"
+	})
+	assertStatus(t, rr, http.StatusForbidden)
+
+	res := decodeJSON[map[string]any](t, rr)
+	if got, _ := res["error"].(string); got != "cross-origin request blocked" {
+		t.Fatalf("unexpected error: %q", got)
+	}
+}
+
 func TestAPISaveAllowsSameOriginMutation(t *testing.T) {
 	h := newWebHarness(t)
 
