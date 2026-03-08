@@ -16,6 +16,7 @@ const (
 	DefaultStateDirPerm   = 0o755
 	DefaultStateFilePerm  = 0o644
 	DefaultBinaryFilePerm = 0o755
+	maxBundleBinarySize   = 512 << 20 // 512 MiB
 )
 
 func InstallBinary(srcPath, dstPath string, perm os.FileMode) error {
@@ -63,22 +64,9 @@ func ExtractBundleBinaries(zipPath, destDir string, names []string, perm os.File
 			return nil, fmt.Errorf("archive contains duplicate %q", baseName)
 		}
 
-		rc, err := file.Open()
-		if err != nil {
-			return nil, fmt.Errorf("open archive file %s: %w", file.Name, err)
-		}
-		content, readErr := io.ReadAll(rc)
-		closeErr := rc.Close()
-		if readErr != nil {
-			return nil, fmt.Errorf("read archive file %s: %w", file.Name, readErr)
-		}
-		if closeErr != nil {
-			return nil, fmt.Errorf("close archive file %s: %w", file.Name, closeErr)
-		}
-
 		destPath := filepath.Join(destDir, baseName)
-		if err := os.WriteFile(destPath, content, perm); err != nil {
-			return nil, fmt.Errorf("write extracted bundle file %s: %w", destPath, err)
+		if err := writeZipEntry(file, destPath, perm, maxBundleBinarySize); err != nil {
+			return nil, err
 		}
 		extracted[baseName] = destPath
 	}
@@ -189,6 +177,41 @@ func ExtractAgentsArchiveWithHook(zipPath, destDir string, beforeWrite func(stri
 	}
 
 	return UniqueSorted(files), UniqueSorted(dirs), nil
+}
+
+func writeZipEntry(file *zip.File, destPath string, perm os.FileMode, maxSize int64) (retErr error) {
+	rc, err := file.Open()
+	if err != nil {
+		return fmt.Errorf("open archive file %s: %w", file.Name, err)
+	}
+	defer func() {
+		if closeErr := rc.Close(); closeErr != nil && retErr == nil {
+			retErr = fmt.Errorf("close archive file %s: %w", file.Name, closeErr)
+		}
+	}()
+
+	out, err := os.OpenFile(destPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, perm)
+	if err != nil {
+		return fmt.Errorf("create extracted bundle file %s: %w", destPath, err)
+	}
+	defer func() {
+		if closeErr := out.Close(); closeErr != nil && retErr == nil {
+			retErr = fmt.Errorf("close extracted bundle file %s: %w", destPath, closeErr)
+		}
+		if retErr != nil {
+			_ = os.Remove(destPath)
+		}
+	}()
+
+	written, err := io.CopyN(out, rc, maxSize+1)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("read archive file %s: %w", file.Name, err)
+	}
+	if written > maxSize {
+		return fmt.Errorf("archive file %s exceeds maximum size of %d bytes", file.Name, maxSize)
+	}
+
+	return nil
 }
 
 func shouldStripAgentsPrefix(files []*zip.File) (bool, error) {
