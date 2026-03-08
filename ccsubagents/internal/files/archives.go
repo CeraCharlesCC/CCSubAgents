@@ -16,12 +16,25 @@ const (
 	DefaultStateDirPerm   = 0o755
 	DefaultStateFilePerm  = 0o644
 	DefaultBinaryFilePerm = 0o755
+	maxBundleBinarySize   = 512 << 20 // 512 MiB
+	maxAgentsFileSize     = 32 << 20  // 32 MiB
+	maxAgentsArchiveSize  = 256 << 20 // 256 MiB
 )
 
 func InstallBinary(srcPath, dstPath string, perm os.FileMode) error {
+	return InstallBinaryWithinBase(srcPath, dstPath, filepath.Dir(dstPath), perm)
+}
+
+func InstallBinaryWithinBase(srcPath, dstPath, base string, perm os.FileMode) error {
 	data, err := os.ReadFile(srcPath)
 	if err != nil {
 		return fmt.Errorf("read source binary %s: %w", srcPath, err)
+	}
+	if err := RejectSymlinkPathWithinBase(filepath.Dir(dstPath), base); err != nil {
+		return err
+	}
+	if err := RejectSymlinkPathWithinBase(dstPath, base); err != nil {
+		return err
 	}
 	if err := os.WriteFile(dstPath, data, perm); err != nil {
 		return err
@@ -63,22 +76,9 @@ func ExtractBundleBinaries(zipPath, destDir string, names []string, perm os.File
 			return nil, fmt.Errorf("archive contains duplicate %q", baseName)
 		}
 
-		rc, err := file.Open()
-		if err != nil {
-			return nil, fmt.Errorf("open archive file %s: %w", file.Name, err)
-		}
-		content, readErr := io.ReadAll(rc)
-		closeErr := rc.Close()
-		if readErr != nil {
-			return nil, fmt.Errorf("read archive file %s: %w", file.Name, readErr)
-		}
-		if closeErr != nil {
-			return nil, fmt.Errorf("close archive file %s: %w", file.Name, closeErr)
-		}
-
 		destPath := filepath.Join(destDir, baseName)
-		if err := os.WriteFile(destPath, content, perm); err != nil {
-			return nil, fmt.Errorf("write extracted bundle file %s: %w", destPath, err)
+		if _, err := writeZipEntryWithinBase(file, destPath, destDir, perm, maxBundleBinarySize); err != nil {
+			return nil, err
 		}
 		extracted[baseName] = destPath
 	}
@@ -98,6 +98,10 @@ func ExtractBundleBinaries(zipPath, destDir string, names []string, perm os.File
 }
 
 func ExtractAgentsArchiveWithHook(zipPath, destDir string, beforeWrite func(string) error, stateDirPerm, stateFilePerm os.FileMode) (filesOut []string, dirsOut []string, retErr error) {
+	return extractAgentsArchiveWithHookAndLimits(zipPath, destDir, beforeWrite, stateDirPerm, stateFilePerm, maxAgentsFileSize, maxAgentsArchiveSize)
+}
+
+func extractAgentsArchiveWithHookAndLimits(zipPath, destDir string, beforeWrite func(string) error, stateDirPerm, stateFilePerm os.FileMode, maxFileSize, maxArchiveSize int64) (filesOut []string, dirsOut []string, retErr error) {
 	r, err := zip.OpenReader(zipPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open archive: %w", err)
@@ -112,6 +116,7 @@ func ExtractAgentsArchiveWithHook(zipPath, destDir string, beforeWrite func(stri
 	files := []string{}
 	dirs := []string{}
 	writtenFiles := []string{}
+	var totalWritten int64
 	defer func() {
 		if retErr == nil {
 			return
@@ -147,6 +152,9 @@ func ExtractAgentsArchiveWithHook(zipPath, destDir string, beforeWrite func(stri
 		}
 
 		if file.FileInfo().IsDir() {
+			if err := RejectSymlinkPathWithinBase(destPath, destDir); err != nil {
+				return nil, nil, err
+			}
 			if err := os.MkdirAll(destPath, stateDirPerm); err != nil {
 				return nil, nil, fmt.Errorf("create directory %s: %w", destPath, err)
 			}
@@ -155,23 +163,14 @@ func ExtractAgentsArchiveWithHook(zipPath, destDir string, beforeWrite func(stri
 		}
 
 		parent := filepath.Dir(destPath)
+		if err := RejectSymlinkPathWithinBase(parent, destDir); err != nil {
+			return nil, nil, err
+		}
 		if err := os.MkdirAll(parent, stateDirPerm); err != nil {
 			return nil, nil, fmt.Errorf("create directory %s: %w", parent, err)
 		}
 		dirs = append(dirs, parent)
 
-		rc, err := file.Open()
-		if err != nil {
-			return nil, nil, fmt.Errorf("open archive file %s: %w", file.Name, err)
-		}
-		content, readErr := io.ReadAll(rc)
-		closeErr := rc.Close()
-		if readErr != nil {
-			return nil, nil, fmt.Errorf("read archive file %s: %w", file.Name, readErr)
-		}
-		if closeErr != nil {
-			return nil, nil, fmt.Errorf("close archive file %s: %w", file.Name, closeErr)
-		}
 		mode := file.FileInfo().Mode().Perm()
 		if mode == 0 {
 			mode = stateFilePerm
@@ -181,14 +180,74 @@ func ExtractAgentsArchiveWithHook(zipPath, destDir string, beforeWrite func(stri
 				return nil, nil, err
 			}
 		}
-		if err := os.WriteFile(destPath, content, mode); err != nil {
-			return nil, nil, fmt.Errorf("write extracted file %s: %w", destPath, err)
+		remainingArchiveBudget := maxArchiveSize - totalWritten
+		if remainingArchiveBudget <= 0 {
+			return nil, nil, fmt.Errorf("archive exceeds maximum total extracted size of %d bytes", maxArchiveSize)
 		}
+		entryLimit := minInt64(maxFileSize, remainingArchiveBudget)
+		written, err := writeZipEntryWithinBase(file, destPath, destDir, mode, entryLimit)
+		if err != nil {
+			return nil, nil, err
+		}
+		totalWritten += written
 		writtenFiles = append(writtenFiles, destPath)
 		files = append(files, destPath)
 	}
 
 	return UniqueSorted(files), UniqueSorted(dirs), nil
+}
+
+func minInt64(a, b int64) int64 {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func writeZipEntry(file *zip.File, destPath string, perm os.FileMode, maxSize int64) (written int64, retErr error) {
+	return writeZipEntryWithinBase(file, destPath, filepath.Dir(destPath), perm, maxSize)
+}
+
+func writeZipEntryWithinBase(file *zip.File, destPath, base string, perm os.FileMode, maxSize int64) (written int64, retErr error) {
+	if err := RejectSymlinkPathWithinBase(filepath.Dir(destPath), base); err != nil {
+		return 0, err
+	}
+	if err := RejectSymlinkPathWithinBase(destPath, base); err != nil {
+		return 0, err
+	}
+
+	rc, err := file.Open()
+	if err != nil {
+		return 0, fmt.Errorf("open archive file %s: %w", file.Name, err)
+	}
+	defer func() {
+		if closeErr := rc.Close(); closeErr != nil && retErr == nil {
+			retErr = fmt.Errorf("close archive file %s: %w", file.Name, closeErr)
+		}
+	}()
+
+	out, err := os.OpenFile(destPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, perm)
+	if err != nil {
+		return 0, fmt.Errorf("create extracted file %s: %w", destPath, err)
+	}
+	defer func() {
+		if closeErr := out.Close(); closeErr != nil && retErr == nil {
+			retErr = fmt.Errorf("close extracted file %s: %w", destPath, closeErr)
+		}
+		if retErr != nil {
+			_ = os.Remove(destPath)
+		}
+	}()
+
+	written, err = io.CopyN(out, rc, maxSize+1)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return written, fmt.Errorf("read archive file %s: %w", file.Name, err)
+	}
+	if written > maxSize {
+		return written, fmt.Errorf("archive file %s exceeds maximum size of %d bytes", file.Name, maxSize)
+	}
+
+	return written, nil
 }
 
 func shouldStripAgentsPrefix(files []*zip.File) (bool, error) {

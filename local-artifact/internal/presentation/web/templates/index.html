@@ -805,7 +805,7 @@
               </div>
             </dl>
             <div class="viewer-content" id="viewer-content">
-              <p class="placeholder">Supported: text/plain, text/markdown, image/*, application/json, application/ld+json.
+              <p class="placeholder">Supported: text/plain, text/markdown, image/png, image/jpeg, image/gif, image/webp, application/json, application/ld+json.
               </p>
             </div>
           </section>
@@ -886,7 +886,13 @@
       let previewRequestID = 0;
       let copyPayload = '';
       let copyStatusTimeoutID = 0;
-      const previewSupportText = 'Supported: text/plain, text/markdown, image/*, application/json, application/ld+json.';
+      const previewSupportText = 'Supported: text/plain, text/markdown, image/png, image/jpeg, image/gif, image/webp, application/json, application/ld+json.';
+      const safeImageMimeTypes = {
+        'image/png': true,
+        'image/jpeg': true,
+        'image/gif': true,
+        'image/webp': true,
+      };
 
       if (!selectedInputs || !countNode || !deleteButton) {
         return;
@@ -1179,7 +1185,7 @@
             const mimeType = normalizeMimeType(result.rawMimeType);
             setViewerDetails(row, result.rawMimeType);
             setViewerMetaText((name || ref) + ' | ' + result.rawMimeType);
-            if (mimeType.indexOf('image/') === 0) {
+            if (safeImageMimeTypes[mimeType]) {
               setViewerCopyState(ref, 'Copy ref');
               showViewerImage(result.blob, name || ref);
               return;

@@ -96,6 +96,40 @@ func TestValidateCSRFToken_MismatchRejected(t *testing.T) {
 	}
 }
 
+func TestValidateMutationOrigin(t *testing.T) {
+	tests := []struct {
+		name    string
+		origin  string
+		host    string
+		wantErr bool
+	}{
+		{name: "missing origin allowed", origin: "", host: "127.0.0.1:19130", wantErr: false},
+		{name: "same localhost origin allowed", origin: "http://localhost:19130", host: "localhost:19130", wantErr: false},
+		{name: "same ipv4 loopback origin allowed", origin: "http://127.0.0.1:19130", host: "127.0.0.1:19130", wantErr: false},
+		{name: "same ipv6 loopback origin allowed", origin: "http://[::1]:19130", host: "[::1]:19130", wantErr: false},
+		{name: "rebound host blocked", origin: "http://attacker.invalid:19130", host: "attacker.invalid:19130", wantErr: true},
+		{name: "cross origin blocked", origin: "http://attacker.invalid:19130", host: "127.0.0.1:19130", wantErr: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/artifacts", nil)
+			if tc.origin != "" {
+				req.Header.Set("Origin", tc.origin)
+			}
+			req.Host = tc.host
+
+			err := validateMutationOrigin(req)
+			if tc.wantErr && err == nil {
+				t.Fatal("expected origin validation error")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("unexpected origin validation error: %v", err)
+			}
+		})
+	}
+}
+
 func TestAPISaveJSONBodyLimitAllowsMaxBinaryUpload(t *testing.T) {
 	encodedPayloadBytes := int64(base64.StdEncoding.EncodedLen(int(maxInsertUploadBytes)))
 	requiredLimit := encodedPayloadBytes + maxInsertUploadOverheadBytes

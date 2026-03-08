@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -658,6 +659,11 @@ type apiSaveRequest struct {
 }
 
 func (s *Server) handleAPISave(w http.ResponseWriter, r *http.Request) {
+	if err := validateMutationOrigin(r); err != nil {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": err.Error()})
+		return
+	}
+
 	svc, err := s.serviceFromQuerySubspace(r.URL.Query().Get("subspace"))
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
@@ -1051,6 +1057,80 @@ func validateCSRFToken(r *http.Request) error {
 		return errors.New("invalid csrf token")
 	}
 	return nil
+}
+
+func validateMutationOrigin(r *http.Request) error {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		return nil
+	}
+	parsedOrigin, err := url.Parse(origin)
+	if err != nil {
+		return errors.New("cross-origin request blocked")
+	}
+	if !parsedOrigin.IsAbs() || parsedOrigin.Host == "" || (parsedOrigin.Scheme != "http" && parsedOrigin.Scheme != "https") {
+		return errors.New("cross-origin request blocked")
+	}
+	if !isTrustedLoopbackAuthority(r.Host) {
+		return errors.New("cross-origin request blocked")
+	}
+	if !sameAuthority(parsedOrigin.Host, r.Host) {
+		return errors.New("cross-origin request blocked")
+	}
+	return nil
+}
+
+func sameAuthority(a, b string) bool {
+	aHost, aPort, err := splitAuthority(a)
+	if err != nil {
+		return false
+	}
+	bHost, bPort, err := splitAuthority(b)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(aHost, bHost) && aPort == bPort
+}
+
+func isTrustedLoopbackAuthority(authority string) bool {
+	host, _, err := splitAuthority(authority)
+	if err != nil {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func splitAuthority(authority string) (string, string, error) {
+	authority = strings.TrimSpace(authority)
+	if authority == "" || strings.ContainsAny(authority, `/\?#@ `) {
+		return "", "", errors.New("invalid authority")
+	}
+
+	if strings.Count(authority, ":") == 0 {
+		return authority, "", nil
+	}
+	if host, port, err := net.SplitHostPort(authority); err == nil {
+		host = strings.Trim(host, "[]")
+		if host == "" {
+			return "", "", errors.New("invalid authority")
+		}
+		return host, port, nil
+	}
+	if strings.HasPrefix(authority, "[") && strings.HasSuffix(authority, "]") {
+		host := strings.Trim(authority, "[]")
+		if host == "" {
+			return "", "", errors.New("invalid authority")
+		}
+		return host, "", nil
+	}
+	if ip := net.ParseIP(authority); ip != nil {
+		return ip.String(), "", nil
+	}
+	return "", "", errors.New("invalid authority")
 }
 
 func (s *Server) serviceFromSelectedSubspace(rawSubspace string) (*artifacts.Service, error) {

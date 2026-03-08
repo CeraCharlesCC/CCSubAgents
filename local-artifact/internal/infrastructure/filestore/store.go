@@ -30,7 +30,7 @@ func (s *Store) ensureDirs() error {
 		filepath.Join(s.root, "meta"),
 	}
 	for _, d := range dirs {
-		if err := os.MkdirAll(d, 0o755); err != nil {
+		if err := os.MkdirAll(d, 0o700); err != nil {
 			return err
 		}
 	}
@@ -59,7 +59,7 @@ func (s *Store) Save(ctx context.Context, a artifacts.Artifact, data []byte, opt
 	}
 
 	objPath := filepath.Join(s.root, "objects", a.Ref)
-	if err := atomicWriteFile(objPath, data, 0o644); err != nil {
+	if err := atomicWriteFile(objPath, data, 0o600); err != nil {
 		return artifacts.Artifact{}, fmt.Errorf("write object: %w", err)
 	}
 
@@ -68,7 +68,7 @@ func (s *Store) Save(ctx context.Context, a artifacts.Artifact, data []byte, opt
 		return artifacts.Artifact{}, fmt.Errorf("marshal meta: %w", err)
 	}
 	metaPath := filepath.Join(s.root, "meta", a.Ref+".json")
-	if err := atomicWriteFile(metaPath, metaBytes, 0o644); err != nil {
+	if err := atomicWriteFile(metaPath, metaBytes, 0o600); err != nil {
 		return artifacts.Artifact{}, fmt.Errorf("write meta: %w", err)
 	}
 
@@ -427,7 +427,7 @@ func (s *Store) saveIndexLocked(idx indexFile) error {
 	if err != nil {
 		return fmt.Errorf("marshal index: %w", err)
 	}
-	if err := atomicWriteFile(s.indexPath(), b, 0o644); err != nil {
+	if err := atomicWriteFile(s.indexPath(), b, 0o600); err != nil {
 		return fmt.Errorf("write index: %w", err)
 	}
 	return nil
@@ -435,7 +435,7 @@ func (s *Store) saveIndexLocked(idx indexFile) error {
 
 func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 	// Create temp file in same dir so os.Rename is atomic.

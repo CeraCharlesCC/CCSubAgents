@@ -207,7 +207,10 @@ func startCCSubagentsd(stderr io.Writer, storeRoot, stateDir, token string) erro
 	}
 
 	home, _ := os.UserHomeDir()
-	daemonPath := ccsubagentsdPath(exePath, home, runtime.GOOS, os.Getenv, exec.LookPath)
+	daemonPath, err := ccsubagentsdPath(exePath, home, runtime.GOOS, os.Getenv)
+	if err != nil {
+		return err
+	}
 	cmd := exec.Command(daemonPath)
 	cmd.Stdout = stderr
 	cmd.Stderr = stderr
@@ -344,7 +347,7 @@ func localArtifactWebPath(exePath, goos string) string {
 	return filepath.Join(filepath.Dir(exePath), name)
 }
 
-func ccsubagentsdPath(exePath, home, goos string, getenv func(string) string, lookPath func(string) (string, error)) string {
+func ccsubagentsdPath(exePath, home, goos string, getenv func(string) string) (string, error) {
 	name := "ccsubagentsd"
 	if goos == "windows" {
 		name += ".exe"
@@ -352,42 +355,31 @@ func ccsubagentsdPath(exePath, home, goos string, getenv func(string) string, lo
 	if getenv == nil {
 		getenv = os.Getenv
 	}
-	if lookPath == nil {
-		lookPath = exec.LookPath
-	}
 
 	sibling := filepath.Join(filepath.Dir(exePath), name)
 	if pathExists(sibling) {
-		return sibling
+		return sibling, nil
 	}
 
+	checked := []string{sibling}
 	configuredBinDir := config.ResolveConfiguredPath(home, strings.TrimSpace(getenv("LOCAL_ARTIFACT_BIN_DIR")))
 	if configuredBinDir != "" {
 		configuredPath := filepath.Join(configuredBinDir, name)
+		checked = appendPathIfMissing(checked, configuredPath)
 		if pathExists(configuredPath) {
-			return configuredPath
+			return configuredPath, nil
 		}
 	}
 
-	if found, err := lookPath(name); err == nil && strings.TrimSpace(found) != "" {
-		return found
-	}
-
-	if home != "" && goos != "windows" {
+	if home != "" {
 		defaultPath := filepath.Join(home, ".local", "bin", name)
+		checked = appendPathIfMissing(checked, defaultPath)
 		if pathExists(defaultPath) {
-			return defaultPath
-		}
-		if configuredBinDir == "" {
-			return defaultPath
+			return defaultPath, nil
 		}
 	}
 
-	if configuredBinDir != "" {
-		return filepath.Join(configuredBinDir, name)
-	}
-
-	return sibling
+	return "", fmt.Errorf("cannot find daemon binary %q; checked %s", name, strings.Join(checked, ", "))
 }
 
 func pathExists(path string) bool {
@@ -396,6 +388,18 @@ func pathExists(path string) bool {
 		return false
 	}
 	return !info.IsDir()
+}
+
+func appendPathIfMissing(paths []string, candidate string) []string {
+	if strings.TrimSpace(candidate) == "" {
+		return paths
+	}
+	for _, existing := range paths {
+		if filepath.Clean(existing) == filepath.Clean(candidate) {
+			return paths
+		}
+	}
+	return append(paths, candidate)
 }
 
 func readPersistedDaemonToken(stateDir string) string {

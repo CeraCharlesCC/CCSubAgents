@@ -168,7 +168,7 @@ func (r *Runner) persistPendingPinWrite(mutations *files.MutationTracker) error 
 
 	pending := *r.pendingPinWrite
 	if mutations != nil {
-		if err := mutations.EnsureParentDir(pending.path); err != nil {
+		if err := mutations.EnsureParentDirWithinBase(pending.path, filepath.Dir(pending.path)); err != nil {
 			return err
 		}
 		if err := mutations.SnapshotFile(pending.path); err != nil {
@@ -440,7 +440,9 @@ func (r *Runner) installExtractedBinaries(ctx context.Context, bundleBinaries ma
 
 	installer := r.installBinary
 	if installer == nil {
-		installer = func(src, dst string) error { return files.InstallBinary(src, dst, binaryFilePerm) }
+		installer = func(src, dst string) error {
+			return files.InstallBinaryWithinBase(src, dst, destinationDir, binaryFilePerm)
+		}
 	}
 
 	for _, binaryName := range binaryNames {
@@ -587,10 +589,10 @@ func (r *Runner) installOrUpdate(ctx context.Context, isUpdate bool) (retErr err
 	}()
 
 	agentsDir := filepath.Join(layout.StateDir, "agents")
-	if err := mutations.EnsureDir(filepath.Dir(agentsDir)); err != nil {
+	if err := mutations.EnsureDirWithinBase(filepath.Dir(agentsDir), layout.StateDir); err != nil {
 		return err
 	}
-	if err := mutations.EnsureDir(agentsDir); err != nil {
+	if err := mutations.EnsureDirWithinBase(agentsDir, layout.StateDir); err != nil {
 		return err
 	}
 
@@ -619,14 +621,14 @@ func (r *Runner) installOrUpdate(ctx context.Context, isUpdate bool) (retErr err
 	r.reportDetail("extracted %d agent definitions", len(extractedFiles))
 
 	for _, target := range configTargets {
-		if err := mutations.EnsureParentDir(target.settingsPath); err != nil {
+		if err := mutations.EnsureParentDirWithinBase(target.settingsPath, filepath.Dir(target.settingsPath)); err != nil {
 			return err
 		}
 		if err := mutations.SnapshotFile(target.settingsPath); err != nil {
 			return err
 		}
 
-		if err := mutations.EnsureParentDir(target.mcpPath); err != nil {
+		if err := mutations.EnsureParentDirWithinBase(target.mcpPath, filepath.Dir(target.mcpPath)); err != nil {
 			return err
 		}
 		if err := mutations.SnapshotFile(target.mcpPath); err != nil {

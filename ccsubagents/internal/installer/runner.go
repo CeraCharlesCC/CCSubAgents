@@ -102,16 +102,18 @@ type installConfigTarget struct {
 
 func NewRunner() *Runner {
 	return &Runner{
-		httpClient:    &http.Client{Timeout: 30 * time.Second},
-		now:           time.Now,
-		homeDir:       os.UserHomeDir,
-		workingDir:    os.Getwd,
-		lookPath:      exec.LookPath,
-		runCommand:    runCommand,
-		getenv:        os.Getenv,
-		installBinary: func(src, dst string) error { return files.InstallBinary(src, dst, binaryFilePerm) },
-		promptIn:      os.Stdin,
-		promptOut:     os.Stdout,
+		httpClient: &http.Client{Timeout: 30 * time.Second},
+		now:        time.Now,
+		homeDir:    os.UserHomeDir,
+		workingDir: os.Getwd,
+		lookPath:   exec.LookPath,
+		runCommand: runCommand,
+		getenv:     os.Getenv,
+		installBinary: func(src, dst string) error {
+			return files.InstallBinaryWithinBase(src, dst, filepath.Dir(dst), binaryFilePerm)
+		},
+		promptIn:  os.Stdin,
+		promptOut: os.Stdout,
 	}
 }
 
