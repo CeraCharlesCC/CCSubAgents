@@ -61,6 +61,7 @@ func RejectSymlinkPath(path string) error {
 			if info.Mode()&os.ModeSymlink != 0 {
 				return fmt.Errorf("refusing symlink path component: %s", current)
 			}
+			break
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("lstat %s: %w", current, err)
 		}

@@ -286,6 +286,26 @@ func TestInstallBinary_RejectsSymlinkDestination(t *testing.T) {
 	}
 }
 
+func TestRejectSymlinkPath_AllowsSymlinkAncestorAboveExistingBase(t *testing.T) {
+	t.Parallel()
+
+	realRoot := t.TempDir()
+	linkParent := t.TempDir()
+	linkRoot := filepath.Join(linkParent, "linked")
+	if err := os.Symlink(realRoot, linkRoot); err != nil {
+		t.Fatalf("create symlink root: %v", err)
+	}
+
+	destDir := filepath.Join(linkRoot, "dest")
+	if err := os.MkdirAll(destDir, DefaultStateDirPerm); err != nil {
+		t.Fatalf("create destination dir: %v", err)
+	}
+
+	if err := RejectSymlinkPath(filepath.Join(destDir, "file")); err != nil {
+		t.Fatalf("expected existing base under symlinked ancestor to be allowed, got %v", err)
+	}
+}
+
 func mustWriteZipFile(t *testing.T, path string, files map[string]string) {
 	t.Helper()
 
