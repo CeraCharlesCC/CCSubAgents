@@ -134,7 +134,11 @@ func NewMutationTracker(rollback *Rollback, dirPerm os.FileMode) *MutationTracke
 }
 
 func (m *MutationTracker) EnsureDir(path string) error {
-	created, err := EnsureDirTracked(path, m.dirPerm)
+	return m.EnsureDirWithinBase(path, path)
+}
+
+func (m *MutationTracker) EnsureDirWithinBase(path, base string) error {
+	created, err := EnsureDirTrackedWithinBase(path, base, m.dirPerm)
 	if err != nil {
 		return err
 	}
@@ -149,7 +153,11 @@ func (m *MutationTracker) EnsureDir(path string) error {
 }
 
 func (m *MutationTracker) EnsureParentDir(path string) error {
-	return m.EnsureDir(filepath.Dir(path))
+	return m.EnsureParentDirWithinBase(path, filepath.Dir(path))
+}
+
+func (m *MutationTracker) EnsureParentDirWithinBase(path, base string) error {
+	return m.EnsureDirWithinBase(filepath.Dir(path), base)
 }
 
 func (m *MutationTracker) SnapshotFile(path string) error {

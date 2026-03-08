@@ -286,7 +286,7 @@ func TestInstallBinary_RejectsSymlinkDestination(t *testing.T) {
 	}
 }
 
-func TestRejectSymlinkPath_AllowsSymlinkAncestorAboveExistingBase(t *testing.T) {
+func TestRejectSymlinkPathWithinBase_AllowsSymlinkAncestorAboveBase(t *testing.T) {
 	t.Parallel()
 
 	realRoot := t.TempDir()
@@ -301,8 +301,33 @@ func TestRejectSymlinkPath_AllowsSymlinkAncestorAboveExistingBase(t *testing.T) 
 		t.Fatalf("create destination dir: %v", err)
 	}
 
-	if err := RejectSymlinkPath(filepath.Join(destDir, "file")); err != nil {
-		t.Fatalf("expected existing base under symlinked ancestor to be allowed, got %v", err)
+	if err := RejectSymlinkPathWithinBase(filepath.Join(destDir, "file"), destDir); err != nil {
+		t.Fatalf("expected symlink ancestor above trusted base to be allowed, got %v", err)
+	}
+}
+
+func TestRejectSymlinkPathWithinBase_RejectsSymlinkInsideBase(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	destDir := filepath.Join(dir, "dest")
+	outsideDir := filepath.Join(dir, "outside")
+	if err := os.MkdirAll(outsideDir, DefaultStateDirPerm); err != nil {
+		t.Fatalf("create outside dir: %v", err)
+	}
+	if err := os.MkdirAll(destDir, DefaultStateDirPerm); err != nil {
+		t.Fatalf("create destination dir: %v", err)
+	}
+	if err := os.Symlink(outsideDir, filepath.Join(destDir, "nested")); err != nil {
+		t.Fatalf("create nested symlink: %v", err)
+	}
+
+	err := RejectSymlinkPathWithinBase(filepath.Join(destDir, "nested", "file"), destDir)
+	if err == nil {
+		t.Fatalf("expected symlink path rejection")
+	}
+	if !strings.Contains(err.Error(), "refusing symlink path component") {
+		t.Fatalf("expected symlink rejection error, got %v", err)
 	}
 }
 

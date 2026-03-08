@@ -22,14 +22,18 @@ const (
 )
 
 func InstallBinary(srcPath, dstPath string, perm os.FileMode) error {
+	return InstallBinaryWithinBase(srcPath, dstPath, filepath.Dir(dstPath), perm)
+}
+
+func InstallBinaryWithinBase(srcPath, dstPath, base string, perm os.FileMode) error {
 	data, err := os.ReadFile(srcPath)
 	if err != nil {
 		return fmt.Errorf("read source binary %s: %w", srcPath, err)
 	}
-	if err := RejectSymlinkPath(filepath.Dir(dstPath)); err != nil {
+	if err := RejectSymlinkPathWithinBase(filepath.Dir(dstPath), base); err != nil {
 		return err
 	}
-	if err := RejectSymlinkPath(dstPath); err != nil {
+	if err := RejectSymlinkPathWithinBase(dstPath, base); err != nil {
 		return err
 	}
 	if err := os.WriteFile(dstPath, data, perm); err != nil {
@@ -73,7 +77,7 @@ func ExtractBundleBinaries(zipPath, destDir string, names []string, perm os.File
 		}
 
 		destPath := filepath.Join(destDir, baseName)
-		if _, err := writeZipEntry(file, destPath, perm, maxBundleBinarySize); err != nil {
+		if _, err := writeZipEntryWithinBase(file, destPath, destDir, perm, maxBundleBinarySize); err != nil {
 			return nil, err
 		}
 		extracted[baseName] = destPath
@@ -148,7 +152,7 @@ func extractAgentsArchiveWithHookAndLimits(zipPath, destDir string, beforeWrite 
 		}
 
 		if file.FileInfo().IsDir() {
-			if err := RejectSymlinkPath(destPath); err != nil {
+			if err := RejectSymlinkPathWithinBase(destPath, destDir); err != nil {
 				return nil, nil, err
 			}
 			if err := os.MkdirAll(destPath, stateDirPerm); err != nil {
@@ -159,7 +163,7 @@ func extractAgentsArchiveWithHookAndLimits(zipPath, destDir string, beforeWrite 
 		}
 
 		parent := filepath.Dir(destPath)
-		if err := RejectSymlinkPath(parent); err != nil {
+		if err := RejectSymlinkPathWithinBase(parent, destDir); err != nil {
 			return nil, nil, err
 		}
 		if err := os.MkdirAll(parent, stateDirPerm); err != nil {
@@ -181,7 +185,7 @@ func extractAgentsArchiveWithHookAndLimits(zipPath, destDir string, beforeWrite 
 			return nil, nil, fmt.Errorf("archive exceeds maximum total extracted size of %d bytes", maxArchiveSize)
 		}
 		entryLimit := minInt64(maxFileSize, remainingArchiveBudget)
-		written, err := writeZipEntry(file, destPath, mode, entryLimit)
+		written, err := writeZipEntryWithinBase(file, destPath, destDir, mode, entryLimit)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -201,10 +205,14 @@ func minInt64(a, b int64) int64 {
 }
 
 func writeZipEntry(file *zip.File, destPath string, perm os.FileMode, maxSize int64) (written int64, retErr error) {
-	if err := RejectSymlinkPath(filepath.Dir(destPath)); err != nil {
+	return writeZipEntryWithinBase(file, destPath, filepath.Dir(destPath), perm, maxSize)
+}
+
+func writeZipEntryWithinBase(file *zip.File, destPath, base string, perm os.FileMode, maxSize int64) (written int64, retErr error) {
+	if err := RejectSymlinkPathWithinBase(filepath.Dir(destPath), base); err != nil {
 		return 0, err
 	}
-	if err := RejectSymlinkPath(destPath); err != nil {
+	if err := RejectSymlinkPathWithinBase(destPath, base); err != nil {
 		return 0, err
 	}
 

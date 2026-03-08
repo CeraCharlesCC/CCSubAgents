@@ -386,7 +386,7 @@ func (r *Runner) installOrUpdateLocal(ctx context.Context, cfg localInstallConfi
 	}()
 
 	managedDir := filepath.Join(cfg.location.installRoot, config.LocalManagedDirRelativePath)
-	if err := mutations.EnsureDir(managedDir); err != nil {
+	if err := mutations.EnsureDirWithinBase(managedDir, cfg.location.installRoot); err != nil {
 		return err
 	}
 
@@ -412,10 +412,10 @@ func (r *Runner) installOrUpdateLocal(ctx context.Context, cfg localInstallConfi
 	mcpEdits := []state.MCPEdit{}
 	if !cfg.binaryOnly {
 		agentsDir := filepath.Join(cfg.location.installRoot, config.LocalAgentsRelativePath)
-		if err := mutations.EnsureDir(filepath.Dir(agentsDir)); err != nil {
+		if err := mutations.EnsureDirWithinBase(filepath.Dir(agentsDir), cfg.location.installRoot); err != nil {
 			return err
 		}
-		if err := mutations.EnsureDir(agentsDir); err != nil {
+		if err := mutations.EnsureDirWithinBase(agentsDir, cfg.location.installRoot); err != nil {
 			return err
 		}
 
@@ -427,7 +427,7 @@ func (r *Runner) installOrUpdateLocal(ctx context.Context, cfg localInstallConfi
 		r.reportDetail("extracted %d local agent definitions", len(extractedFiles))
 
 		mcpPath := filepath.Join(cfg.location.installRoot, config.LocalMCPRelativePath)
-		if err := mutations.EnsureParentDir(mcpPath); err != nil {
+		if err := mutations.EnsureParentDirWithinBase(mcpPath, cfg.location.installRoot); err != nil {
 			return err
 		}
 		if err := mutations.SnapshotFile(mcpPath); err != nil {

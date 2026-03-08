@@ -28,7 +28,11 @@ func UniqueSorted(values []string) []string {
 }
 
 func EnsureDirTracked(path string, perm os.FileMode) (bool, error) {
-	if err := RejectSymlinkPath(path); err != nil {
+	return EnsureDirTrackedWithinBase(path, path, perm)
+}
+
+func EnsureDirTrackedWithinBase(path, base string, perm os.FileMode) (bool, error) {
+	if err := RejectSymlinkPathWithinBase(path, base); err != nil {
 		return false, err
 	}
 
@@ -54,25 +58,36 @@ func EnsureParentDir(path string, perm os.FileMode) (bool, error) {
 }
 
 func RejectSymlinkPath(path string) error {
-	clean := filepath.Clean(path)
-	for current := clean; ; current = filepath.Dir(current) {
+	return RejectSymlinkPathWithinBase(path, path)
+}
+
+func RejectSymlinkPathWithinBase(path, base string) error {
+	path = filepath.Clean(path)
+	base = filepath.Clean(base)
+
+	if path != base && !IsPathWithinDir(path, base) {
+		return fmt.Errorf("path escapes trusted base: %s", path)
+	}
+
+	for current := path; ; current = filepath.Dir(current) {
 		info, err := os.Lstat(current)
 		if err == nil {
 			if info.Mode()&os.ModeSymlink != 0 {
 				return fmt.Errorf("refusing symlink path component: %s", current)
 			}
-			break
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("lstat %s: %w", current, err)
 		}
 
+		if current == base {
+			return nil
+		}
+
 		parent := filepath.Dir(current)
 		if parent == current {
-			break
+			return fmt.Errorf("path %s does not descend from base %s", path, base)
 		}
 	}
-
-	return nil
 }
 
 func IsPathWithinDir(path, dir string) bool {
