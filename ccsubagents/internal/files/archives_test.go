@@ -1,6 +1,14 @@
 package files
 
-import "testing"
+import (
+	"archive/zip"
+	"bytes"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 func TestHasWindowsDrivePrefix(t *testing.T) {
 	t.Parallel()
@@ -44,5 +52,151 @@ func TestCleanZipPath_WindowsDrivePrefixHandling(t *testing.T) {
 	}
 	if got != "1:/agents/file.txt" {
 		t.Fatalf("expected cleaned path 1:/agents/file.txt, got %q", got)
+	}
+}
+
+func TestExtractBundleBinaries_WritesRequestedFiles(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	zipPath := filepath.Join(dir, "bundle.zip")
+	destDir := filepath.Join(dir, "dest")
+	if err := os.MkdirAll(destDir, DefaultStateDirPerm); err != nil {
+		t.Fatalf("create dest dir: %v", err)
+	}
+
+	mustWriteZipFile(t, zipPath, map[string]string{
+		"nested/mcp": "mcp-binary",
+		"web":        "web-binary",
+		"ignored":    "skip",
+	})
+
+	extracted, err := ExtractBundleBinaries(zipPath, destDir, []string{"mcp", "web"}, DefaultBinaryFilePerm)
+	if err != nil {
+		t.Fatalf("extract bundle binaries: %v", err)
+	}
+
+	for name, want := range map[string]string{"mcp": "mcp-binary", "web": "web-binary"} {
+		path, ok := extracted[name]
+		if !ok {
+			t.Fatalf("expected extracted path for %q", name)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read extracted file %q: %v", name, err)
+		}
+		if string(data) != want {
+			t.Fatalf("extracted %q = %q, want %q", name, string(data), want)
+		}
+	}
+}
+
+func TestWriteZipEntry_RejectsOversizedEntryAndRemovesPartialFile(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	zipPath := filepath.Join(dir, "bundle.zip")
+	destPath := filepath.Join(dir, "mcp")
+	mustWriteZipFile(t, zipPath, map[string]string{
+		"mcp": strings.Repeat("x", 32),
+	})
+
+	r, err := zip.OpenReader(zipPath)
+	if err != nil {
+		t.Fatalf("open zip: %v", err)
+	}
+	defer r.Close()
+
+	if len(r.File) != 1 {
+		t.Fatalf("expected exactly one archive entry, got %d", len(r.File))
+	}
+
+	_, err = writeZipEntry(r.File[0], destPath, DefaultBinaryFilePerm, 8)
+	if err == nil {
+		t.Fatalf("expected oversized entry error")
+	}
+	if !strings.Contains(err.Error(), "exceeds maximum size") {
+		t.Fatalf("expected size limit error, got %v", err)
+	}
+	if _, statErr := os.Stat(destPath); !os.IsNotExist(statErr) {
+		t.Fatalf("expected partial file removed, stat err: %v", statErr)
+	}
+}
+
+func TestExtractAgentsArchiveWithHook_RejectsOversizedEntry(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	zipPath := filepath.Join(dir, "agents.zip")
+	destDir := filepath.Join(dir, "dest")
+	if err := os.MkdirAll(destDir, DefaultStateDirPerm); err != nil {
+		t.Fatalf("create dest dir: %v", err)
+	}
+
+	mustWriteZipFile(t, zipPath, map[string]string{
+		"agents/too-large.agent.md": strings.Repeat("a", 32),
+	})
+
+	_, _, err := extractAgentsArchiveWithHookAndLimits(zipPath, destDir, nil, DefaultStateDirPerm, DefaultStateFilePerm, 8, 64)
+	if err == nil {
+		t.Fatalf("expected oversized entry error")
+	}
+	if !strings.Contains(err.Error(), "exceeds maximum size") {
+		t.Fatalf("expected size limit error, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(destDir, "too-large.agent.md")); !os.IsNotExist(statErr) {
+		t.Fatalf("expected oversized file not to remain on disk, stat err: %v", statErr)
+	}
+}
+
+func TestExtractAgentsArchiveWithHook_RejectsArchiveOverTotalLimit(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	zipPath := filepath.Join(dir, "agents.zip")
+	destDir := filepath.Join(dir, "dest")
+	if err := os.MkdirAll(destDir, DefaultStateDirPerm); err != nil {
+		t.Fatalf("create dest dir: %v", err)
+	}
+
+	mustWriteZipFile(t, zipPath, map[string]string{
+		"agents/one.agent.md": strings.Repeat("a", 8),
+		"agents/two.agent.md": strings.Repeat("b", 8),
+	})
+
+	_, _, err := extractAgentsArchiveWithHookAndLimits(zipPath, destDir, nil, DefaultStateDirPerm, DefaultStateFilePerm, 16, 12)
+	if err == nil {
+		t.Fatalf("expected total archive size error")
+	}
+	if !strings.Contains(err.Error(), "archive file") || !strings.Contains(err.Error(), "exceeds maximum size") {
+		t.Fatalf("expected bounded write failure once archive budget is exhausted, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(destDir, "one.agent.md")); !os.IsNotExist(statErr) {
+		t.Fatalf("expected extracted files removed after failure, stat err: %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(destDir, "two.agent.md")); !os.IsNotExist(statErr) {
+		t.Fatalf("expected extracted files removed after failure, stat err: %v", statErr)
+	}
+}
+
+func mustWriteZipFile(t *testing.T, path string, files map[string]string) {
+	t.Helper()
+
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for name, content := range files {
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatalf("create zip entry %s: %v", name, err)
+		}
+		if _, err := io.WriteString(w, content); err != nil {
+			t.Fatalf("write zip entry %s: %v", name, err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("close zip writer: %v", err)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), DefaultStateFilePerm); err != nil {
+		t.Fatalf("write zip file: %v", err)
 	}
 }
