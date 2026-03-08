@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -62,10 +63,10 @@ func TestCCSubagentsdPath(t *testing.T) {
 			t.Fatalf("seed sibling daemon: %v", err)
 		}
 
-		got := ccsubagentsdPath(exePath, t.TempDir(), "linux",
-			func(string) string { return "" },
-			func(string) (string, error) { return "/usr/local/bin/ccsubagentsd", nil },
-		)
+		got, err := ccsubagentsdPath(exePath, t.TempDir(), "linux", func(string) string { return "" })
+		if err != nil {
+			t.Fatalf("ccsubagentsdPath() error = %v", err)
+		}
 		if got != sibling {
 			t.Fatalf("ccsubagentsdPath() = %q, want %q", got, sibling)
 		}
@@ -82,44 +83,65 @@ func TestCCSubagentsdPath(t *testing.T) {
 			t.Fatalf("seed configured daemon: %v", err)
 		}
 
-		got := ccsubagentsdPath(filepath.Join(t.TempDir(), "local-artifact-mcp"), home, "linux",
+		got, err := ccsubagentsdPath(filepath.Join(t.TempDir(), "local-artifact-mcp"), home, "linux",
 			func(key string) string {
 				if key == "LOCAL_ARTIFACT_BIN_DIR" {
 					return "~/bin"
 				}
 				return ""
 			},
-			func(string) (string, error) { return "", errors.New("missing") },
 		)
+		if err != nil {
+			t.Fatalf("ccsubagentsdPath() error = %v", err)
+		}
 		if got != configured {
 			t.Fatalf("ccsubagentsdPath() = %q, want %q", got, configured)
 		}
 	})
 
-	t.Run("uses lookPath when local candidates missing", func(t *testing.T) {
-		found := "/opt/tools/ccsubagentsd"
-		got := ccsubagentsdPath(filepath.Join(t.TempDir(), "local-artifact-mcp"), t.TempDir(), "linux",
-			func(string) string { return "" },
-			func(string) (string, error) { return found, nil },
-		)
-		if got != found {
-			t.Fatalf("ccsubagentsdPath() = %q, want %q", got, found)
+	t.Run("falls back to default local bin", func(t *testing.T) {
+		home := t.TempDir()
+		defaultBin := filepath.Join(home, ".local", "bin")
+		if err := os.MkdirAll(defaultBin, 0o755); err != nil {
+			t.Fatalf("create default bin dir: %v", err)
+		}
+		defaultPath := filepath.Join(defaultBin, "ccsubagentsd")
+		if err := os.WriteFile(defaultPath, []byte("daemon"), 0o755); err != nil {
+			t.Fatalf("seed default daemon: %v", err)
+		}
+
+		got, err := ccsubagentsdPath(filepath.Join(t.TempDir(), "local-artifact-mcp"), home, "linux", func(string) string { return "" })
+		if err != nil {
+			t.Fatalf("ccsubagentsdPath() error = %v", err)
+		}
+		if got != defaultPath {
+			t.Fatalf("ccsubagentsdPath() = %q, want %q", got, defaultPath)
 		}
 	})
 
-	t.Run("uses windows suffix", func(t *testing.T) {
-		found := `C:\Tools\ccsubagentsd.exe`
-		got := ccsubagentsdPath(filepath.Join(t.TempDir(), "local-artifact-mcp.exe"), t.TempDir(), "windows",
-			func(string) string { return "" },
-			func(name string) (string, error) {
-				if name != "ccsubagentsd.exe" {
-					t.Fatalf("lookPath called with %q", name)
+	t.Run("returns clear error when missing", func(t *testing.T) {
+		home := t.TempDir()
+		exePath := filepath.Join(t.TempDir(), "local-artifact-mcp.exe")
+		_, err := ccsubagentsdPath(exePath, home, "windows",
+			func(key string) string {
+				if key == "LOCAL_ARTIFACT_BIN_DIR" {
+					return "~/bin"
 				}
-				return found, nil
+				return ""
 			},
 		)
-		if got != found {
-			t.Fatalf("ccsubagentsdPath() = %q, want %q", got, found)
+		if err == nil {
+			t.Fatal("expected missing daemon error")
+		}
+		for _, want := range []string{
+			`cannot find daemon binary "ccsubagentsd.exe"`,
+			filepath.Join(filepath.Dir(exePath), "ccsubagentsd.exe"),
+			filepath.Join(home, "bin", "ccsubagentsd.exe"),
+			filepath.Join(home, ".local", "bin", "ccsubagentsd.exe"),
+		} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("expected error to contain %q, got %v", want, err)
+			}
 		}
 	})
 }

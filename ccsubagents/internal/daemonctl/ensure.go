@@ -164,7 +164,10 @@ func startProcess(stateDir, storeRoot, token string, stderr io.Writer) error {
 		return fmt.Errorf("resolve executable path: %w", err)
 	}
 	home, _ := os.UserHomeDir()
-	daemonPath := resolveDaemonPath(exePath, home, runtime.GOOS, os.Getenv, exec.LookPath)
+	daemonPath, err := resolveDaemonPath(exePath, home, runtime.GOOS, os.Getenv)
+	if err != nil {
+		return err
+	}
 	cmd := exec.Command(daemonPath)
 	cmd.Stdout = stderr
 	cmd.Stderr = stderr
@@ -243,47 +246,36 @@ func daemonBinaryNameForOS(goos string) string {
 	return "ccsubagentsd"
 }
 
-func resolveDaemonPath(exePath, home, goos string, getenv func(string) string, lookPath func(string) (string, error)) string {
+func resolveDaemonPath(exePath, home, goos string, getenv func(string) string) (string, error) {
 	if getenv == nil {
 		getenv = os.Getenv
-	}
-	if lookPath == nil {
-		lookPath = exec.LookPath
 	}
 
 	name := daemonBinaryNameForOS(goos)
 	sibling := filepath.Join(filepath.Dir(exePath), name)
 	if pathExists(sibling) {
-		return sibling
+		return sibling, nil
 	}
 
+	checked := []string{sibling}
 	configuredBinDir := paths.ResolveConfiguredPath(home, strings.TrimSpace(getenv("LOCAL_ARTIFACT_BIN_DIR")))
 	if configuredBinDir != "" {
 		configuredPath := filepath.Join(configuredBinDir, name)
+		checked = appendPathIfMissing(checked, configuredPath)
 		if pathExists(configuredPath) {
-			return configuredPath
+			return configuredPath, nil
 		}
 	}
 
-	if found, err := lookPath(name); err == nil && strings.TrimSpace(found) != "" {
-		return found
-	}
-
-	if home != "" && goos != "windows" {
+	if home != "" {
 		defaultPath := filepath.Join(home, ".local", "bin", name)
+		checked = appendPathIfMissing(checked, defaultPath)
 		if pathExists(defaultPath) {
-			return defaultPath
-		}
-		if configuredBinDir == "" {
-			return defaultPath
+			return defaultPath, nil
 		}
 	}
 
-	if configuredBinDir != "" {
-		return filepath.Join(configuredBinDir, name)
-	}
-
-	return sibling
+	return "", fmt.Errorf("cannot find daemon binary %q; checked %s", name, strings.Join(checked, ", "))
 }
 
 func pathExists(path string) bool {
@@ -292,6 +284,18 @@ func pathExists(path string) bool {
 		return false
 	}
 	return !info.IsDir()
+}
+
+func appendPathIfMissing(paths []string, candidate string) []string {
+	if strings.TrimSpace(candidate) == "" {
+		return paths
+	}
+	for _, existing := range paths {
+		if filepath.Clean(existing) == filepath.Clean(candidate) {
+			return paths
+		}
+	}
+	return append(paths, candidate)
 }
 
 func defaultDaemonSocket(stateDir string) string {

@@ -289,10 +289,10 @@ func TestResolveDaemonPath_PrefersSiblingBinary(t *testing.T) {
 		t.Fatalf("seed sibling daemon: %v", err)
 	}
 
-	got := resolveDaemonPath(exePath, t.TempDir(), "linux",
-		func(string) string { return "" },
-		func(string) (string, error) { return "/usr/local/bin/ccsubagentsd", nil },
-	)
+	got, err := resolveDaemonPath(exePath, t.TempDir(), "linux", func(string) string { return "" })
+	if err != nil {
+		t.Fatalf("resolveDaemonPath() error = %v", err)
+	}
 	if got != sibling {
 		t.Fatalf("expected sibling daemon path %q, got %q", sibling, got)
 	}
@@ -309,28 +309,19 @@ func TestResolveDaemonPath_UsesConfiguredBinDirWhenSiblingMissing(t *testing.T) 
 		t.Fatalf("seed configured daemon: %v", err)
 	}
 
-	got := resolveDaemonPath(filepath.Join(t.TempDir(), "ccsubagents"), home, "linux",
+	got, err := resolveDaemonPath(filepath.Join(t.TempDir(), "ccsubagents"), home, "linux",
 		func(key string) string {
 			if key == "LOCAL_ARTIFACT_BIN_DIR" {
 				return "~/bin"
 			}
 			return ""
 		},
-		func(string) (string, error) { return "", errors.New("missing") },
 	)
+	if err != nil {
+		t.Fatalf("resolveDaemonPath() error = %v", err)
+	}
 	if got != configured {
 		t.Fatalf("expected configured daemon path %q, got %q", configured, got)
-	}
-}
-
-func TestResolveDaemonPath_UsesLookPathWhenNoLocalCandidates(t *testing.T) {
-	found := "/opt/tools/ccsubagentsd"
-	got := resolveDaemonPath(filepath.Join(t.TempDir(), "ccsubagents"), t.TempDir(), "linux",
-		func(string) string { return "" },
-		func(string) (string, error) { return found, nil },
-	)
-	if got != found {
-		t.Fatalf("expected lookPath daemon %q, got %q", found, got)
 	}
 }
 
@@ -345,12 +336,39 @@ func TestResolveDaemonPath_FallsBackToDefaultLocalBin(t *testing.T) {
 		t.Fatalf("seed default daemon: %v", err)
 	}
 
-	got := resolveDaemonPath(filepath.Join(t.TempDir(), "ccsubagents"), home, "linux",
-		func(string) string { return "" },
-		func(string) (string, error) { return "", errors.New("missing") },
-	)
+	got, err := resolveDaemonPath(filepath.Join(t.TempDir(), "ccsubagents"), home, "linux", func(string) string { return "" })
+	if err != nil {
+		t.Fatalf("resolveDaemonPath() error = %v", err)
+	}
 	if got != defaultPath {
 		t.Fatalf("expected default local-bin daemon path %q, got %q", defaultPath, got)
+	}
+}
+
+func TestResolveDaemonPath_ReturnsClearErrorWhenMissing(t *testing.T) {
+	home := t.TempDir()
+	exePath := filepath.Join(t.TempDir(), "ccsubagents")
+
+	_, err := resolveDaemonPath(exePath, home, "linux",
+		func(key string) string {
+			if key == "LOCAL_ARTIFACT_BIN_DIR" {
+				return "~/bin"
+			}
+			return ""
+		},
+	)
+	if err == nil {
+		t.Fatal("expected missing daemon error")
+	}
+	for _, want := range []string{
+		`cannot find daemon binary "ccsubagentsd"`,
+		filepath.Join(filepath.Dir(exePath), "ccsubagentsd"),
+		filepath.Join(home, "bin", "ccsubagentsd"),
+		filepath.Join(home, ".local", "bin", "ccsubagentsd"),
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error to contain %q, got %v", want, err)
+		}
 	}
 }
 
