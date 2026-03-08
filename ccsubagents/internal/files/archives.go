@@ -26,6 +26,12 @@ func InstallBinary(srcPath, dstPath string, perm os.FileMode) error {
 	if err != nil {
 		return fmt.Errorf("read source binary %s: %w", srcPath, err)
 	}
+	if err := RejectSymlinkPath(filepath.Dir(dstPath)); err != nil {
+		return err
+	}
+	if err := RejectSymlinkPath(dstPath); err != nil {
+		return err
+	}
 	if err := os.WriteFile(dstPath, data, perm); err != nil {
 		return err
 	}
@@ -142,6 +148,9 @@ func extractAgentsArchiveWithHookAndLimits(zipPath, destDir string, beforeWrite 
 		}
 
 		if file.FileInfo().IsDir() {
+			if err := RejectSymlinkPath(destPath); err != nil {
+				return nil, nil, err
+			}
 			if err := os.MkdirAll(destPath, stateDirPerm); err != nil {
 				return nil, nil, fmt.Errorf("create directory %s: %w", destPath, err)
 			}
@@ -150,6 +159,9 @@ func extractAgentsArchiveWithHookAndLimits(zipPath, destDir string, beforeWrite 
 		}
 
 		parent := filepath.Dir(destPath)
+		if err := RejectSymlinkPath(parent); err != nil {
+			return nil, nil, err
+		}
 		if err := os.MkdirAll(parent, stateDirPerm); err != nil {
 			return nil, nil, fmt.Errorf("create directory %s: %w", parent, err)
 		}
@@ -189,6 +201,13 @@ func minInt64(a, b int64) int64 {
 }
 
 func writeZipEntry(file *zip.File, destPath string, perm os.FileMode, maxSize int64) (written int64, retErr error) {
+	if err := RejectSymlinkPath(filepath.Dir(destPath)); err != nil {
+		return 0, err
+	}
+	if err := RejectSymlinkPath(destPath); err != nil {
+		return 0, err
+	}
+
 	rc, err := file.Open()
 	if err != nil {
 		return 0, fmt.Errorf("open archive file %s: %w", file.Name, err)

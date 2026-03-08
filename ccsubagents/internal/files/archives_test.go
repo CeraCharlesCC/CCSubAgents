@@ -179,6 +179,113 @@ func TestExtractAgentsArchiveWithHook_RejectsArchiveOverTotalLimit(t *testing.T)
 	}
 }
 
+func TestExtractAgentsArchiveWithHook_RejectsSymlinkDirectoryInDestination(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	zipPath := filepath.Join(dir, "agents.zip")
+	destDir := filepath.Join(dir, "dest")
+	outsideDir := filepath.Join(dir, "outside")
+	if err := os.MkdirAll(destDir, DefaultStateDirPerm); err != nil {
+		t.Fatalf("create dest dir: %v", err)
+	}
+	if err := os.MkdirAll(outsideDir, DefaultStateDirPerm); err != nil {
+		t.Fatalf("create outside dir: %v", err)
+	}
+	if err := os.Symlink(outsideDir, filepath.Join(destDir, "nested")); err != nil {
+		t.Fatalf("create nested symlink: %v", err)
+	}
+
+	mustWriteZipFile(t, zipPath, map[string]string{
+		"agents/nested/file.agent.md": "agent",
+	})
+
+	_, _, err := ExtractAgentsArchiveWithHook(zipPath, destDir, nil, DefaultStateDirPerm, DefaultStateFilePerm)
+	if err == nil {
+		t.Fatalf("expected symlink path rejection")
+	}
+	if !strings.Contains(err.Error(), "refusing symlink path component") {
+		t.Fatalf("expected symlink rejection error, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(outsideDir, "file.agent.md")); !os.IsNotExist(statErr) {
+		t.Fatalf("expected archive not to write through symlink, stat err: %v", statErr)
+	}
+}
+
+func TestExtractAgentsArchiveWithHook_RejectsSymlinkFileDestination(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	zipPath := filepath.Join(dir, "agents.zip")
+	destDir := filepath.Join(dir, "dest")
+	outsideFile := filepath.Join(dir, "outside.agent.md")
+	if err := os.MkdirAll(destDir, DefaultStateDirPerm); err != nil {
+		t.Fatalf("create dest dir: %v", err)
+	}
+	if err := os.WriteFile(outsideFile, []byte("outside"), DefaultStateFilePerm); err != nil {
+		t.Fatalf("create outside file: %v", err)
+	}
+	if err := os.Symlink(outsideFile, filepath.Join(destDir, "agent.agent.md")); err != nil {
+		t.Fatalf("create file symlink: %v", err)
+	}
+
+	mustWriteZipFile(t, zipPath, map[string]string{
+		"agents/agent.agent.md": "managed",
+	})
+
+	_, _, err := ExtractAgentsArchiveWithHook(zipPath, destDir, nil, DefaultStateDirPerm, DefaultStateFilePerm)
+	if err == nil {
+		t.Fatalf("expected symlink path rejection")
+	}
+	if !strings.Contains(err.Error(), "refusing symlink path component") {
+		t.Fatalf("expected symlink rejection error, got %v", err)
+	}
+	data, readErr := os.ReadFile(outsideFile)
+	if readErr != nil {
+		t.Fatalf("read outside file: %v", readErr)
+	}
+	if string(data) != "outside" {
+		t.Fatalf("expected outside file to remain unchanged, got %q", string(data))
+	}
+}
+
+func TestInstallBinary_RejectsSymlinkDestination(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "src")
+	destDir := filepath.Join(dir, "dest")
+	outsideFile := filepath.Join(dir, "outside")
+	destPath := filepath.Join(destDir, "binary")
+	if err := os.WriteFile(srcPath, []byte("binary"), DefaultBinaryFilePerm); err != nil {
+		t.Fatalf("create source file: %v", err)
+	}
+	if err := os.MkdirAll(destDir, DefaultStateDirPerm); err != nil {
+		t.Fatalf("create dest dir: %v", err)
+	}
+	if err := os.WriteFile(outsideFile, []byte("outside"), DefaultStateFilePerm); err != nil {
+		t.Fatalf("create outside file: %v", err)
+	}
+	if err := os.Symlink(outsideFile, destPath); err != nil {
+		t.Fatalf("create destination symlink: %v", err)
+	}
+
+	err := InstallBinary(srcPath, destPath, DefaultBinaryFilePerm)
+	if err == nil {
+		t.Fatalf("expected symlink path rejection")
+	}
+	if !strings.Contains(err.Error(), "refusing symlink path component") {
+		t.Fatalf("expected symlink rejection error, got %v", err)
+	}
+	data, readErr := os.ReadFile(outsideFile)
+	if readErr != nil {
+		t.Fatalf("read outside file: %v", readErr)
+	}
+	if string(data) != "outside" {
+		t.Fatalf("expected outside file to remain unchanged, got %q", string(data))
+	}
+}
+
 func mustWriteZipFile(t *testing.T, path string, files map[string]string) {
 	t.Helper()
 

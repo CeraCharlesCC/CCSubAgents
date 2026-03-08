@@ -28,6 +28,10 @@ func UniqueSorted(values []string) []string {
 }
 
 func EnsureDirTracked(path string, perm os.FileMode) (bool, error) {
+	if err := RejectSymlinkPath(path); err != nil {
+		return false, err
+	}
+
 	info, err := os.Stat(path)
 	if err == nil {
 		if !info.IsDir() {
@@ -47,6 +51,27 @@ func EnsureDirTracked(path string, perm os.FileMode) (bool, error) {
 func EnsureParentDir(path string, perm os.FileMode) (bool, error) {
 	parent := filepath.Dir(path)
 	return EnsureDirTracked(parent, perm)
+}
+
+func RejectSymlinkPath(path string) error {
+	clean := filepath.Clean(path)
+	for current := clean; ; current = filepath.Dir(current) {
+		info, err := os.Lstat(current)
+		if err == nil {
+			if info.Mode()&os.ModeSymlink != 0 {
+				return fmt.Errorf("refusing symlink path component: %s", current)
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("lstat %s: %w", current, err)
+		}
+
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+	}
+
+	return nil
 }
 
 func IsPathWithinDir(path, dir string) bool {
