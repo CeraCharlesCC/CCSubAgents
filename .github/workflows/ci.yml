@@ -4,6 +4,51 @@ on:
   pull_request:
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - module: local-artifact
+            go-version-file: local-artifact/go.mod
+          - module: ccsubagents
+            go-version-file: ccsubagents/go.mod
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ matrix.module }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ matrix.go-version-file }}
+
+      - name: Check gofmt
+        run: |
+          mapfile -t go_files < <(find . -name '*.go' -type f)
+          if [ "${#go_files[@]}" -eq 0 ]; then
+            exit 0
+          fi
+
+          unformatted="$(gofmt -l "${go_files[@]}")"
+          if [ -n "$unformatted" ]; then
+            printf '%s\n' "$unformatted"
+            exit 1
+          fi
+
+      - name: Lint module
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.9.0
+          working-directory: ${{ matrix.module }}
+          args: --config=../.golangci.yml ./...
+
   test-build:
     runs-on: ${{ matrix.os }}
     strategy:

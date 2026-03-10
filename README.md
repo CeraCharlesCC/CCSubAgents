@@ -43,6 +43,17 @@ chmod +x ./ccsubagents
 ./ccsubagents install
 ```
 
+## Development
+
+### Lint
+
+CI checks `gofmt` and runs `golangci-lint` `v2.9.0` against both Go modules with the shared config at the repository root.
+
+```bash
+go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.9.0
+./scripts/lint.sh
+```
+
 ## CLI capabilities & scope behavior
 
 The standard `ccsubagents` CLI unifies installation routines with advanced diagnostics and daemon operations.
