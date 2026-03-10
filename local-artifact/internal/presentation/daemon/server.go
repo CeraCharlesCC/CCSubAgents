@@ -56,14 +56,18 @@ func (s *Server) Routes() http.Handler {
 func (s *Server) writeOK(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(Envelope{OK: true, Data: data})
+	if err := json.NewEncoder(w).Encode(Envelope{OK: true, Data: data}); err != nil {
+		_ = err
+	}
 }
 
 func (s *Server) writeErr(w http.ResponseWriter, err error) {
 	status, payload := mapCoreError(err)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(Envelope{OK: false, Error: payload})
+	if encodeErr := json.NewEncoder(w).Encode(Envelope{OK: false, Error: payload}); encodeErr != nil {
+		_ = encodeErr
+	}
 }
 
 func ensurePost(w http.ResponseWriter, r *http.Request) bool {
@@ -98,7 +102,9 @@ func writeMethodNotAllowed(w http.ResponseWriter, allowed string) {
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusMethodNotAllowed)
-	_ = json.NewEncoder(w).Encode(Envelope{OK: false, Error: &EnvelopeError{Code: CodeMethodNotAllowed, Message: "method not allowed"}})
+	if err := json.NewEncoder(w).Encode(Envelope{OK: false, Error: &EnvelopeError{Code: CodeMethodNotAllowed, Message: "method not allowed"}}); err != nil {
+		_ = err
+	}
 }
 
 func (s *Server) resolveService(ctx context.Context, selector WorkspaceSelector) (string, *artifacts.Service, error) {

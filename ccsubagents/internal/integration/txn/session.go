@@ -34,14 +34,14 @@ func Recover(stateDir, scopeID string) error {
 		return err
 	}
 	if j.Committed {
-		_ = os.Remove(path)
+		removeIfExists(path)
 		return nil
 	}
 	if err := rollbackFromJournal(j); err != nil {
 		return err
 	}
-	_ = os.Remove(path)
-	_ = os.RemoveAll(j.RollbackBlobDir)
+	removeIfExists(path)
+	removeAllIgnore(j.RollbackBlobDir)
 	return nil
 }
 
@@ -91,8 +91,8 @@ func (s *Session) Commit() error {
 	if err != nil {
 		return err
 	}
-	_ = os.Remove(s.journalPath)
-	_ = os.RemoveAll(s.journal.RollbackBlobDir)
+	removeIfExists(s.journalPath)
+	removeAllIgnore(s.journal.RollbackBlobDir)
 	if s.lockRelease != nil {
 		s.lockRelease()
 		s.lockRelease = nil
@@ -107,8 +107,8 @@ func (s *Session) Rollback() error {
 	if err := rollbackFromJournal(j); err != nil {
 		return err
 	}
-	_ = os.Remove(s.journalPath)
-	_ = os.RemoveAll(j.RollbackBlobDir)
+	removeIfExists(s.journalPath)
+	removeAllIgnore(j.RollbackBlobDir)
 	if s.lockRelease != nil {
 		s.lockRelease()
 		s.lockRelease = nil
@@ -170,7 +170,9 @@ func (o *rollbackObserver) OnCreatedDir(path string) {
 		return
 	}
 	s.journal.Actions[idx].Undo = append(s.journal.Actions[idx].Undo, UndoRecord{Type: undoTypeCreatedDir, Path: path})
-	_ = writeJournal(s.journalPath, s.journal)
+	if err := writeJournal(s.journalPath, s.journal); err != nil {
+		_ = err
+	}
 }
 
 func rollbackFromJournal(j Journal) error {

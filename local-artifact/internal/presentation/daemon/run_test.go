@@ -50,7 +50,11 @@ func TestDaemonWebServiceResolver_RegistersDaemonOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new engine: %v", err)
 	}
-	defer engine.Close()
+	defer func() {
+		if closeErr := engine.Close(); closeErr != nil {
+			t.Fatalf("close engine: %v", closeErr)
+		}
+	}()
 
 	resolver := daemonWebServiceResolver(engine)
 	if _, err := resolver("global"); err != nil {
@@ -84,7 +88,9 @@ func tempUnixSocketPath(t *testing.T, prefix string) string {
 		t.Fatalf("create socket temp dir: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = os.RemoveAll(socketDir)
+		if removeErr := os.RemoveAll(socketDir); removeErr != nil {
+			t.Fatalf("remove socket dir: %v", removeErr)
+		}
 	})
 	return filepath.Join(socketDir, "daemon.sock")
 }
@@ -203,7 +209,7 @@ func TestCleanupStaleSocket_AlreadyListeningDoesNotRemove(t *testing.T) {
 		t.Fatalf("listen unix: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = ln.Close()
+		closeListenerIgnore(ln)
 	})
 
 	err = cleanupStaleSocket(socket)
@@ -300,7 +306,7 @@ func TestRun_WebOnlyModeWhenAPISocketAlreadyActive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("shutdown web-only daemon: %v", err)
 	}
-	_ = resp.Body.Close()
+	closeResponseBody(resp)
 	if resp.StatusCode != http.StatusAccepted {
 		t.Fatalf("shutdown status mismatch: got=%d want=%d", resp.StatusCode, http.StatusAccepted)
 	}
@@ -385,7 +391,7 @@ func waitForWebHealth(t *testing.T, webAddr string) {
 		}
 		resp, err := client.Do(req)
 		if err == nil {
-			_ = resp.Body.Close()
+			closeResponseBody(resp)
 			if resp.StatusCode == http.StatusOK {
 				return
 			}

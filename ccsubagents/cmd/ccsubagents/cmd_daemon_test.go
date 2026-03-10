@@ -19,7 +19,9 @@ func setMissingDaemonSocket(t *testing.T) {
 		t.Fatalf("create socket temp dir: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = os.RemoveAll(base)
+		if removeErr := os.RemoveAll(base); removeErr != nil {
+			t.Fatalf("remove temp dir: %v", removeErr)
+		}
 	})
 	t.Setenv("LOCAL_ARTIFACT_DAEMON_SOCKET", filepath.Join(base, "d.sock"))
 }

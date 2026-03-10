@@ -163,7 +163,10 @@ func startProcess(stateDir, storeRoot, token string, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("resolve executable path: %w", err)
 	}
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("resolve home directory: %w", err)
+	}
 	daemonPath, err := resolveDaemonPath(exePath, home, runtime.GOOS, os.Getenv)
 	if err != nil {
 		return err
@@ -185,7 +188,9 @@ func startProcess(stateDir, storeRoot, token string, stderr io.Writer) error {
 		return fmt.Errorf("start daemon %s: %w", daemonPath, err)
 	}
 	go func() {
-		_ = cmd.Wait()
+		if waitErr := cmd.Wait(); waitErr != nil {
+			_ = waitErr
+		}
 	}()
 	return nil
 }
@@ -233,10 +238,6 @@ func readPersistedDaemonToken(stateDir string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(b))
-}
-
-func daemonBinaryName() string {
-	return daemonBinaryNameForOS(runtime.GOOS)
 }
 
 func daemonBinaryNameForOS(goos string) string {

@@ -157,7 +157,7 @@ func hasTrailingComma(b []byte, start int) bool {
 			}
 			if b[i+1] == '*' {
 				i += 2
-				for i+1 < len(b) && !(b[i] == '*' && b[i+1] == '/') {
+				for i+1 < len(b) && (b[i] != '*' || b[i+1] != '/') {
 					i++
 				}
 				if i+1 >= len(b) {

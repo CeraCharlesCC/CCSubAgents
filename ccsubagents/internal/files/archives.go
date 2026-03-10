@@ -47,7 +47,7 @@ func ExtractBundleBinaries(zipPath, destDir string, names []string, perm os.File
 	if err != nil {
 		return nil, fmt.Errorf("open archive: %w", err)
 	}
-	defer r.Close()
+	defer closeIgnore(r)
 
 	expected := map[string]struct{}{}
 	for _, name := range names {
@@ -106,7 +106,7 @@ func extractAgentsArchiveWithHookAndLimits(zipPath, destDir string, beforeWrite 
 	if err != nil {
 		return nil, nil, fmt.Errorf("open archive: %w", err)
 	}
-	defer r.Close()
+	defer closeIgnore(r)
 
 	stripAgentsPrefix, err := shouldStripAgentsPrefix(r.File)
 	if err != nil {
@@ -122,7 +122,7 @@ func extractAgentsArchiveWithHookAndLimits(zipPath, destDir string, beforeWrite 
 			return
 		}
 		for _, filePath := range writtenFiles {
-			_ = os.Remove(filePath)
+			removeIfExists(filePath)
 		}
 	}()
 
@@ -235,7 +235,7 @@ func writeZipEntryWithinBase(file *zip.File, destPath, base string, perm os.File
 			retErr = fmt.Errorf("close extracted file %s: %w", destPath, closeErr)
 		}
 		if retErr != nil {
-			_ = os.Remove(destPath)
+			removeIfExists(destPath)
 		}
 	}()
 

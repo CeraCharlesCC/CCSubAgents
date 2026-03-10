@@ -16,7 +16,7 @@ func ResolveConfiguredPath(home, value string) string {
 		return filepath.Clean(home)
 	}
 	if strings.HasPrefix(trimmed, "~/") || strings.HasPrefix(trimmed, "~\\") {
-		remainder := strings.TrimLeft(trimmed[2:], `/\\`)
+		remainder := strings.TrimLeft(trimmed[2:], "/\\")
 		if remainder == "" {
 			return filepath.Clean(home)
 		}

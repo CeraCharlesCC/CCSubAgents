@@ -24,7 +24,9 @@ func newDaemonEngine(t *testing.T) *Engine {
 		t.Fatalf("new engine: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = engine.Close()
+		if closeErr := engine.Close(); closeErr != nil {
+			t.Fatalf("close engine: %v", closeErr)
+		}
 	})
 	return engine
 }

@@ -109,10 +109,6 @@ func normalizeRootURIs(roots []string) ([]string, error) {
 	return workspaces.NormalizeRootURIs(roots)
 }
 
-func normalizeRootURI(raw string) (string, error) {
-	return workspaces.NormalizeRootURI(raw)
-}
-
 func computeSubspaceHash(normalizedSortedRoots []string) string {
 	return workspaces.ComputeWorkspaceID(normalizedSortedRoots)
 }

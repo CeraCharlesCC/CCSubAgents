@@ -21,7 +21,7 @@ func TestHandleToolsCall_SchemaValidationRejectsUnknownFields(t *testing.T) {
 	if rpcErr != nil {
 		t.Fatalf("tools/call rpc error: %+v", rpcErr)
 	}
-	resp := respAny.(toolResult)
+	resp := requireToolResult(t, respAny)
 	if !resp.IsError {
 		t.Fatalf("expected schema validation error, got %+v", resp)
 	}
@@ -44,7 +44,7 @@ func TestHandleToolsCall_SchemaValidationRejectsMissingRequiredField(t *testing.
 	if rpcErr != nil {
 		t.Fatalf("tools/call rpc error: %+v", rpcErr)
 	}
-	resp := respAny.(toolResult)
+	resp := requireToolResult(t, respAny)
 	if !resp.IsError {
 		t.Fatalf("expected schema validation error, got %+v", resp)
 	}

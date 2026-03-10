@@ -54,10 +54,10 @@ func SaveTrackedState(stateDir string, state TrackedState) error {
 		return fmt.Errorf("create tracked temp file: %w", err)
 	}
 	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
+	defer removeIfExists(tmpPath)
 
 	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
+		closeIgnore(tmp)
 		return fmt.Errorf("write tracked temp file: %w", err)
 	}
 	if err := tmp.Close(); err != nil {

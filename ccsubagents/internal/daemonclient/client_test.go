@@ -74,10 +74,12 @@ func TestClient_MapsRemoteError(t *testing.T) {
 	h := http.NewServeMux()
 	h.HandleFunc("/daemon/v1/artifacts/list", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(map[string]any{
+		if err := json.NewEncoder(w).Encode(map[string]any{
 			"ok":    false,
 			"error": map[string]any{"code": CodeUnauthorized, "message": "bad token"},
-		})
+		}); err != nil {
+			t.Fatalf("encode remote error: %v", err)
+		}
 	})
 	srv := httptest.NewServer(h)
 	defer srv.Close()

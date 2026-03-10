@@ -16,11 +16,7 @@ func callToolsCall(t *testing.T, s *Server, ctx context.Context, toolName string
 		t.Fatalf("tools/call %q rpc error: %+v", toolName, rpcErr)
 	}
 
-	resp, ok := respAny.(toolResult)
-	if !ok {
-		t.Fatalf("tools/call %q expected toolResult, got %T", toolName, respAny)
-	}
-	return resp
+	return requireToolResult(t, respAny)
 }
 
 func requireToolOK(t *testing.T, resp toolResult) toolResult {
@@ -59,7 +55,10 @@ func contentContains(result toolResult, needle string) bool {
 		if !ok {
 			continue
 		}
-		text, _ := contentMap["text"].(string)
+		text, ok := contentMap["text"].(string)
+		if !ok {
+			continue
+		}
 		if strings.Contains(strings.ToLower(text), strings.ToLower(needle)) {
 			return true
 		}
@@ -73,10 +72,49 @@ func firstContentText(result toolResult) string {
 		if !ok {
 			continue
 		}
-		text, _ := contentMap["text"].(string)
+		text, ok := contentMap["text"].(string)
+		if !ok {
+			continue
+		}
 		if text != "" {
 			return text
 		}
 	}
 	return ""
+}
+
+func requireToolResult(t *testing.T, value any) toolResult {
+	t.Helper()
+	resp, ok := value.(toolResult)
+	if !ok {
+		t.Fatalf("expected toolResult, got %T", value)
+	}
+	return resp
+}
+
+func requireSaveOut(t *testing.T, value any) saveOut {
+	t.Helper()
+	out, ok := value.(saveOut)
+	if !ok {
+		t.Fatalf("expected saveOut, got %T", value)
+	}
+	return out
+}
+
+func requireMap(t *testing.T, value any, name string) map[string]any {
+	t.Helper()
+	m, ok := value.(map[string]any)
+	if !ok {
+		t.Fatalf("%s type = %T, want map[string]any", name, value)
+	}
+	return m
+}
+
+func requireToolDefs(t *testing.T, value any) []toolDef {
+	t.Helper()
+	defs, ok := value.([]toolDef)
+	if !ok {
+		t.Fatalf("expected []toolDef, got %T", value)
+	}
+	return defs
 }

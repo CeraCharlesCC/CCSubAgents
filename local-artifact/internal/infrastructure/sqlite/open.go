@@ -30,26 +30,26 @@ func openSQLite(path string, schema string, targetUserVersion int) (*sql.DB, err
 		return nil, err
 	}
 	if err := db.Ping(); err != nil {
-		_ = db.Close()
+		closeDBIgnore(db)
 		return nil, err
 	}
 
 	var userVersion int
 	if err := db.QueryRow("PRAGMA user_version;").Scan(&userVersion); err != nil {
-		_ = db.Close()
+		closeDBIgnore(db)
 		return nil, err
 	}
 	if userVersion == 0 {
 		if _, err := db.Exec(schema); err != nil {
-			_ = db.Close()
+			closeDBIgnore(db)
 			return nil, err
 		}
 		if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version = %d;", targetUserVersion)); err != nil {
-			_ = db.Close()
+			closeDBIgnore(db)
 			return nil, err
 		}
 	} else if userVersion != targetUserVersion {
-		_ = db.Close()
+		closeDBIgnore(db)
 		return nil, fmt.Errorf("unsupported user_version %d for %s", userVersion, path)
 	}
 

@@ -77,6 +77,7 @@ type Runner struct {
 	installSettingsRoot   string
 	pendingPinWrite       *pendingPinWrite
 	skipAttestationsCheck bool
+	statusErr             error
 	verbose               bool
 	globalInstallTargets  []installConfigTarget
 	installDestination    installDestination
@@ -157,8 +158,8 @@ func runCommand(ctx context.Context, name string, args ...string) ([]byte, error
 }
 
 func resolveInstallPaths(home string) installPaths {
-	desktopStable := configPaths{}
-	desktopInsiders := configPaths{}
+	var desktopStable configPaths
+	var desktopInsiders configPaths
 	switch runtime.GOOS {
 	case "windows":
 		appDataDir := filepath.Join(home, "AppData", "Roaming")

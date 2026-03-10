@@ -288,7 +288,9 @@ func (r *Runner) downloadRequiredAssets(ctx context.Context, stateDir string, re
 		asset := assets[name]
 		dest := filepath.Join(tmpDir, name)
 		if err := client.DownloadFile(ctx, asset.BrowserDownloadURL, dest, stateFilePerm); err != nil {
-			_ = os.RemoveAll(tmpDir)
+			if removeErr := os.RemoveAll(tmpDir); removeErr != nil {
+				_ = removeErr
+			}
 			return "", nil, fmt.Errorf("download release asset %q: %w", name, err)
 		}
 		downloaded[name] = dest
@@ -553,7 +555,11 @@ func (r *Runner) installOrUpdate(ctx context.Context, isUpdate bool) (retErr err
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if removeErr := os.RemoveAll(tmpDir); removeErr != nil {
+			_ = removeErr
+		}
+	}()
 
 	if err := r.verifyAttestationsOrReport(ctx, downloaded, isUpdate, ScopeGlobal); err != nil {
 		return err
@@ -585,7 +591,9 @@ func (r *Runner) installOrUpdate(ctx context.Context, isUpdate bool) (retErr err
 		if rollbackErr := rollback.Restore(); rollbackErr != nil {
 			retErr = fmt.Errorf("%w (rollback failed: %v)", retErr, rollbackErr)
 		}
-		_ = txSession.Rollback()
+		if txRollbackErr := txSession.Rollback(); txRollbackErr != nil {
+			retErr = fmt.Errorf("%w (transaction rollback failed: %v)", retErr, txRollbackErr)
+		}
 	}()
 
 	agentsDir := filepath.Join(layout.StateDir, "agents")
@@ -869,7 +877,10 @@ func (r *Runner) uninstall(ctx context.Context) error {
 }
 
 func hashInputs(v any) string {
-	b, _ := json.Marshal(v)
+	b, err := json.Marshal(v)
+	if err != nil {
+		return ""
+	}
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }

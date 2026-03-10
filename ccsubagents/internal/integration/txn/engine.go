@@ -49,17 +49,23 @@ func (e Engine) Execute(ctx context.Context, plan Plan) error {
 		step := stepsByID[id]
 		if step.Apply != nil {
 			if err := step.Apply(ctx, session); err != nil {
-				_ = session.Rollback()
+				if rollbackErr := session.Rollback(); rollbackErr != nil {
+					return fmt.Errorf("%w (rollback failed: %v)", err, rollbackErr)
+				}
 				return err
 			}
 		}
 		if err := session.MarkApplied(id); err != nil {
-			_ = session.Rollback()
+			if rollbackErr := session.Rollback(); rollbackErr != nil {
+				return fmt.Errorf("%w (rollback failed: %v)", err, rollbackErr)
+			}
 			return err
 		}
 		if step.Verify != nil {
 			if err := step.Verify(ctx, session); err != nil {
-				_ = session.Rollback()
+				if rollbackErr := session.Rollback(); rollbackErr != nil {
+					return fmt.Errorf("%w (rollback failed: %v)", err, rollbackErr)
+				}
 				return err
 			}
 		}
