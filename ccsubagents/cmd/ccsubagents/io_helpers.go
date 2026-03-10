@@ -16,6 +16,15 @@ func writeln(w io.Writer, args ...any) error {
 }
 
 func writeAll(w io.Writer, b []byte) error {
-	_, err := w.Write(b)
-	return err
+	for len(b) > 0 {
+		n, err := w.Write(b)
+		if err != nil {
+			return err
+		}
+		if n <= 0 {
+			return io.ErrShortWrite
+		}
+		b = b[n:]
+	}
+	return nil
 }

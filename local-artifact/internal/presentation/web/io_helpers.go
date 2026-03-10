@@ -27,8 +27,16 @@ func removeMultipartForm(form *multipart.Form) {
 }
 
 func writePayload(w http.ResponseWriter, payload []byte) {
-	if _, err := w.Write(payload); err != nil {
-		_ = err
+	for len(payload) > 0 {
+		n, err := w.Write(payload)
+		if err != nil {
+			_ = err
+			return
+		}
+		if n <= 0 {
+			return
+		}
+		payload = payload[n:]
 	}
 }
 
