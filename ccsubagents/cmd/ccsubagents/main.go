@@ -26,13 +26,17 @@ type lifecycleArgs struct {
 
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		printUsage(stderr)
+		if err := printUsage(stderr); err != nil {
+			return 1
+		}
 		return 2
 	}
 
 	command := strings.TrimSpace(args[0])
 	if command == "--help" || command == "-h" || command == "help" {
-		printUsage(stderr)
+		if err := printUsage(stderr); err != nil {
+			return 1
+		}
 		return 2
 	}
 
@@ -46,8 +50,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "artifacts":
 		return runArtifacts(args[1:], os.Stdin, stdout, stderr)
 	default:
-		fmt.Fprintf(stderr, "unknown command %q\n", command)
-		printUsage(stderr)
+		if err := writef(stderr, "unknown command %q\n", command); err != nil {
+			return 1
+		}
+		if err := printUsage(stderr); err != nil {
+			return 1
+		}
 		return 1
 	}
 }
@@ -55,25 +63,39 @@ func run(args []string, stdout, stderr io.Writer) int {
 func runLifecycle(command string, args []string, stdout, stderr io.Writer) int {
 	parsed, err := parseLifecycleArgs(command, args)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
-		printUsage(stderr)
+		if writeErr := writeln(stderr, err); writeErr != nil {
+			return 1
+		}
+		if writeErr := printUsage(stderr); writeErr != nil {
+			return 1
+		}
 		return 2
 	}
 	if parsed.showUsage {
-		printUsage(stderr)
+		if err := printUsage(stderr); err != nil {
+			return 1
+		}
 		return 2
 	}
 
 	parsedCommand, err := bootstrap.ParseCommand(command)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
-		printUsage(stderr)
+		if writeErr := writeln(stderr, err); writeErr != nil {
+			return 1
+		}
+		if writeErr := printUsage(stderr); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 	scope, err := bootstrap.ResolveScope(parsedCommand, parsed.scopeRaw)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
-		printUsage(stderr)
+		if writeErr := writeln(stderr, err); writeErr != nil {
+			return 1
+		}
+		if writeErr := printUsage(stderr); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -89,7 +111,9 @@ func runLifecycle(command string, args []string, stdout, stderr io.Writer) int {
 		},
 	})
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		if writeErr := writeln(stderr, err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 	return 0
@@ -133,7 +157,7 @@ func parseLifecycleArgs(command string, args []string) (lifecycleArgs, error) {
 	}, nil
 }
 
-func printUsage(w io.Writer) {
+func printUsage(w io.Writer) error {
 	const usage = `Usage: ccsubagents <command> [options]
 
 Commands:
@@ -165,5 +189,6 @@ Examples:
   ccsubagents artifacts openwebui
 `
 
-	_, _ = io.WriteString(w, usage)
+	_, err := io.WriteString(w, usage)
+	return err
 }

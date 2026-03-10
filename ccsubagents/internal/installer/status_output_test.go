@@ -270,7 +270,7 @@ func TestInstallOrUpdate_AttestationFailureReportsActionableGuidance(t *testing.
 		t.Fatalf("expected attestation verification error")
 	}
 	for _, want := range []string{
-		"Error: attestation verification failed for agents.zip",
+		"attestation verification failed for agents.zip",
 		"To skip verification: ccsubagents install --skip-attestations-check",
 		"(not recommended for production use)",
 		"verification failed",
@@ -306,7 +306,7 @@ func TestInstallOrUpdate_AttestationFailureUpdateReportsActionableGuidance(t *te
 		t.Fatalf("expected attestation verification error")
 	}
 	for _, want := range []string{
-		"Error: attestation verification failed for agents.zip",
+		"attestation verification failed for agents.zip",
 		"To skip verification: ccsubagents update --skip-attestations-check",
 		"(not recommended for production use)",
 		"verification failed",

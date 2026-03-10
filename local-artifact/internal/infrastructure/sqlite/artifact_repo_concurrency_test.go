@@ -16,7 +16,9 @@ func TestArtifactRepository_ConcurrentExpectedPrevRefOneConflict(t *testing.T) {
 		t.Fatalf("new repo: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = repo.Close()
+		if closeErr := repo.Close(); closeErr != nil {
+			t.Fatalf("close repo: %v", closeErr)
+		}
 	})
 	ctx := context.Background()
 

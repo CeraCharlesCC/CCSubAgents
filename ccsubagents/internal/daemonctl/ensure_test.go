@@ -34,13 +34,19 @@ func (d *fakeSocketDaemon) Close() {
 		return
 	}
 	if d.server != nil {
-		_ = d.server.Close()
+		if err := d.server.Close(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			_ = err
+		}
 	}
 	if d.listener != nil {
-		_ = d.listener.Close()
+		if err := d.listener.Close(); err != nil {
+			_ = err
+		}
 	}
 	if strings.TrimSpace(d.socket) != "" {
-		_ = os.Remove(d.socket)
+		if err := os.Remove(d.socket); err != nil && !errors.Is(err, os.ErrNotExist) {
+			_ = err
+		}
 	}
 }
 
@@ -65,26 +71,32 @@ func newShortSocketPath(t *testing.T) string {
 		t.Fatalf("create temp socket base: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = os.RemoveAll(base)
+		if removeErr := os.RemoveAll(base); removeErr != nil {
+			t.Fatalf("remove temp socket base: %v", removeErr)
+		}
 	})
 	return filepath.Join(base, "daemon.sock")
 }
 
 func writeDaemonEnvelopeOK(w http.ResponseWriter, data any) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "data": data})
+	if err := json.NewEncoder(w).Encode(map[string]any{"ok": true, "data": data}); err != nil {
+		panic(err)
+	}
 }
 
 func writeDaemonEnvelopeErr(w http.ResponseWriter, status int, code, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	if err := json.NewEncoder(w).Encode(map[string]any{
 		"ok": false,
 		"error": map[string]any{
 			"code":    code,
 			"message": message,
 		},
-	})
+	}); err != nil {
+		panic(err)
+	}
 }
 
 func startFakeDaemonUnixSocket(t *testing.T, socketPath, expectedToken string, requireAuth bool) *fakeSocketDaemon {
@@ -92,7 +104,9 @@ func startFakeDaemonUnixSocket(t *testing.T, socketPath, expectedToken string, r
 	if err := os.MkdirAll(filepath.Dir(socketPath), 0o755); err != nil {
 		t.Fatalf("create socket parent dir: %v", err)
 	}
-	_ = os.Remove(socketPath)
+	if err := os.Remove(socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("remove stale socket: %v", err)
+	}
 
 	server := &http.Server{}
 	authorized := func(r *http.Request) bool {
@@ -132,8 +146,12 @@ func startFakeDaemonUnixSocket(t *testing.T, socketPath, expectedToken string, r
 		}
 		writeDaemonEnvelopeOK(w, map[string]any{"status": "stopping"})
 		go func() {
-			_ = server.Close()
-			_ = os.Remove(socketPath)
+			if err := server.Close(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				_ = err
+			}
+			if err := os.Remove(socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+				_ = err
+			}
 		}()
 	})
 	server.Handler = mux
@@ -159,7 +177,9 @@ func startFakeDaemonUnixSocketCancelOnList(t *testing.T, socketPath string, canc
 	if err := os.MkdirAll(filepath.Dir(socketPath), 0o755); err != nil {
 		t.Fatalf("create socket parent dir: %v", err)
 	}
-	_ = os.Remove(socketPath)
+	if err := os.Remove(socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("remove stale socket: %v", err)
+	}
 
 	server := &http.Server{}
 	mux := http.NewServeMux()

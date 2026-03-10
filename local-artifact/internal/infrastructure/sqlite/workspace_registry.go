@@ -67,7 +67,7 @@ func (r *WorkspaceRegistry) ListWorkspaces(ctx context.Context) ([]workspaces.Wo
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer closeRowsIgnore(rows)
 
 	out := make([]workspaces.Workspace, 0)
 	for rows.Next() {

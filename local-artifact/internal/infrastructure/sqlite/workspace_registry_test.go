@@ -12,7 +12,9 @@ func TestWorkspaceRegistry_EnsureAndList(t *testing.T) {
 		t.Fatalf("new registry: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = registry.Close()
+		if closeErr := registry.Close(); closeErr != nil {
+			t.Fatalf("close registry: %v", closeErr)
+		}
 	})
 	ctx := context.Background()
 

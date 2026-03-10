@@ -9,6 +9,15 @@ if ! command -v golangci-lint >/dev/null 2>&1; then
   exit 127
 fi
 
+expected_golangci_version="2.9.0"
+actual_golangci_version="$(
+  golangci-lint version 2>/dev/null | sed -n 's/.*version \([0-9][^ ]*\).*/\1/p' | head -n 1
+)"
+if [ "$actual_golangci_version" != "$expected_golangci_version" ]; then
+  echo "golangci-lint v${expected_golangci_version} is required; found v${actual_golangci_version:-unknown}. Install the pinned version from README.md first." >&2
+  exit 127
+fi
+
 for module in ccsubagents local-artifact; do
   echo "==> gofmt (${module})"
   (

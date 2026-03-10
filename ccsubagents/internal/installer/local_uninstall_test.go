@@ -23,13 +23,15 @@ import (
 func writeDaemonErrorEnvelope(w http.ResponseWriter, status int, code, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	if err := json.NewEncoder(w).Encode(map[string]any{
 		"ok": false,
 		"error": map[string]any{
 			"code":    code,
 			"message": message,
 		},
-	})
+	}); err != nil {
+		panic(err)
+	}
 }
 
 func startShutdownServiceUnavailableDaemon(t *testing.T, socketPath string, shutdownMessage string) *atomic.Int32 {
@@ -37,7 +39,9 @@ func startShutdownServiceUnavailableDaemon(t *testing.T, socketPath string, shut
 	if err := os.MkdirAll(filepath.Dir(socketPath), 0o755); err != nil {
 		t.Fatalf("create socket parent dir: %v", err)
 	}
-	_ = os.Remove(socketPath)
+	if err := os.Remove(socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("remove stale socket: %v", err)
+	}
 
 	server := &http.Server{}
 	var healthCalls atomic.Int32
@@ -60,9 +64,15 @@ func startShutdownServiceUnavailableDaemon(t *testing.T, socketPath string, shut
 		t.Fatalf("listen unix socket: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = server.Close()
-		_ = listener.Close()
-		_ = os.Remove(socketPath)
+		if closeErr := server.Close(); closeErr != nil && !errors.Is(closeErr, http.ErrServerClosed) {
+			t.Fatalf("close server: %v", closeErr)
+		}
+		if closeErr := listener.Close(); closeErr != nil && !errors.Is(closeErr, net.ErrClosed) {
+			t.Fatalf("close listener: %v", closeErr)
+		}
+		if removeErr := os.Remove(socketPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+			t.Fatalf("remove socket: %v", removeErr)
+		}
 	})
 
 	go func() {
@@ -82,7 +92,9 @@ func tempUnixSocketPath(t *testing.T, prefix string) string {
 		t.Fatalf("create socket temp dir: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = os.RemoveAll(socketDir)
+		if removeErr := os.RemoveAll(socketDir); removeErr != nil {
+			t.Fatalf("remove socket dir: %v", removeErr)
+		}
 	})
 	return filepath.Join(socketDir, "daemon.sock")
 }

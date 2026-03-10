@@ -81,7 +81,7 @@ func (r *ArtifactRepository) saveOnce(ctx context.Context, a artifacts.ArtifactV
 	if err != nil {
 		return artifacts.ArtifactVersion{}, err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer rollbackIgnore(tx)
 
 	now := a.CreatedAt.UTC().Format(time.RFC3339)
 	if _, err := tx.ExecContext(ctx, `
@@ -217,7 +217,7 @@ func (r *ArtifactRepository) List(ctx context.Context, prefix string, limit int)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer closeRowsIgnore(rows)
 
 	out := make([]artifacts.ArtifactVersion, 0)
 	for rows.Next() {
@@ -300,7 +300,7 @@ func (r *ArtifactRepository) deleteOnce(ctx context.Context, sel artifacts.Selec
 	if err != nil {
 		return artifacts.ArtifactVersion{}, err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer rollbackIgnore(tx)
 
 	name := strings.TrimSpace(sel.Name)
 	ref := strings.TrimSpace(sel.Ref)

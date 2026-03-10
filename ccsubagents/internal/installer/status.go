@@ -8,10 +8,12 @@ import (
 )
 
 func (r *Runner) statusf(format string, args ...any) {
-	if r.statusOut == nil {
+	if r.statusOut == nil || r.statusErr != nil {
 		return
 	}
-	_, _ = fmt.Fprintf(r.statusOut, format, args...)
+	if _, err := fmt.Fprintf(r.statusOut, format, args...); err != nil {
+		r.statusErr = err
+	}
 }
 
 func (r *Runner) reportVersionHeader(tag string) {
@@ -77,7 +79,7 @@ func commandForAttestationSkip(isUpdate bool, scope Scope) string {
 
 func formatAttestationVerificationFailure(attestationErr *release.AttestationVerificationError, skipCommand string) error {
 	if attestationErr == nil {
-		return fmt.Errorf("Error: attestation verification failed\nTo skip verification: %s\n(not recommended for production use)", skipCommand)
+		return fmt.Errorf("attestation verification failed\nTo skip verification: %s\n(not recommended for production use)", skipCommand)
 	}
-	return fmt.Errorf("Error: %w\nTo skip verification: %s\n(not recommended for production use)", attestationErr, skipCommand)
+	return fmt.Errorf("%w\nTo skip verification: %s\n(not recommended for production use)", attestationErr, skipCommand)
 }

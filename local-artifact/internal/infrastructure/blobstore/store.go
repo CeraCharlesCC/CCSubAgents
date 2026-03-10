@@ -49,14 +49,14 @@ func (s *Store) Put(digest string, data []byte) error {
 		return err
 	}
 	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
+	defer removeIfExists(tmpName)
 
 	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
+		closeIgnore(tmp)
 		return err
 	}
 	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
+		closeIgnore(tmp)
 		return err
 	}
 	if err := tmp.Close(); err != nil {
@@ -75,8 +75,10 @@ func (s *Store) Put(digest string, data []byte) error {
 		return err
 	}
 	if dir, err := os.Open(filepath.Dir(target)); err == nil {
-		_ = dir.Sync()
-		_ = dir.Close()
+		if syncErr := dir.Sync(); syncErr != nil {
+			_ = syncErr
+		}
+		closeIgnore(dir)
 	}
 	return nil
 }

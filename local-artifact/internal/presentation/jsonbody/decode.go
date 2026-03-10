@@ -16,7 +16,7 @@ func DecodeStrictJSON(r *http.Request, maxBytes int64, out any) error {
 	if r == nil || r.Body == nil || maxBytes <= 0 {
 		return fmt.Errorf("%w: invalid JSON body", artifacts.ErrInvalidInput)
 	}
-	defer r.Body.Close()
+	defer closeIgnore(r.Body)
 
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxBytes+1))
 	if err != nil {

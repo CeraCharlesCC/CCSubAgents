@@ -54,7 +54,7 @@ func TestAPISaveRejectsCrossOriginMutation(t *testing.T) {
 	assertStatus(t, rr, http.StatusForbidden)
 
 	res := decodeJSON[map[string]any](t, rr)
-	if got, _ := res["error"].(string); got != "cross-origin request blocked" {
+	if got := requireErrorString(t, res); got != "cross-origin request blocked" {
 		t.Fatalf("unexpected error: %q", got)
 	}
 }
@@ -70,7 +70,7 @@ func TestAPISaveRejectsRebindingMutation(t *testing.T) {
 	assertStatus(t, rr, http.StatusForbidden)
 
 	res := decodeJSON[map[string]any](t, rr)
-	if got, _ := res["error"].(string); got != "cross-origin request blocked" {
+	if got := requireErrorString(t, res); got != "cross-origin request blocked" {
 		t.Fatalf("unexpected error: %q", got)
 	}
 }
@@ -93,7 +93,7 @@ func TestAPISaveRejectsInvalidText(t *testing.T) {
 	assertStatus(t, rr, http.StatusBadRequest)
 
 	res := decodeJSON[map[string]any](t, rr)
-	errText, _ := res["error"].(string)
+	errText := requireErrorString(t, res)
 	if !strings.Contains(errText, "text is required") {
 		t.Fatalf("expected text-required error, got %q", errText)
 	}
@@ -127,7 +127,7 @@ func TestAPISaveRejectsOversizedJSONBody_NotTruncationEOF(t *testing.T) {
 	assertStatus(t, rr, http.StatusBadRequest)
 
 	res := decodeJSON[map[string]any](t, rr)
-	if got, _ := res["error"].(string); got != "invalid JSON body" {
+	if got := requireErrorString(t, res); got != "invalid JSON body" {
 		t.Fatalf("unexpected error: %q", got)
 	}
 }
@@ -196,7 +196,7 @@ func TestAPIDeleteRejectsMixedNameAndRef(t *testing.T) {
 	assertStatus(t, rr, http.StatusBadRequest)
 
 	res := decodeJSON[map[string]any](t, rr)
-	if got, _ := res["error"].(string); got != "ref and name cannot both be provided" {
+	if got := requireErrorString(t, res); got != "ref and name cannot both be provided" {
 		t.Fatalf("unexpected error: %q", got)
 	}
 }
@@ -209,7 +209,7 @@ func TestAPIDeletePrevalidatesAllSelectorsBeforeMutation(t *testing.T) {
 	assertStatus(t, rr, http.StatusBadRequest)
 
 	res := decodeJSON[map[string]any](t, rr)
-	errText, _ := res["error"].(string)
+	errText := requireErrorString(t, res)
 	if !strings.Contains(errText, "invalid ref") {
 		t.Fatalf("expected invalid ref error, got %q", errText)
 	}
@@ -227,7 +227,7 @@ func TestAPIDeleteSingleNotFoundKeepsLegacyPayload(t *testing.T) {
 	assertStatus(t, rr, http.StatusNotFound)
 
 	res := decodeJSON[map[string]any](t, rr)
-	if got, _ := res["error"].(string); got != "not found" {
+	if got := requireErrorString(t, res); got != "not found" {
 		t.Fatalf("unexpected error: %q", got)
 	}
 	if _, ok := res["deletedCount"]; ok {
@@ -279,7 +279,7 @@ func TestAPIContentRejectsMultipleSelectors(t *testing.T) {
 	assertStatus(t, rr, http.StatusBadRequest)
 
 	res := decodeJSON[map[string]any](t, rr)
-	if got, _ := res["error"].(string); got != "provide exactly one ref or name" {
+	if got := requireErrorString(t, res); got != "provide exactly one ref or name" {
 		t.Fatalf("unexpected error: %q", got)
 	}
 }

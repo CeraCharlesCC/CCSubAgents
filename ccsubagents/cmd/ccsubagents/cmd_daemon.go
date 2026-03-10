@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -17,12 +16,16 @@ import (
 
 func runDaemon(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "Usage: ccsubagents daemon <status|start|stop>")
+		if err := writeln(stderr, "Usage: ccsubagents daemon <status|start|stop>"); err != nil {
+			return 1
+		}
 		return 2
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		if writeErr := writeln(stderr, err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 	stateDir := paths.ResolveDaemonStateDir(home, os.Getenv)
@@ -32,59 +35,87 @@ func runDaemon(args []string, stdout, stderr io.Writer) int {
 	case "status":
 		client, err := daemonclient.NewDefaultClient(stateDir, os.Getenv)
 		if err != nil {
-			fmt.Fprintln(stderr, err)
+			if writeErr := writeln(stderr, err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
 		if err := client.Health(context.Background()); err != nil {
 			if daemonctl.IsDaemonStoppedOrUnavailable(err) {
-				fmt.Fprintf(stdout, "daemon status: stopped\nstate dir: %s\n", stateDir)
+				if writeErr := writef(stdout, "daemon status: stopped\nstate dir: %s\n", stateDir); writeErr != nil {
+					return 1
+				}
 				return 0
 			}
-			fmt.Fprintf(stdout, "daemon status: unavailable (%v)\n", err)
+			if writeErr := writef(stdout, "daemon status: unavailable (%v)\n", err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
-		fmt.Fprintf(stdout, "daemon status: ok\nstate dir: %s\n", stateDir)
+		if err := writef(stdout, "daemon status: ok\nstate dir: %s\n", stateDir); err != nil {
+			return 1
+		}
 		return 0
 	case "start":
 		cwd, err := os.Getwd()
 		if err != nil {
-			fmt.Fprintln(stderr, err)
+			if writeErr := writeln(stderr, err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
 		settings, err := config.LoadMergedInstallSettings(home, cwd)
 		if err != nil {
-			fmt.Fprintln(stderr, err)
+			if writeErr := writeln(stderr, err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
 		storeRoot := resolveStoreRoot(home)
 		if err := daemonctl.StartAndWait(context.Background(), stateDir, storeRoot, settings.NoAuth, stderr); err != nil {
-			fmt.Fprintln(stderr, err)
+			if writeErr := writeln(stderr, err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
-		fmt.Fprintln(stdout, "daemon started")
+		if err := writeln(stdout, "daemon started"); err != nil {
+			return 1
+		}
 		return 0
 	case "stop":
 		client, err := daemonclient.NewDefaultClient(stateDir, os.Getenv)
 		if err != nil {
-			fmt.Fprintln(stderr, err)
+			if writeErr := writeln(stderr, err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
 		if _, err := client.Shutdown(context.Background()); err != nil && !daemonctl.IsDaemonStoppedOrUnavailable(err) {
-			fmt.Fprintln(stderr, err)
+			if writeErr := writeln(stderr, err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
 		if err := daemonctl.WaitForStop(context.Background(), stateDir, 4*time.Second); err != nil {
-			fmt.Fprintln(stderr, err)
+			if writeErr := writeln(stderr, err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
 		if err := daemonctl.StopRegisteredProcesses(context.Background(), stateDir, []string{"web", "mcp"}); err != nil {
-			fmt.Fprintln(stderr, err)
+			if writeErr := writeln(stderr, err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
-		fmt.Fprintln(stdout, "daemon stopped")
+		if err := writeln(stdout, "daemon stopped"); err != nil {
+			return 1
+		}
 		return 0
 	default:
-		fmt.Fprintf(stderr, "unknown daemon subcommand %q\n", sub)
+		if err := writef(stderr, "unknown daemon subcommand %q\n", sub); err != nil {
+			return 1
+		}
 		return 2
 	}
 }

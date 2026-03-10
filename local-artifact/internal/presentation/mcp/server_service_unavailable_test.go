@@ -23,7 +23,7 @@ func TestHandleToolsCall_WorkspaceServiceInitFailureReturnsTypedToolError(t *tes
 		t.Fatalf("tools/call rpc error: %+v", rpcErr)
 	}
 
-	resp := respAny.(toolResult)
+	resp := requireToolResult(t, respAny)
 	if !resp.IsError {
 		t.Fatalf("expected tool error when workspace service init fails, got %+v", resp)
 	}
