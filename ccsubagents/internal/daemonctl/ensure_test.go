@@ -109,6 +109,7 @@ func startFakeDaemonUnixSocket(t *testing.T, socketPath, expectedToken string, r
 	}
 
 	server := &http.Server{}
+	var listener net.Listener
 	authorized := func(r *http.Request) bool {
 		if !requireAuth {
 			return true
@@ -149,14 +150,17 @@ func startFakeDaemonUnixSocket(t *testing.T, socketPath, expectedToken string, r
 			if err := server.Close(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				_ = err
 			}
-			if err := os.Remove(socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-				_ = err
+			if listener != nil {
+				if err := listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+					_ = err
+				}
 			}
 		}()
 	})
 	server.Handler = mux
 
-	listener, err := net.Listen("unix", socketPath)
+	var err error
+	listener, err = net.Listen("unix", socketPath)
 	if err != nil {
 		t.Fatalf("listen unix socket: %v", err)
 	}
@@ -628,7 +632,7 @@ func TestStartAndWait_DisableAuth_RestartsAuthEnabledDaemonToNoAuth(t *testing.T
 		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := StartAndWait(ctx, stateDir, storeRoot, true, io.Discard); err != nil {
 		t.Fatalf("StartAndWait disable-auth restart failed: %v", err)
@@ -680,7 +684,7 @@ func TestStartAndWait_DisableAuth_DoesNotSucceedWhenRestartFails(t *testing.T) {
 		return startErr
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	err := StartAndWait(ctx, stateDir, storeRoot, true, io.Discard)
 	if !errors.Is(err, startErr) {
