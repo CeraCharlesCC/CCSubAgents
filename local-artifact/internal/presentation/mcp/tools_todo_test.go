@@ -220,6 +220,74 @@ func TestTodoTool_UpdateByIDRoundTrip(t *testing.T) {
 	}
 }
 
+func TestTodoTool_UpdateByRefSelectorRoundTrip(t *testing.T) {
+	ctx := context.Background()
+
+	for idx, toolName := range todoToolNames {
+		toolName := toolName
+		t.Run(toolName, func(t *testing.T) {
+			s := newDaemonBackedServer(t)
+			artifactName := fmt.Sprintf("plan/task-update-by-ref-%d", idx)
+
+			baseResp := requireToolOK(t, callToolsCall(t, s, ctx, toolArtifactSaveText, map[string]any{
+				"name": artifactName,
+				"text": "base artifact",
+			}))
+			baseOut := requireSaveOut(t, baseResp.StructuredContent)
+
+			writeResp := requireToolOK(t, callToolsCall(t, s, ctx, toolName, map[string]any{
+				"operation": "write",
+				"artifact":  map[string]any{"ref": baseOut.Ref},
+				"todoList": []map[string]any{
+					{"id": 1, "title": "Draft", "status": "not-started"},
+					{"id": 2, "title": "Implement", "status": "in-progress"},
+				},
+			}))
+			writeOut, ok := writeResp.StructuredContent.(todoOut)
+			if !ok {
+				t.Fatalf("%s write expected todoOut structured content, got %T", toolName, writeResp.StructuredContent)
+			}
+
+			updateResp := requireToolOK(t, callToolsCall(t, s, ctx, toolName, map[string]any{
+				"operation":       "update",
+				"artifact":        map[string]any{"ref": baseOut.Ref},
+				"target":          map[string]any{"id": 2},
+				"status":          "completed",
+				"expectedPrevRef": writeOut.Ref,
+			}))
+			updateOut, ok := updateResp.StructuredContent.(todoOut)
+			if !ok {
+				t.Fatalf("%s update expected todoOut structured content, got %T", toolName, updateResp.StructuredContent)
+			}
+			if updateOut.Name != artifactName+"/todo" {
+				t.Fatalf("%s unexpected todo artifact name: %q", toolName, updateOut.Name)
+			}
+			if updateOut.Ref == "" || updateOut.Ref == writeOut.Ref {
+				t.Fatalf("%s expected update to create a new ref, got write=%q update=%q", toolName, writeOut.Ref, updateOut.Ref)
+			}
+			if updateOut.PrevRef != writeOut.Ref {
+				t.Fatalf("%s expected prevRef=%q, got %q", toolName, writeOut.Ref, updateOut.PrevRef)
+			}
+
+			readResp := requireToolOK(t, callToolsCall(t, s, ctx, toolName, map[string]any{
+				"operation": "read",
+				"artifact":  map[string]any{"ref": baseOut.Ref},
+			}))
+			readOut, ok := readResp.StructuredContent.(todoOut)
+			if !ok {
+				t.Fatalf("%s read expected todoOut structured content, got %T", toolName, readResp.StructuredContent)
+			}
+			expected := []todoItem{
+				{ID: 1, Title: "Draft", Status: "not-started"},
+				{ID: 2, Title: "Implement", Status: "completed"},
+			}
+			if !reflect.DeepEqual(readOut.TodoList, expected) {
+				t.Fatalf("%s unexpected updated todo list via ref selector: got %+v want %+v", toolName, readOut.TodoList, expected)
+			}
+		})
+	}
+}
+
 func TestTodoTool_UpdateByIndexRoundTripUsesZeroBasedIndex(t *testing.T) {
 	ctx := context.Background()
 
@@ -555,7 +623,7 @@ func TestToolTodo_ReadMalformedStoredTODOJSONReturnsError(t *testing.T) {
 				"operation": "read",
 				"artifact":  map[string]any{"name": "plan/task-malformed"},
 			}))
-			requireContentTextContains(t, readResp, "internal error: invalid stored todo artifact")
+			requireContentTextEq(t, readResp, "internal error: invalid stored todo artifact")
 		})
 	}
 }
@@ -640,12 +708,22 @@ func TestToolTodo_ValidationErrors(t *testing.T) {
 			},
 		},
 		{
-			name: "name and ref conflict is rejected by handler validation",
+			name: "missing selector is rejected by schema validation",
+			args: map[string]any{
+				"operation": "write",
+				"artifact":  map[string]any{},
+				"todoList":  []map[string]any{{"id": 1, "title": "A", "status": "not-started"}},
+			},
+			expectInvalidArgsErr: true,
+		},
+		{
+			name: "name and ref conflict is rejected by schema validation",
 			args: map[string]any{
 				"operation": "write",
 				"artifact":  map[string]any{"name": "plan/task-invalid", "ref": "20260216T101019Z-cccccccccccccccc"},
 				"todoList":  []map[string]any{{"id": 1, "title": "A", "status": "not-started"}},
 			},
+			expectInvalidArgsErr: true,
 		},
 	}
 
@@ -691,6 +769,10 @@ func TestToolsList_ExposesTodoDefinitionWithStrictNestedSchemas(t *testing.T) {
 	artifactProp := requireMap(t, requireMap(t, todo.InputSchema["properties"], "todo input properties")["artifact"], "artifact property")
 	if artifactProp["additionalProperties"] != false {
 		t.Fatalf("expected strict artifact selector schema, got %+v", artifactProp)
+	}
+	artifactOneOf, ok := artifactProp["oneOf"].([]map[string]any)
+	if !ok || len(artifactOneOf) != 2 {
+		t.Fatalf("expected artifact selector oneOf with two selectors, got %+v", artifactProp["oneOf"])
 	}
 	operationProp := requireMap(t, requireMap(t, todo.InputSchema["properties"], "todo input properties")["operation"], "operation property")
 	if !reflect.DeepEqual(operationProp["enum"], []string{"read", "write", "update"}) {

@@ -41,6 +41,7 @@ func TestTextEditTool_AppendSupportsCanonicalAndAlias(t *testing.T) {
 				t.Fatalf("expected prevRef=%q, got %q", baseOut.Ref, editOut.PrevRef)
 			}
 			requireContentTextEq(t, editResp, "appended")
+			requireNoContentType(t, editResp, "resource_link")
 
 			got, err := s.daemon().Get(ctx, daemon.GetRequest{Workspace: s.currentWorkspace(ctx), Selector: daemon.Selector{Name: artifactName}})
 			if err != nil {
@@ -91,6 +92,7 @@ func TestTextEditTool_PatchSupportsCanonicalAndAlias(t *testing.T) {
 				t.Fatalf("expected prevRef=%q, got %q", baseOut.Ref, editOut.PrevRef)
 			}
 			requireContentTextEq(t, editResp, "patched")
+			requireNoContentType(t, editResp, "resource_link")
 
 			got, err := s.daemon().Get(ctx, daemon.GetRequest{Workspace: s.currentWorkspace(ctx), Selector: daemon.Selector{Name: artifactName}})
 			if err != nil {
@@ -341,6 +343,110 @@ func TestTextEditTool_PatchCanProduceEmptyStringAndPreserveMimeAndKind(t *testin
 	}
 }
 
+func TestTextEditTool_PatchHandlesEOFNewlineMarkers(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("accepts old-side no-newline marker", func(t *testing.T) {
+		s := newDaemonBackedServer(t)
+		requireToolOK(t, callToolsCall(t, s, ctx, toolArtifactSaveText, map[string]any{
+			"name": "plan/edit-no-newline-old",
+			"text": "world",
+		}))
+
+		patch := strings.Join([]string{
+			"--- a/sample.txt",
+			"+++ b/sample.txt",
+			"@@ -1 +1 @@",
+			"-world",
+			`\ No newline at end of file`,
+			"+gophers",
+			"",
+		}, "\n")
+
+		editResp := requireToolOK(t, callToolsCall(t, s, ctx, toolArtifactEditText, map[string]any{
+			"operation": "patch",
+			"artifact":  map[string]any{"name": "plan/edit-no-newline-old"},
+			"patch":     patch,
+		}))
+		requireContentTextEq(t, editResp, "patched")
+		requireNoContentType(t, editResp, "resource_link")
+
+		got, err := s.daemon().Get(ctx, daemon.GetRequest{Workspace: s.currentWorkspace(ctx), Selector: daemon.Selector{Name: "plan/edit-no-newline-old"}})
+		if err != nil {
+			t.Fatalf("daemon get after old-side no-newline patch: %v", err)
+		}
+		payload, err := base64.StdEncoding.DecodeString(got.DataBase64)
+		if err != nil {
+			t.Fatalf("decode patched payload: %v", err)
+		}
+		if string(payload) != "gophers\n" {
+			t.Fatalf("unexpected patched payload: %q", string(payload))
+		}
+	})
+
+	t.Run("can produce result without trailing newline", func(t *testing.T) {
+		s := newDaemonBackedServer(t)
+		requireToolOK(t, callToolsCall(t, s, ctx, toolArtifactSaveText, map[string]any{
+			"name": "plan/edit-no-newline-result",
+			"text": "world\n",
+		}))
+
+		patch := strings.Join([]string{
+			"--- a/sample.txt",
+			"+++ b/sample.txt",
+			"@@ -1 +1 @@",
+			"-world",
+			"+gophers",
+			`\ No newline at end of file`,
+			"",
+		}, "\n")
+
+		editResp := requireToolOK(t, callToolsCall(t, s, ctx, toolArtifactEditText, map[string]any{
+			"operation": "patch",
+			"artifact":  map[string]any{"name": "plan/edit-no-newline-result"},
+			"patch":     patch,
+		}))
+		requireContentTextEq(t, editResp, "patched")
+
+		got, err := s.daemon().Get(ctx, daemon.GetRequest{Workspace: s.currentWorkspace(ctx), Selector: daemon.Selector{Name: "plan/edit-no-newline-result"}})
+		if err != nil {
+			t.Fatalf("daemon get after result no-newline patch: %v", err)
+		}
+		payload, err := base64.StdEncoding.DecodeString(got.DataBase64)
+		if err != nil {
+			t.Fatalf("decode patched payload: %v", err)
+		}
+		if string(payload) != "gophers" {
+			t.Fatalf("expected result without trailing newline, got %q", string(payload))
+		}
+	})
+
+	t.Run("rejects mismatched eof newline marker", func(t *testing.T) {
+		s := newDaemonBackedServer(t)
+		requireToolOK(t, callToolsCall(t, s, ctx, toolArtifactSaveText, map[string]any{
+			"name": "plan/edit-no-newline-mismatch",
+			"text": "world\n",
+		}))
+
+		patch := strings.Join([]string{
+			"--- a/sample.txt",
+			"+++ b/sample.txt",
+			"@@ -1 +1 @@",
+			"-world",
+			`\ No newline at end of file`,
+			"+gophers",
+			"",
+		}, "\n")
+
+		resp := requireToolErr(t, callToolsCall(t, s, ctx, toolArtifactEditText, map[string]any{
+			"operation": "patch",
+			"artifact":  map[string]any{"name": "plan/edit-no-newline-mismatch"},
+			"patch":     patch,
+		}))
+		requireContentTextContains(t, resp, "EOF newline marker does not match")
+	})
+}
+
 func TestTextEditTool_SchemaValidationRejectsUnknownAndOperationMismatchedFields(t *testing.T) {
 	s := newDaemonBackedServer(t)
 	s.setInitialized(true)
@@ -357,6 +463,14 @@ func TestTextEditTool_SchemaValidationRejectsUnknownAndOperationMismatchedFields
 		{
 			name: "unknown nested selector field",
 			args: map[string]any{"operation": "append", "artifact": map[string]any{"name": "plan/x", "extra": true}, "text": "ok"},
+		},
+		{
+			name: "selector requires one of name or ref",
+			args: map[string]any{"operation": "append", "artifact": map[string]any{}, "text": "ok"},
+		},
+		{
+			name: "selector rejects both name and ref",
+			args: map[string]any{"operation": "append", "artifact": map[string]any{"name": "plan/x", "ref": "20260216T101019Z-cccccccccccccccc"}, "text": "ok"},
 		},
 		{
 			name: "append missing text",
@@ -422,6 +536,10 @@ func TestToolsList_ExposesTextEditDefinitionWithStrictNestedSchemas(t *testing.T
 	artifactProp := requireMap(t, requireMap(t, edit.InputSchema["properties"], "edit input properties")["artifact"], "artifact property")
 	if artifactProp["additionalProperties"] != false {
 		t.Fatalf("expected strict artifact selector schema, got %+v", artifactProp)
+	}
+	artifactOneOf, ok := artifactProp["oneOf"].([]map[string]any)
+	if !ok || len(artifactOneOf) != 2 {
+		t.Fatalf("expected artifact selector oneOf with two selectors, got %+v", artifactProp["oneOf"])
 	}
 	operationProp := requireMap(t, requireMap(t, edit.InputSchema["properties"], "edit input properties")["operation"], "operation property")
 	if !reflect.DeepEqual(operationProp["enum"], []string{"append", "patch"}) {

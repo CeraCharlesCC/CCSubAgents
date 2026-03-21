@@ -69,7 +69,6 @@ func (s *Server) toolSaveText(ctx context.Context, argsRaw json.RawMessage) (any
 	return toolResult{
 		Content: []any{
 			textContent("saved"),
-			resourceLink(a.Name, artifacts.URIByName(nameEsc), a.MimeType, a.SizeBytes),
 		},
 		StructuredContent: out,
 	}, nil
@@ -103,7 +102,6 @@ func (s *Server) toolSaveBlob(ctx context.Context, argsRaw json.RawMessage) (any
 	return toolResult{
 		Content: []any{
 			textContent("saved"),
-			resourceLink(a.Name, artifacts.URIByName(nameEsc), a.MimeType, a.SizeBytes),
 		},
 		StructuredContent: out,
 	}, nil

@@ -46,7 +46,7 @@ To force workspace separation for MCP clients that do not provide roots/working-
 
 ### `edit_artifact_text` tool usage
 
-`edit_artifact_text` edits an **existing** text artifact selected by `name` or `ref`.
+`edit_artifact_text` edits an **existing** text artifact selected by **exactly one of** `name` or `ref`.
 It supports two operations:
 
 - `append` — append `text` to the end of the current artifact body
@@ -86,7 +86,7 @@ Patch support is intentionally strict: malformed patches, non-applicable hunks, 
 ### `todo` tool usage
 
 `todo` stores task state as JSON text under deterministic `<artifact>/todo` names.
-The `artifact` selector should reference the base artifact name/ref (for example `plan/task-123`), and the tool derives storage as `<base>/todo`.
+The `artifact` selector should reference the base artifact using **exactly one of** `name` or `ref` (for example `plan/task-123`), and the tool derives storage as `<base>/todo`.
 It supports three operations:
 
 - `read` — load the current TODO list
@@ -152,6 +152,13 @@ Update one TODO item's status by zero-based array `index`:
 ```
 
 `expectedPrevRef` applies to `update` the same way it does to `write`: when provided, it must match the current latest TODO ref or the mutation fails with a conflict and remains non-mutating.
+
+### `get_artifact` and `delete_artifact` selector semantics
+
+- `get_artifact` requires **exactly one of** `name` or `ref`.
+- `delete_artifact` requires **exactly one of** `name` or `ref`.
+
+Both tools keep their stable machine-readable metadata in `structuredContent`; success content is intentionally minimal and should not be scraped for artifact selectors or URIs.
 
 ## Build (in /local-artifact/)
 

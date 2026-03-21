@@ -180,12 +180,12 @@ func loadStoredTodoItems(ctx context.Context, client *daemon.Client, workspace d
 
 	data, decodeErr := base64.StdEncoding.DecodeString(got.DataBase64)
 	if decodeErr != nil {
-		return nil, daemon.GetResponse{}, fmt.Errorf("internal error: invalid daemon payload")
+		return nil, daemon.GetResponse{}, fmt.Errorf("invalid daemon payload")
 	}
 
 	items, err := normalizeAndValidateTodoItemsFromStored(data)
 	if err != nil {
-		return nil, daemon.GetResponse{}, fmt.Errorf("internal error: invalid stored todo artifact")
+		return nil, daemon.GetResponse{}, fmt.Errorf("invalid stored todo artifact")
 	}
 
 	return items, got, nil
@@ -194,7 +194,7 @@ func loadStoredTodoItems(ctx context.Context, client *daemon.Client, workspace d
 func saveTodoItems(ctx context.Context, client *daemon.Client, workspace daemon.WorkspaceSelector, todoName, nameEsc string, items []todoItem, expectedPrevRef string) (todoOut, error) {
 	payload, err := json.Marshal(items)
 	if err != nil {
-		return todoOut{}, fmt.Errorf("internal error: failed to marshal todoList")
+		return todoOut{}, fmt.Errorf("failed to marshal todoList")
 	}
 
 	a, err := client.SaveText(ctx, daemon.SaveTextRequest{

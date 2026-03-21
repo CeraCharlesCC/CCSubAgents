@@ -15,7 +15,7 @@ const (
 	serverTitle        = "Local Artifact Store"
 	serverVersion      = "0.1.0"
 	serverDescription  = "Completely local MCP server that lets agents save and retrieve named artifacts (text, files, images)."
-	serverInstructions = "Use save_artifact_text or save_artifact_blob to persist an artifact under a name. Re-saving the same name creates a new ref linked by prevRef and moves the name to the latest ref. Use edit_artifact_text to append text or apply a unified diff patch to an existing text artifact; edits create a new ref, preserve prevRef linkage, and conflict if based on a stale ref. Use get_artifact with name or ref to retrieve, delete_artifact to remove an artifact, and get_artifact_list to inspect current aliases. Use todo to read, write, or update the status of a deterministic <artifact>/todo list with optional expectedPrevRef conflict protection."
+	serverInstructions = "Use save_artifact_text or save_artifact_blob to persist an artifact under a name. Re-saving the same name creates a new ref linked by prevRef and moves the name to the latest ref. Use edit_artifact_text to append text or apply a unified diff patch to an existing text artifact; edits create a new ref, preserve prevRef linkage, and conflict if based on a stale ref. Use get_artifact with exactly one of name or ref to retrieve, delete_artifact with exactly one of name or ref to remove an artifact, and get_artifact_list to inspect current aliases. Use todo to read, write, or update the status of a deterministic <artifact>/todo list selected by exactly one of name or ref, with optional expectedPrevRef conflict protection."
 )
 
 const (
@@ -104,7 +104,7 @@ func toolDefinitions() []toolDef {
 		{
 			Name:         toolArtifactEditText,
 			Title:        "Edit existing text artifact",
-			Description:  "Append text or apply a unified diff patch to an existing text artifact. Creates a new version and preserves prevRef linkage.",
+			Description:  "Append text or apply a unified diff patch to an existing text artifact selected by exactly one of name or ref. Creates a new version and preserves prevRef linkage.",
 			InputSchema:  textEditInputSchema(),
 			OutputSchema: saveOutputSchema(),
 			Annotations:  readOnlyHint(false),
@@ -125,17 +125,20 @@ func toolDefinitions() []toolDef {
 		{
 			Name:        toolArtifactGet,
 			Title:       "Get artifact",
-			Description: "Fetch an artifact by ref or name. For binary, returns embedded resource (base64) unless mode=image.",
-			InputSchema: objectSchema(
-				map[string]any{
-					"ref":  map[string]any{"type": "string"},
-					"name": map[string]any{"type": "string"},
-					"mode": map[string]any{
-						"type":        "string",
-						"enum":        []string{modeAuto, modeText, modeResource, modeImage, modeMeta},
-						"description": "auto=text for text/*, else resource",
+			Description: "Fetch an artifact by exactly one of ref or name. For binary, returns embedded resource (base64) unless mode=image.",
+			InputSchema: withExactlyOneOf(
+				objectSchema(
+					map[string]any{
+						"ref":  stringProp("Artifact ref."),
+						"name": stringProp("Artifact name/alias."),
+						"mode": map[string]any{
+							"type":        "string",
+							"enum":        []string{modeAuto, modeText, modeResource, modeImage, modeMeta},
+							"description": "auto=text for text/*, else resource",
+						},
 					},
-				},
+				),
+				"name", "ref",
 			),
 			OutputSchema: map[string]any{"type": "object"},
 			Annotations:  readOnlyHint(true),
@@ -164,12 +167,15 @@ func toolDefinitions() []toolDef {
 		{
 			Name:        toolArtifactDelete,
 			Title:       "Delete artifact",
-			Description: "Delete an artifact by name or ref. If ref is provided, all names pointing to that ref are removed.",
-			InputSchema: objectSchema(
-				map[string]any{
-					"ref":  stringProp("Artifact ref to delete."),
-					"name": stringProp("Artifact alias/name to delete."),
-				},
+			Description: "Delete an artifact by exactly one of name or ref. If ref is provided, all names pointing to that ref are removed.",
+			InputSchema: withExactlyOneOf(
+				objectSchema(
+					map[string]any{
+						"ref":  stringProp("Artifact ref to delete."),
+						"name": stringProp("Artifact alias/name to delete."),
+					},
+				),
+				"name", "ref",
 			),
 			OutputSchema: deleteOutputSchema(),
 			Annotations:  readOnlyHint(false),
@@ -177,7 +183,7 @@ func toolDefinitions() []toolDef {
 		{
 			Name:         toolArtifactTodo,
 			Title:        "Read/write/update TODO list",
-			Description:  "Read TODO items, write full TODO lists, or update one persisted TODO item's status under deterministic <artifact>/todo storage.",
+			Description:  "Read TODO items, write full TODO lists, or update one persisted TODO item's status under deterministic <artifact>/todo storage selected by exactly one of name or ref.",
 			InputSchema:  todoInputSchema(),
 			OutputSchema: todoOutputSchema(),
 			Annotations:  readOnlyHint(false),
@@ -196,6 +202,18 @@ func objectSchema(properties map[string]any, required ...string) map[string]any 
 	if len(required) > 0 {
 		schema["required"] = required
 	}
+	return schema
+}
+
+func withExactlyOneOf(schema map[string]any, fields ...string) map[string]any {
+	if len(fields) == 0 {
+		return schema
+	}
+	oneOf := make([]map[string]any, 0, len(fields))
+	for _, field := range fields {
+		oneOf = append(oneOf, map[string]any{"required": []string{field}})
+	}
+	schema["oneOf"] = oneOf
 	return schema
 }
 
@@ -361,12 +379,12 @@ func todoOutputSchema() map[string]any {
 }
 
 func artifactSelectorSchema() map[string]any {
-	return objectSchema(
+	return withExactlyOneOf(objectSchema(
 		map[string]any{
-			"name": stringProp("Artifact name/alias."),
-			"ref":  stringProp("Artifact ref."),
+			"name": stringProp("Artifact name/alias. Provide exactly one of name or ref."),
+			"ref":  stringProp("Artifact ref. Provide exactly one of name or ref."),
 		},
-	)
+	), "name", "ref")
 }
 
 func todoItemSchema() map[string]any {

@@ -132,7 +132,6 @@ func (s *Server) toolEditText(ctx context.Context, argsRaw json.RawMessage) (any
 	return toolResult{
 		Content: []any{
 			textContent(statusText),
-			resourceLink(saved.Name, artifacts.URIByName(nameEsc), saved.MimeType, saved.SizeBytes),
 		},
 		StructuredContent: out,
 	}, nil
