@@ -11,6 +11,7 @@ tools:
   [
     'agent',
     'read/readFile', 
+    'read/problems',
     'execute/runInTerminal', 
     'execute/getTerminalOutput', 
     'execute/awaitTerminal', 

@@ -9,19 +9,16 @@ tools:
     'execute/awaitTerminal', 
     'execute/killTerminal', 
     'execute/runInTerminal', 
-    'execute/testFailure', 
     'read/readFile',
     'read/problems', 
     'edit/createDirectory', 
     'edit/createFile', 
     'edit/editFiles', 
-    'search/changes',
+    'search/codebase',
     'search/usages',
     'web',
     'artifact-mcp/get_artifact',
-    'artifact-mcp/get_artifact_list',
     'artifact-mcp/todo',
-    'artifact-mcp/save_artifact_text',
   ]
 model: [GPT-5.4 (copilot), GPT-5.3-Codex (copilot), GPT-5.2-Codex (copilot)]
 user-invokable: false   # for current stable 
