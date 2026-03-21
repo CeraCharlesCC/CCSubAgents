@@ -14,7 +14,7 @@ tools:
     'edit/createDirectory', 
     'edit/createFile', 
     'edit/editFiles', 
-    'search/codebase',
+    'search/searchSubagent',
     'search/usages',
     'web',
     'artifact-mcp/get_artifact',

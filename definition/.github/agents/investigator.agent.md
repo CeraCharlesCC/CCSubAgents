@@ -11,7 +11,6 @@ tools:
     'read/readFile', 
     'read/problems',
     'search/usages',
-    'search/codebase',
     'web',
     'vscode/askQuestions',
     'artifact-mcp/get_artifact',

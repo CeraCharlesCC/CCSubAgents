@@ -10,7 +10,7 @@ tools:
     'execute/killTerminal',
     'execute/runInTerminal',
     'read/readFile',
-    'search/codebase',
+    'search/searchSubagent',
     'search/usages',
     'web',
     'artifact-mcp/get_artifact',
