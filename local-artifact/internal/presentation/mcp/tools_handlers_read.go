@@ -84,9 +84,8 @@ func (s *Server) toolGet(ctx context.Context, argsRaw json.RawMessage) (any, *js
 	nameEsc := url.PathEscape(a.Name)
 	meta := toSaveOut(a, nameEsc)
 
-	lowerMime := strings.ToLower(a.MimeType)
-	isText := strings.HasPrefix(lowerMime, "text/") || a.Kind == artifacts.ArtifactKindText
-	isImage := strings.HasPrefix(lowerMime, "image/") || a.Kind == artifacts.ArtifactKindImage
+	isText := artifactIsText(a)
+	isImage := artifactIsImage(a)
 
 	if mode == modeMeta {
 		return toolResult{Content: []any{textContent("metadata only")}, StructuredContent: meta}, nil

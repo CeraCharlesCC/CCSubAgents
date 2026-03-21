@@ -51,6 +51,15 @@ type SaveBlobInput struct {
 	ExpectedPrevRef string
 }
 
+type SaveArtifactInput struct {
+	Name            string
+	Data            []byte
+	Kind            ArtifactKind
+	MimeType        string
+	Filename        string
+	ExpectedPrevRef string
+}
+
 func (s *Service) SaveBlob(ctx context.Context, in SaveBlobInput) (ArtifactVersion, error) {
 	name, err := normalizeAndValidateName(in.Name)
 	if err != nil {
@@ -65,6 +74,25 @@ func (s *Service) SaveBlob(ctx context.Context, in SaveBlobInput) (ArtifactVersi
 		kind = ArtifactKindImage
 	} else if strings.HasPrefix(strings.ToLower(mime), "text/") {
 		kind = ArtifactKindText
+	}
+	return s.saveWithOptions(ctx, name, kind, mime, strings.TrimSpace(in.Filename), in.Data, SaveOptions{ExpectedPrevRef: in.ExpectedPrevRef})
+}
+
+func (s *Service) SaveArtifact(ctx context.Context, in SaveArtifactInput) (ArtifactVersion, error) {
+	name, err := normalizeAndValidateName(in.Name)
+	if err != nil {
+		return ArtifactVersion{}, err
+	}
+	mime := strings.TrimSpace(in.MimeType)
+	if mime == "" {
+		return ArtifactVersion{}, fmt.Errorf("%w: mimeType is required", ErrInvalidInput)
+	}
+	kind := in.Kind
+	switch kind {
+	case ArtifactKindText, ArtifactKindFile, ArtifactKindImage:
+		// ok
+	default:
+		return ArtifactVersion{}, fmt.Errorf("%w: kind must be one of %s|%s|%s", ErrInvalidInput, ArtifactKindText, ArtifactKindFile, ArtifactKindImage)
 	}
 	return s.saveWithOptions(ctx, name, kind, mime, strings.TrimSpace(in.Filename), in.Data, SaveOptions{ExpectedPrevRef: in.ExpectedPrevRef})
 }

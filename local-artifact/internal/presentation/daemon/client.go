@@ -108,6 +108,16 @@ func (c *Client) SaveBlob(ctx context.Context, req SaveBlobRequest) (artifacts.A
 	return out.Artifact, nil
 }
 
+func (c *Client) SaveArtifact(ctx context.Context, req SaveArtifactRequest) (artifacts.ArtifactVersion, error) {
+	var out struct {
+		Artifact artifacts.ArtifactVersion `json:"artifact"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/daemon/v1/artifacts/save_artifact", req, &out); err != nil {
+		return artifacts.ArtifactVersion{}, err
+	}
+	return out.Artifact, nil
+}
+
 func (c *Client) Resolve(ctx context.Context, req ResolveRequest) (ResolveResponse, error) {
 	var out ResolveResponse
 	if err := c.do(ctx, http.MethodPost, "/daemon/v1/artifacts/resolve", req, &out); err != nil {

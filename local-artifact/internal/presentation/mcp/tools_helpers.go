@@ -3,6 +3,7 @@ package mcp
 import (
 	"encoding/base64"
 	"errors"
+	"strings"
 
 	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/core/artifacts"
 	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/presentation/daemon"
@@ -85,4 +86,14 @@ func resourceLink(name, uri, mime string, size int64) map[string]any {
 		"mimeType": mime,
 		"size":     size,
 	}
+}
+
+func artifactIsText(a artifacts.ArtifactVersion) bool {
+	lowerMime := strings.ToLower(a.MimeType)
+	return strings.HasPrefix(lowerMime, "text/") || a.Kind == artifacts.ArtifactKindText
+}
+
+func artifactIsImage(a artifacts.ArtifactVersion) bool {
+	lowerMime := strings.ToLower(a.MimeType)
+	return strings.HasPrefix(lowerMime, "image/") || a.Kind == artifacts.ArtifactKindImage
 }

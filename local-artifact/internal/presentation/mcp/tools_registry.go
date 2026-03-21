@@ -50,6 +50,12 @@ func initializeToolRegistry() {
 			},
 		},
 		{
+			Metadata: toolRegistryMetadata{CanonicalName: toolArtifactEditText, Aliases: []string{"artifact.edit_text"}},
+			Handler: func(s *Server, ctx context.Context, args json.RawMessage) (any, *jsonRPCError) {
+				return s.toolEditText(ctx, args)
+			},
+		},
+		{
 			Metadata: toolRegistryMetadata{CanonicalName: toolArtifactResolve, Aliases: []string{"artifact.resolve"}},
 			Handler: func(s *Server, ctx context.Context, args json.RawMessage) (any, *jsonRPCError) {
 				return s.toolResolve(ctx, args)

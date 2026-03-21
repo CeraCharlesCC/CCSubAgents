@@ -28,6 +28,16 @@ type SaveBlobRequest struct {
 	ExpectedPrevRef string            `json:"expectedPrevRef,omitempty"`
 }
 
+type SaveArtifactRequest struct {
+	Workspace       WorkspaceSelector      `json:"workspace"`
+	Name            string                 `json:"name"`
+	DataBase64      string                 `json:"dataBase64"`
+	Kind            artifacts.ArtifactKind `json:"kind"`
+	MimeType        string                 `json:"mimeType"`
+	Filename        string                 `json:"filename,omitempty"`
+	ExpectedPrevRef string                 `json:"expectedPrevRef,omitempty"`
+}
+
 type ResolveRequest struct {
 	Workspace WorkspaceSelector `json:"workspace"`
 	Name      string            `json:"name"`

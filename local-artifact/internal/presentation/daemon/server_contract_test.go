@@ -78,6 +78,56 @@ func TestServerContract_ExpectedPrevRefConflict(t *testing.T) {
 	}
 }
 
+func TestServerContract_SaveArtifactPreservesMetadataAndAllowsEmptyPayload(t *testing.T) {
+	h := newDaemonHTTPHarness(t)
+
+	first, err := h.client.SaveArtifact(h.ctx, SaveArtifactRequest{
+		Workspace:  h.workspace,
+		Name:       "plan/metadata-roundtrip",
+		DataBase64: base64.StdEncoding.EncodeToString([]byte("value\n")),
+		Kind:       "text",
+		MimeType:   "application/json; charset=utf-8",
+		Filename:   "data.json",
+	})
+	if err != nil {
+		t.Fatalf("save artifact: %v", err)
+	}
+
+	second, err := h.client.SaveArtifact(h.ctx, SaveArtifactRequest{
+		Workspace:       h.workspace,
+		Name:            "plan/metadata-roundtrip",
+		DataBase64:      base64.StdEncoding.EncodeToString([]byte{}),
+		Kind:            first.Kind,
+		MimeType:        first.MimeType,
+		Filename:        first.Filename,
+		ExpectedPrevRef: first.Ref,
+	})
+	if err != nil {
+		t.Fatalf("save artifact empty payload: %v", err)
+	}
+	if second.PrevRef != first.Ref {
+		t.Fatalf("expected prevRef=%q, got %q", first.Ref, second.PrevRef)
+	}
+	if second.Kind != first.Kind || second.MimeType != first.MimeType || second.Filename != first.Filename {
+		t.Fatalf("expected metadata to be preserved, first=%+v second=%+v", first, second)
+	}
+
+	got, err := h.client.Get(h.ctx, GetRequest{Workspace: h.workspace, Selector: Selector{Name: "plan/metadata-roundtrip"}})
+	if err != nil {
+		t.Fatalf("get latest artifact: %v", err)
+	}
+	if got.Artifact.Ref != second.Ref {
+		t.Fatalf("expected latest ref=%q, got %q", second.Ref, got.Artifact.Ref)
+	}
+	payload, err := base64.StdEncoding.DecodeString(got.DataBase64)
+	if err != nil {
+		t.Fatalf("decode latest payload: %v", err)
+	}
+	if len(payload) != 0 {
+		t.Fatalf("expected empty payload, got %q", string(payload))
+	}
+}
+
 func TestServerContract_MethodNotAllowedUsesEnvelope(t *testing.T) {
 	engine := newDaemonEngine(t)
 	handler := NewServer(engine, "test").Routes()

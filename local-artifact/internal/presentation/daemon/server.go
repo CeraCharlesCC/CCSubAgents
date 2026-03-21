@@ -46,6 +46,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/daemon/v1/control/shutdown", s.handleShutdown)
 	mux.HandleFunc("/daemon/v1/artifacts/save_text", s.handleSaveText)
 	mux.HandleFunc("/daemon/v1/artifacts/save_blob", s.handleSaveBlob)
+	mux.HandleFunc("/daemon/v1/artifacts/save_artifact", s.handleSaveArtifact)
 	mux.HandleFunc("/daemon/v1/artifacts/resolve", s.handleResolve)
 	mux.HandleFunc("/daemon/v1/artifacts/get", s.handleGet)
 	mux.HandleFunc("/daemon/v1/artifacts/list", s.handleList)
@@ -160,6 +161,40 @@ func (s *Server) handleSaveBlob(w http.ResponseWriter, r *http.Request) {
 	a, err := svc.SaveBlob(r.Context(), artifacts.SaveBlobInput{
 		Name:            req.Name,
 		Data:            data,
+		MimeType:        req.MimeType,
+		Filename:        req.Filename,
+		ExpectedPrevRef: req.ExpectedPrevRef,
+	})
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	s.writeOK(w, http.StatusOK, map[string]any{"artifact": a})
+}
+
+func (s *Server) handleSaveArtifact(w http.ResponseWriter, r *http.Request) {
+	if !ensurePost(w, r) {
+		return
+	}
+	var req SaveArtifactRequest
+	if err := jsonbody.DecodeStrictJSON(r, s.maxRequestBytes, &req); err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(req.DataBase64))
+	if err != nil {
+		s.writeErr(w, fmt.Errorf("%w: dataBase64 is not valid base64", artifacts.ErrInvalidInput))
+		return
+	}
+	_, svc, err := s.resolveService(r.Context(), req.Workspace)
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	a, err := svc.SaveArtifact(r.Context(), artifacts.SaveArtifactInput{
+		Name:            req.Name,
+		Data:            data,
+		Kind:            req.Kind,
 		MimeType:        req.MimeType,
 		Filename:        req.Filename,
 		ExpectedPrevRef: req.ExpectedPrevRef,

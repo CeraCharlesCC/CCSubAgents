@@ -37,16 +37,61 @@ To force workspace separation for MCP clients that do not provide roots/working-
 
 - `save_artifact_text`
 - `save_artifact_blob` (binary base64)
+- `edit_artifact_text`
 - `resolve_artifact`
 - `get_artifact`
 - `get_artifact_list`
 - `delete_artifact`
 - `todo`
 
+### `edit_artifact_text` tool usage
+
+`edit_artifact_text` edits an **existing** text artifact selected by `name` or `ref`.
+It supports two operations:
+
+- `append` — append `text` to the end of the current artifact body
+- `patch` — apply a single-file unified diff `patch`
+
+The target artifact must already exist.
+Edits are implemented as read-modify-write operations against the selected version, so they create a new latest `ref`, set `prevRef` to the version they were based on, and fail with a conflict if the edit was based on a stale historical ref rather than the current latest name target.
+
+Append text to an existing artifact:
+
+```json
+{
+  "name": "edit_artifact_text",
+  "arguments": {
+    "operation": "append",
+    "artifact": {"name": "plan/task-123"},
+    "text": "\nImplementation notes..."
+  }
+}
+```
+
+Patch an existing artifact with a unified diff:
+
+```json
+{
+  "name": "edit_artifact_text",
+  "arguments": {
+    "operation": "patch",
+    "artifact": {"ref": "20260217T010000Z-aaaaaaaaaaaaaaaa"},
+    "patch": "--- a/plan.md\n+++ b/plan.md\n@@ -1,2 +1,2 @@\n Step 1\n-Step 2\n+Step 2 (done)\n"
+  }
+}
+```
+
+Patch support is intentionally strict: malformed patches, non-applicable hunks, multi-file diffs, binary patches, and create/delete/rename patch shapes are rejected rather than guessed.
+
 ### `todo` tool usage
 
 `todo` stores task state as JSON text under deterministic `<artifact>/todo` names.
 The `artifact` selector should reference the base artifact name/ref (for example `plan/task-123`), and the tool derives storage as `<base>/todo`.
+It supports three operations:
+
+- `read` — load the current TODO list
+- `write` — replace the full TODO list
+- `update` — update only one item's `status`
 
 Read TODOs:
 
@@ -76,6 +121,37 @@ Write TODOs with stale-write protection:
   }
 }
 ```
+
+Update one TODO item's status by `id`:
+
+```json
+{
+  "name": "todo",
+  "arguments": {
+    "operation": "update",
+    "artifact": {"name": "plan/task-123"},
+    "target": {"id": 2},
+    "status": "completed",
+    "expectedPrevRef": "20260217T010000Z-aaaaaaaaaaaaaaaa"
+  }
+}
+```
+
+Update one TODO item's status by zero-based array `index`:
+
+```json
+{
+  "name": "todo",
+  "arguments": {
+    "operation": "update",
+    "artifact": {"name": "plan/task-123"},
+    "target": {"index": 0},
+    "status": "in-progress"
+  }
+}
+```
+
+`expectedPrevRef` applies to `update` the same way it does to `write`: when provided, it must match the current latest TODO ref or the mutation fails with a conflict and remains non-mutating.
 
 ## Build (in /local-artifact/)
 

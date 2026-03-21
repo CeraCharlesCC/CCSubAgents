@@ -3,16 +3,25 @@ package mcp
 const ProtocolVersion = "2025-11-25"
 
 const (
+	todoStatusNotStarted = "not-started"
+	todoStatusInProgress = "in-progress"
+	todoStatusCompleted  = "completed"
+)
+
+var todoStatusValues = []string{todoStatusNotStarted, todoStatusInProgress, todoStatusCompleted}
+
+const (
 	serverName         = "local_artifact_store"
 	serverTitle        = "Local Artifact Store"
 	serverVersion      = "0.1.0"
 	serverDescription  = "Completely local MCP server that lets agents save and retrieve named artifacts (text, files, images)."
-	serverInstructions = "Use save_artifact_text or save_artifact_blob to persist an artifact under a name. Re-saving the same name creates a new ref linked by prevRef and moves the name to the latest ref. Use get_artifact with name or ref to retrieve, delete_artifact to remove an artifact, and get_artifact_list to inspect current aliases. Use todo to read or write a deterministic <artifact>/todo list with optional expectedPrevRef conflict protection."
+	serverInstructions = "Use save_artifact_text or save_artifact_blob to persist an artifact under a name. Re-saving the same name creates a new ref linked by prevRef and moves the name to the latest ref. Use edit_artifact_text to append text or apply a unified diff patch to an existing text artifact; edits create a new ref, preserve prevRef linkage, and conflict if based on a stale ref. Use get_artifact with name or ref to retrieve, delete_artifact to remove an artifact, and get_artifact_list to inspect current aliases. Use todo to read, write, or update the status of a deterministic <artifact>/todo list with optional expectedPrevRef conflict protection."
 )
 
 const (
 	toolArtifactSaveText = "save_artifact_text"
 	toolArtifactSaveBlob = "save_artifact_blob"
+	toolArtifactEditText = "edit_artifact_text"
 	toolArtifactResolve  = "resolve_artifact"
 	toolArtifactGet      = "get_artifact"
 	toolArtifactList     = "get_artifact_list"
@@ -93,6 +102,14 @@ func toolDefinitions() []toolDef {
 			Annotations:  readOnlyHint(false),
 		},
 		{
+			Name:         toolArtifactEditText,
+			Title:        "Edit existing text artifact",
+			Description:  "Append text or apply a unified diff patch to an existing text artifact. Creates a new version and preserves prevRef linkage.",
+			InputSchema:  textEditInputSchema(),
+			OutputSchema: saveOutputSchema(),
+			Annotations:  readOnlyHint(false),
+		},
+		{
 			Name:        toolArtifactResolve,
 			Title:       "Resolve name to ref",
 			Description: "Given a name, return the latest ref and URIs without loading the artifact body.",
@@ -159,8 +176,8 @@ func toolDefinitions() []toolDef {
 		},
 		{
 			Name:         toolArtifactTodo,
-			Title:        "Read/write TODO list",
-			Description:  "Read or write TODO items persisted under deterministic <artifact>/todo storage.",
+			Title:        "Read/write/update TODO list",
+			Description:  "Read TODO items, write full TODO lists, or update one persisted TODO item's status under deterministic <artifact>/todo storage.",
 			InputSchema:  todoInputSchema(),
 			OutputSchema: todoOutputSchema(),
 			Annotations:  readOnlyHint(false),
@@ -206,6 +223,46 @@ func saveOutputSchema() map[string]any {
 	)
 }
 
+func textEditInputSchema() map[string]any {
+	schema := objectSchema(
+		map[string]any{
+			"operation": map[string]any{
+				"type": "string",
+				"enum": []string{"append", "patch"},
+			},
+			"artifact": artifactSelectorSchema(),
+			"text": map[string]any{
+				"type":        "string",
+				"minLength":   1,
+				"description": "Text to append to the existing artifact content.",
+			},
+			"patch": map[string]any{
+				"type":        "string",
+				"minLength":   1,
+				"description": "Unified diff patch to apply to the existing artifact text.",
+			},
+		},
+		"operation", "artifact",
+	)
+	schema["allOf"] = []map[string]any{
+		{
+			"if": map[string]any{"properties": map[string]any{"operation": map[string]any{"const": "append"}}},
+			"then": map[string]any{
+				"required": []string{"text"},
+				"not":      map[string]any{"required": []string{"patch"}},
+			},
+		},
+		{
+			"if": map[string]any{"properties": map[string]any{"operation": map[string]any{"const": "patch"}}},
+			"then": map[string]any{
+				"required": []string{"patch"},
+				"not":      map[string]any{"required": []string{"text"}},
+			},
+		},
+	}
+	return schema
+}
+
 func resolveOutputSchema() map[string]any {
 	return objectSchema(
 		map[string]any{
@@ -236,21 +293,50 @@ func todoInputSchema() map[string]any {
 		map[string]any{
 			"operation": map[string]any{
 				"type": "string",
-				"enum": []string{"read", "write"},
+				"enum": []string{"read", "write", "update"},
 			},
 			"artifact": artifactSelectorSchema(),
 			"todoList": map[string]any{
 				"type":  "array",
 				"items": todoItemSchema(),
 			},
-			"expectedPrevRef": stringProp("Optional stale-write guard. Must match current TODO ref for write."),
+			"target":          todoUpdateTargetSchema(),
+			"status":          todoStatusSchema("Updated status for the selected TODO item."),
+			"expectedPrevRef": stringProp("Optional stale-write guard. Must match current TODO ref for write/update."),
 		},
 		"operation", "artifact",
 	)
 	schema["allOf"] = []map[string]any{
 		{
-			"if":   map[string]any{"properties": map[string]any{"operation": map[string]any{"const": "write"}}},
-			"then": map[string]any{"required": []string{"todoList"}},
+			"if": map[string]any{"properties": map[string]any{"operation": map[string]any{"const": "read"}}},
+			"then": map[string]any{
+				"not": map[string]any{
+					"anyOf": []map[string]any{
+						{"required": []string{"todoList"}},
+						{"required": []string{"target"}},
+						{"required": []string{"status"}},
+					},
+				},
+			},
+		},
+		{
+			"if": map[string]any{"properties": map[string]any{"operation": map[string]any{"const": "write"}}},
+			"then": map[string]any{
+				"required": []string{"todoList"},
+				"not": map[string]any{
+					"anyOf": []map[string]any{
+						{"required": []string{"target"}},
+						{"required": []string{"status"}},
+					},
+				},
+			},
+		},
+		{
+			"if": map[string]any{"properties": map[string]any{"operation": map[string]any{"const": "update"}}},
+			"then": map[string]any{
+				"required": []string{"target", "status"},
+				"not":      map[string]any{"required": []string{"todoList"}},
+			},
 		},
 	}
 	return schema
@@ -286,15 +372,44 @@ func artifactSelectorSchema() map[string]any {
 func todoItemSchema() map[string]any {
 	return objectSchema(
 		map[string]any{
-			"id":    map[string]any{"type": "integer"},
-			"title": stringProp("Non-empty TODO title."),
-			"status": map[string]any{
-				"type": "string",
-				"enum": []string{"not-started", "in-progress", "completed"},
-			},
+			"id":     map[string]any{"type": "integer"},
+			"title":  stringProp("Non-empty TODO title."),
+			"status": todoStatusSchema("TODO item status."),
 		},
 		"id", "title", "status",
 	)
+}
+
+func todoUpdateTargetSchema() map[string]any {
+	schema := objectSchema(
+		map[string]any{
+			"index": map[string]any{
+				"type":        "integer",
+				"minimum":     0,
+				"description": "Zero-based array index of the TODO item to update.",
+			},
+			"id": map[string]any{
+				"type":        "integer",
+				"description": "ID of the TODO item to update.",
+			},
+		},
+	)
+	schema["oneOf"] = []map[string]any{
+		{"required": []string{"index"}},
+		{"required": []string{"id"}},
+	}
+	return schema
+}
+
+func todoStatusSchema(description string) map[string]any {
+	prop := map[string]any{
+		"type": "string",
+		"enum": todoStatusValues,
+	}
+	if description != "" {
+		prop["description"] = description
+	}
+	return prop
 }
 
 func readOnlyHint(readOnly bool) map[string]any {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"reflect"
 	"testing"
 )
 
@@ -167,6 +168,156 @@ func TestToolTodo_StaleExpectedPrevRefReturnsConflictAndIsNonMutating(t *testing
 	}
 }
 
+func TestTodoTool_UpdateByIDRoundTrip(t *testing.T) {
+	ctx := context.Background()
+
+	for idx, toolName := range todoToolNames {
+		toolName := toolName
+		t.Run(toolName, func(t *testing.T) {
+			s := newDaemonBackedServer(t)
+			artifactName := fmt.Sprintf("plan/task-update-id-%d", idx)
+
+			writeResp := requireToolOK(t, callToolsCall(t, s, ctx, toolName, map[string]any{
+				"operation": "write",
+				"artifact":  map[string]any{"name": artifactName},
+				"todoList": []map[string]any{
+					{"id": 1, "title": "Draft plan", "status": "not-started"},
+					{"id": 2, "title": "Implement", "status": "in-progress"},
+				},
+			}))
+			writeOut, ok := writeResp.StructuredContent.(todoOut)
+			if !ok {
+				t.Fatalf("%s write expected todoOut structured content, got %T", toolName, writeResp.StructuredContent)
+			}
+
+			updateResp := requireToolOK(t, callToolsCall(t, s, ctx, toolName, map[string]any{
+				"operation":       "update",
+				"artifact":        map[string]any{"name": artifactName},
+				"target":          map[string]any{"id": 2},
+				"status":          "completed",
+				"expectedPrevRef": writeOut.Ref,
+			}))
+			updateOut, ok := updateResp.StructuredContent.(todoOut)
+			if !ok {
+				t.Fatalf("%s update expected todoOut structured content, got %T", toolName, updateResp.StructuredContent)
+			}
+			if updateOut.Ref == "" || updateOut.Ref == writeOut.Ref {
+				t.Fatalf("%s expected update to create a new ref, got write=%q update=%q", toolName, writeOut.Ref, updateOut.Ref)
+			}
+			if updateOut.PrevRef != writeOut.Ref {
+				t.Fatalf("%s expected prevRef=%q, got %q", toolName, writeOut.Ref, updateOut.PrevRef)
+			}
+
+			expected := []todoItem{
+				{ID: 1, Title: "Draft plan", Status: "not-started"},
+				{ID: 2, Title: "Implement", Status: "completed"},
+			}
+			if !reflect.DeepEqual(updateOut.TodoList, expected) {
+				t.Fatalf("%s unexpected updated todo list: got %+v want %+v", toolName, updateOut.TodoList, expected)
+			}
+			requireContentTextEq(t, updateResp, "todo item status updated")
+		})
+	}
+}
+
+func TestTodoTool_UpdateByIndexRoundTripUsesZeroBasedIndex(t *testing.T) {
+	ctx := context.Background()
+
+	for idx, toolName := range todoToolNames {
+		toolName := toolName
+		t.Run(toolName, func(t *testing.T) {
+			s := newDaemonBackedServer(t)
+			artifactName := fmt.Sprintf("plan/task-update-index-%d", idx)
+
+			requireToolOK(t, callToolsCall(t, s, ctx, toolName, map[string]any{
+				"operation": "write",
+				"artifact":  map[string]any{"name": artifactName},
+				"todoList": []map[string]any{
+					{"id": 11, "title": "First", "status": "not-started"},
+					{"id": 12, "title": "Second", "status": "completed"},
+				},
+			}))
+
+			updateResp := requireToolOK(t, callToolsCall(t, s, ctx, toolName, map[string]any{
+				"operation": "update",
+				"artifact":  map[string]any{"name": artifactName},
+				"target":    map[string]any{"index": 0},
+				"status":    "in-progress",
+			}))
+			updateOut, ok := updateResp.StructuredContent.(todoOut)
+			if !ok {
+				t.Fatalf("%s update expected todoOut structured content, got %T", toolName, updateResp.StructuredContent)
+			}
+
+			expected := []todoItem{
+				{ID: 11, Title: "First", Status: "in-progress"},
+				{ID: 12, Title: "Second", Status: "completed"},
+			}
+			if !reflect.DeepEqual(updateOut.TodoList, expected) {
+				t.Fatalf("%s unexpected updated todo list: got %+v want %+v", toolName, updateOut.TodoList, expected)
+			}
+		})
+	}
+}
+
+func TestTodoTool_UpdatePreservesStaleWriteProtection(t *testing.T) {
+	ctx := context.Background()
+
+	for _, toolName := range todoToolNames {
+		toolName := toolName
+		t.Run(toolName, func(t *testing.T) {
+			s := newDaemonBackedServer(t)
+			firstResp := requireToolOK(t, callToolsCall(t, s, ctx, toolName, map[string]any{
+				"operation": "write",
+				"artifact":  map[string]any{"name": "plan/task-update-guard"},
+				"todoList": []map[string]any{
+					{"id": 1, "title": "First", "status": "not-started"},
+				},
+			}))
+			firstOut, ok := firstResp.StructuredContent.(todoOut)
+			if !ok {
+				t.Fatalf("%s expected todoOut structured content, got %T", toolName, firstResp.StructuredContent)
+			}
+
+			secondResp := requireToolOK(t, callToolsCall(t, s, ctx, toolName, map[string]any{
+				"operation":       "update",
+				"artifact":        map[string]any{"name": "plan/task-update-guard"},
+				"target":          map[string]any{"id": 1},
+				"status":          "in-progress",
+				"expectedPrevRef": firstOut.Ref,
+			}))
+			secondOut, ok := secondResp.StructuredContent.(todoOut)
+			if !ok {
+				t.Fatalf("%s expected todoOut structured content, got %T", toolName, secondResp.StructuredContent)
+			}
+
+			staleResp := requireToolErr(t, callToolsCall(t, s, ctx, toolName, map[string]any{
+				"operation":       "update",
+				"artifact":        map[string]any{"name": "plan/task-update-guard"},
+				"target":          map[string]any{"index": 0},
+				"status":          "completed",
+				"expectedPrevRef": firstOut.Ref,
+			}))
+			requireContentTextContains(t, staleResp, "conflict")
+
+			readResp := requireToolOK(t, callToolsCall(t, s, ctx, toolName, map[string]any{
+				"operation": "read",
+				"artifact":  map[string]any{"name": "plan/task-update-guard"},
+			}))
+			readOut, ok := readResp.StructuredContent.(todoOut)
+			if !ok {
+				t.Fatalf("%s expected todoOut structured content, got %T", toolName, readResp.StructuredContent)
+			}
+			if readOut.Ref != secondOut.Ref {
+				t.Fatalf("%s expected latest ref to remain %q, got %q", toolName, secondOut.Ref, readOut.Ref)
+			}
+			if len(readOut.TodoList) != 1 || readOut.TodoList[0].Status != "in-progress" {
+				t.Fatalf("%s expected todo status to remain in-progress after stale update, got %+v", toolName, readOut.TodoList)
+			}
+		})
+	}
+}
+
 func TestTodoTool_WriteWithoutTodoListReturnsInvalidArgumentsAndIsNonMutating(t *testing.T) {
 	ctx := context.Background()
 	s := newDaemonBackedServer(t)
@@ -234,6 +385,81 @@ func TestTodoTool_InvalidArguments_UnknownFields(t *testing.T) {
 						"unknown": "x",
 					},
 				},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		for _, toolName := range todoToolNames {
+			toolName := toolName
+			t.Run(tc.name+"/"+toolName, func(t *testing.T) {
+				resp := requireToolErr(t, callToolsCall(t, s, ctx, toolName, tc.args))
+				requireContentTextEq(t, resp, todoInvalidArgumentsMessage)
+			})
+		}
+	}
+}
+
+func TestTodoTool_UpdateInvalidArguments(t *testing.T) {
+	ctx := context.Background()
+	s := newDaemonBackedServer(t)
+
+	testCases := []struct {
+		name string
+		args map[string]any
+	}{
+		{
+			name: "missing target",
+			args: map[string]any{
+				"operation": "update",
+				"artifact":  map[string]any{"name": "plan/task-update-invalid"},
+				"status":    "completed",
+			},
+		},
+		{
+			name: "missing status",
+			args: map[string]any{
+				"operation": "update",
+				"artifact":  map[string]any{"name": "plan/task-update-invalid"},
+				"target":    map[string]any{"id": 1},
+			},
+		},
+		{
+			name: "target with neither id nor index",
+			args: map[string]any{
+				"operation": "update",
+				"artifact":  map[string]any{"name": "plan/task-update-invalid"},
+				"target":    map[string]any{},
+				"status":    "completed",
+			},
+		},
+		{
+			name: "target with both id and index",
+			args: map[string]any{
+				"operation": "update",
+				"artifact":  map[string]any{"name": "plan/task-update-invalid"},
+				"target":    map[string]any{"id": 1, "index": 0},
+				"status":    "completed",
+			},
+		},
+		{
+			name: "unknown target field",
+			args: map[string]any{
+				"operation": "update",
+				"artifact":  map[string]any{"name": "plan/task-update-invalid"},
+				"target":    map[string]any{"id": 1, "unknown": true},
+				"status":    "completed",
+			},
+		},
+		{
+			name: "update rejects todoList payload",
+			args: map[string]any{
+				"operation": "update",
+				"artifact":  map[string]any{"name": "plan/task-update-invalid"},
+				"target":    map[string]any{"id": 1},
+				"status":    "completed",
+				"todoList":  []map[string]any{{"id": 1, "title": "x", "status": "completed"}},
 			},
 		},
 	}
@@ -334,6 +560,48 @@ func TestToolTodo_ReadMalformedStoredTODOJSONReturnsError(t *testing.T) {
 	}
 }
 
+func TestToolTodo_UpdateSemanticErrors(t *testing.T) {
+	ctx := context.Background()
+
+	for _, toolName := range todoToolNames {
+		toolName := toolName
+		t.Run(toolName, func(t *testing.T) {
+			s := newDaemonBackedServer(t)
+			requireToolOK(t, callToolsCall(t, s, ctx, toolName, map[string]any{
+				"operation": "write",
+				"artifact":  map[string]any{"name": "plan/task-update-errors"},
+				"todoList": []map[string]any{
+					{"id": 1, "title": "Only", "status": "not-started"},
+				},
+			}))
+
+			outOfRangeResp := requireToolErr(t, callToolsCall(t, s, ctx, toolName, map[string]any{
+				"operation": "update",
+				"artifact":  map[string]any{"name": "plan/task-update-errors"},
+				"target":    map[string]any{"index": 2},
+				"status":    "completed",
+			}))
+			requireContentTextContains(t, outOfRangeResp, "invalid input")
+
+			missingIDResp := requireToolErr(t, callToolsCall(t, s, ctx, toolName, map[string]any{
+				"operation": "update",
+				"artifact":  map[string]any{"name": "plan/task-update-errors"},
+				"target":    map[string]any{"id": 99},
+				"status":    "completed",
+			}))
+			requireContentTextContains(t, missingIDResp, "invalid input")
+
+			missingTodoResp := requireToolErr(t, callToolsCall(t, s, ctx, toolName, map[string]any{
+				"operation": "update",
+				"artifact":  map[string]any{"name": "plan/task-update-missing"},
+				"target":    map[string]any{"index": 0},
+				"status":    "completed",
+			}))
+			requireContentTextContains(t, missingTodoResp, "not found")
+		})
+	}
+}
+
 func TestToolTodo_ValidationErrors(t *testing.T) {
 	ctx := context.Background()
 	s := newDaemonBackedServer(t)
@@ -424,8 +692,20 @@ func TestToolsList_ExposesTodoDefinitionWithStrictNestedSchemas(t *testing.T) {
 	if artifactProp["additionalProperties"] != false {
 		t.Fatalf("expected strict artifact selector schema, got %+v", artifactProp)
 	}
+	operationProp := requireMap(t, requireMap(t, todo.InputSchema["properties"], "todo input properties")["operation"], "operation property")
+	if !reflect.DeepEqual(operationProp["enum"], []string{"read", "write", "update"}) {
+		t.Fatalf("expected operation enum to include update, got %+v", operationProp["enum"])
+	}
 	itemSchema := requireMap(t, requireMap(t, requireMap(t, todo.InputSchema["properties"], "todo input properties")["todoList"], "todoList property")["items"], "todo item schema")
 	if itemSchema["additionalProperties"] != false {
 		t.Fatalf("expected strict todo item schema, got %+v", itemSchema)
+	}
+	targetSchema := requireMap(t, requireMap(t, todo.InputSchema["properties"], "todo input properties")["target"], "target property")
+	if targetSchema["additionalProperties"] != false {
+		t.Fatalf("expected strict target selector schema, got %+v", targetSchema)
+	}
+	oneOf, ok := targetSchema["oneOf"].([]map[string]any)
+	if !ok || len(oneOf) != 2 {
+		t.Fatalf("expected target schema oneOf with two selectors, got %+v", targetSchema["oneOf"])
 	}
 }

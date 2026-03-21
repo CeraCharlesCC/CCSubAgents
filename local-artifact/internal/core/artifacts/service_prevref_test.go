@@ -166,3 +166,56 @@ func TestServiceSaveText_SameNameCreatesPrevRefChain(t *testing.T) {
 		t.Fatalf("unexpected version order: %+v", versions)
 	}
 }
+
+func TestServiceSaveArtifact_PreservesMetadataAndAllowsEmptyData(t *testing.T) {
+	repo := newMemoryRepo()
+	svc := NewService(repo)
+	refs := []string{"20260216T101030Z-aaaaaaaaaaaaaaaa", "20260216T101031Z-bbbbbbbbbbbbbbbb"}
+	idx := 0
+	svc.refGenerator = func() (string, error) {
+		ref := refs[idx]
+		idx++
+		return ref, nil
+	}
+
+	ctx := context.Background()
+	first, err := svc.SaveArtifact(ctx, SaveArtifactInput{
+		Name:     "plan/service-metadata",
+		Data:     []byte("value\n"),
+		Kind:     ArtifactKindText,
+		MimeType: "application/json; charset=utf-8",
+		Filename: "data.json",
+	})
+	if err != nil {
+		t.Fatalf("first save artifact failed: %v", err)
+	}
+
+	second, err := svc.SaveArtifact(ctx, SaveArtifactInput{
+		Name:            "plan/service-metadata",
+		Data:            []byte{},
+		Kind:            first.Kind,
+		MimeType:        first.MimeType,
+		Filename:        first.Filename,
+		ExpectedPrevRef: first.Ref,
+	})
+	if err != nil {
+		t.Fatalf("second save artifact failed: %v", err)
+	}
+	if second.PrevRef != first.Ref {
+		t.Fatalf("expected prevRef=%q got=%q", first.Ref, second.PrevRef)
+	}
+	if second.Kind != first.Kind || second.MimeType != first.MimeType || second.Filename != first.Filename {
+		t.Fatalf("expected metadata to be preserved, first=%+v second=%+v", first, second)
+	}
+
+	got, data, err := svc.Get(ctx, Selector{Name: "plan/service-metadata"})
+	if err != nil {
+		t.Fatalf("get latest artifact failed: %v", err)
+	}
+	if got.Ref != second.Ref {
+		t.Fatalf("expected latest ref=%q got=%q", second.Ref, got.Ref)
+	}
+	if len(data) != 0 {
+		t.Fatalf("expected empty data, got %q", string(data))
+	}
+}

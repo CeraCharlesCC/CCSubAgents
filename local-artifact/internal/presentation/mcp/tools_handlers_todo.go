@@ -32,10 +32,17 @@ type todoItemInput struct {
 	Status string `json:"status"`
 }
 
+type todoUpdateTarget struct {
+	Index *int `json:"index,omitempty"`
+	ID    *int `json:"id,omitempty"`
+}
+
 type todoArgs struct {
 	Operation       string               `json:"operation"`
 	Artifact        todoArtifactSelector `json:"artifact"`
 	TodoList        *[]todoItemInput     `json:"todoList,omitempty"`
+	Target          *todoUpdateTarget    `json:"target,omitempty"`
+	Status          string               `json:"status,omitempty"`
 	ExpectedPrevRef string               `json:"expectedPrevRef,omitempty"`
 }
 
@@ -49,7 +56,7 @@ type todoOut struct {
 	URIByRef  string     `json:"uriByRef,omitempty"`
 }
 
-const todoInvalidArgumentsMessage = "Invalid arguments: expected {operation, artifact, todoList?, expectedPrevRef?}"
+const todoInvalidArgumentsMessage = "Invalid arguments: expected {operation, artifact, todoList?, target?, status?, expectedPrevRef?}"
 
 func (s *Server) toolTodo(ctx context.Context, argsRaw json.RawMessage) (any, *jsonRPCError) {
 	var args todoArgs
@@ -63,8 +70,8 @@ func (s *Server) toolTodo(ctx context.Context, argsRaw json.RawMessage) (any, *j
 	}
 
 	operation := strings.TrimSpace(args.Operation)
-	if operation != "read" && operation != "write" {
-		return toolErrorFromErr(fmt.Errorf("%w: operation must be read or write", artifacts.ErrInvalidInput)), nil
+	if operation != "read" && operation != "write" && operation != "update" {
+		return toolErrorFromErr(fmt.Errorf("%w: operation must be read, write, or update", artifacts.ErrInvalidInput)), nil
 	}
 
 	workspace := s.currentWorkspace(ctx)
@@ -77,7 +84,7 @@ func (s *Server) toolTodo(ctx context.Context, argsRaw json.RawMessage) (any, *j
 	nameEsc := url.PathEscape(todoName)
 
 	if operation == "read" {
-		got, err := client.Get(ctx, daemon.GetRequest{Workspace: workspace, Selector: daemon.Selector{Name: todoName}})
+		items, got, err := loadStoredTodoItems(ctx, client, workspace, todoName)
 		if err != nil {
 			var remoteErr *daemon.RemoteError
 			if errors.Is(err, artifacts.ErrNotFound) || (errors.As(err, &remoteErr) && remoteErr.Code == daemon.CodeNotFound) {
@@ -90,15 +97,6 @@ func (s *Server) toolTodo(ctx context.Context, argsRaw json.RawMessage) (any, *j
 				return toolResult{Content: todoSuccessContent(operation, out), StructuredContent: out}, nil
 			}
 			return toolErrorFromErr(err), nil
-		}
-		data, decodeErr := base64.StdEncoding.DecodeString(got.DataBase64)
-		if decodeErr != nil {
-			return toolError("internal error: invalid daemon payload"), nil
-		}
-
-		items, err := normalizeAndValidateTodoItemsFromStored(data)
-		if err != nil {
-			return toolError("internal error: invalid stored todo artifact"), nil
 		}
 		a := got.Artifact
 
@@ -114,38 +112,46 @@ func (s *Server) toolTodo(ctx context.Context, argsRaw json.RawMessage) (any, *j
 		return toolResult{Content: todoSuccessContent(operation, out), StructuredContent: out}, nil
 	}
 
-	if args.TodoList == nil {
-		return toolErrorFromErr(fmt.Errorf("%w: todoList is required for write", artifacts.ErrInvalidInput)), nil
+	if operation == "write" {
+		if args.TodoList == nil {
+			return toolErrorFromErr(fmt.Errorf("%w: todoList is required for write", artifacts.ErrInvalidInput)), nil
+		}
+
+		items, err := normalizeAndValidateTodoInputItems(*args.TodoList)
+		if err != nil {
+			return toolErrorFromErr(err), nil
+		}
+
+		out, err := saveTodoItems(ctx, client, workspace, todoName, nameEsc, items, args.ExpectedPrevRef)
+		if err != nil {
+			return toolErrorFromErr(err), nil
+		}
+		return toolResult{Content: todoSuccessContent(operation, out), StructuredContent: out}, nil
 	}
 
-	items, err := normalizeAndValidateTodoInputItems(*args.TodoList)
+	if args.Target == nil {
+		return toolErrorFromErr(fmt.Errorf("%w: target is required for update", artifacts.ErrInvalidInput)), nil
+	}
+
+	items, _, err := loadStoredTodoItems(ctx, client, workspace, todoName)
 	if err != nil {
 		return toolErrorFromErr(err), nil
 	}
-	payload, err := json.Marshal(items)
-	if err != nil {
-		return toolError("internal error: failed to marshal todoList"), nil
-	}
 
-	a, err := client.SaveText(ctx, daemon.SaveTextRequest{
-		Workspace:       workspace,
-		Name:            todoName,
-		Text:            string(payload),
-		MimeType:        "application/json; charset=utf-8",
-		ExpectedPrevRef: args.ExpectedPrevRef,
-	})
+	updateIndex, err := findTodoUpdateIndex(items, *args.Target)
 	if err != nil {
 		return toolErrorFromErr(err), nil
 	}
 
-	out := todoOut{
-		TodoList:  items,
-		Exists:    true,
-		Name:      a.Name,
-		Ref:       a.Ref,
-		PrevRef:   a.PrevRef,
-		URIByName: artifacts.URIByName(nameEsc),
-		URIByRef:  a.URIByRef(),
+	status, err := normalizeTodoStatus(args.Status, "status")
+	if err != nil {
+		return toolErrorFromErr(err), nil
+	}
+	items[updateIndex].Status = status
+
+	out, err := saveTodoItems(ctx, client, workspace, todoName, nameEsc, items, args.ExpectedPrevRef)
+	if err != nil {
+		return toolErrorFromErr(err), nil
 	}
 	return toolResult{Content: todoSuccessContent(operation, out), StructuredContent: out}, nil
 }
@@ -159,8 +165,90 @@ func todoSuccessContent(operation string, out todoOut) []any {
 		return []any{textContent("todo list not found; returning empty list")}
 	case "write":
 		return []any{textContent(fmt.Sprintf("todo list saved (%d items)", len(out.TodoList)))}
+	case "update":
+		return []any{textContent("todo item status updated")}
 	default:
 		return []any{textContent("todo list ok")}
+	}
+}
+
+func loadStoredTodoItems(ctx context.Context, client *daemon.Client, workspace daemon.WorkspaceSelector, todoName string) ([]todoItem, daemon.GetResponse, error) {
+	got, err := client.Get(ctx, daemon.GetRequest{Workspace: workspace, Selector: daemon.Selector{Name: todoName}})
+	if err != nil {
+		return nil, daemon.GetResponse{}, err
+	}
+
+	data, decodeErr := base64.StdEncoding.DecodeString(got.DataBase64)
+	if decodeErr != nil {
+		return nil, daemon.GetResponse{}, fmt.Errorf("internal error: invalid daemon payload")
+	}
+
+	items, err := normalizeAndValidateTodoItemsFromStored(data)
+	if err != nil {
+		return nil, daemon.GetResponse{}, fmt.Errorf("internal error: invalid stored todo artifact")
+	}
+
+	return items, got, nil
+}
+
+func saveTodoItems(ctx context.Context, client *daemon.Client, workspace daemon.WorkspaceSelector, todoName, nameEsc string, items []todoItem, expectedPrevRef string) (todoOut, error) {
+	payload, err := json.Marshal(items)
+	if err != nil {
+		return todoOut{}, fmt.Errorf("internal error: failed to marshal todoList")
+	}
+
+	a, err := client.SaveText(ctx, daemon.SaveTextRequest{
+		Workspace:       workspace,
+		Name:            todoName,
+		Text:            string(payload),
+		MimeType:        "application/json; charset=utf-8",
+		ExpectedPrevRef: expectedPrevRef,
+	})
+	if err != nil {
+		return todoOut{}, err
+	}
+
+	return todoOut{
+		TodoList:  items,
+		Exists:    true,
+		Name:      a.Name,
+		Ref:       a.Ref,
+		PrevRef:   a.PrevRef,
+		URIByName: artifacts.URIByName(nameEsc),
+		URIByRef:  a.URIByRef(),
+	}, nil
+}
+
+func findTodoUpdateIndex(items []todoItem, target todoUpdateTarget) (int, error) {
+	hasIndex := target.Index != nil
+	hasID := target.ID != nil
+	if hasIndex == hasID {
+		return 0, fmt.Errorf("%w: target must include exactly one of index or id", artifacts.ErrInvalidInput)
+	}
+
+	if hasIndex {
+		if *target.Index < 0 || *target.Index >= len(items) {
+			return 0, fmt.Errorf("%w: target.index %d out of range", artifacts.ErrInvalidInput, *target.Index)
+		}
+		return *target.Index, nil
+	}
+
+	for i, item := range items {
+		if item.ID == *target.ID {
+			return i, nil
+		}
+	}
+
+	return 0, fmt.Errorf("%w: target.id %d not found", artifacts.ErrInvalidInput, *target.ID)
+}
+
+func normalizeTodoStatus(status, fieldPath string) (string, error) {
+	normalized := strings.TrimSpace(status)
+	switch normalized {
+	case todoStatusNotStarted, todoStatusInProgress, todoStatusCompleted:
+		return normalized, nil
+	default:
+		return "", fmt.Errorf("%w: %s must be one of %s|%s|%s", artifacts.ErrInvalidInput, fieldPath, todoStatusNotStarted, todoStatusInProgress, todoStatusCompleted)
 	}
 }
 
@@ -221,11 +309,9 @@ func normalizeAndValidateTodoItems(items []todoItem) ([]todoItem, error) {
 			return nil, fmt.Errorf("%w: todoList[%d].title is required", artifacts.ErrInvalidInput, i)
 		}
 
-		status := strings.TrimSpace(item.Status)
-		switch status {
-		case "not-started", "in-progress", "completed":
-		default:
-			return nil, fmt.Errorf("%w: todoList[%d].status must be one of not-started|in-progress|completed", artifacts.ErrInvalidInput, i)
+		status, err := normalizeTodoStatus(item.Status, fmt.Sprintf("todoList[%d].status", i))
+		if err != nil {
+			return nil, err
 		}
 
 		if _, exists := seenIDs[item.ID]; exists {
