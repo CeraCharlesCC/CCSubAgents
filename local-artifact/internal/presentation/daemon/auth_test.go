@@ -23,7 +23,9 @@ func TestAuthMiddleware_UnauthorizedWithoutToken(t *testing.T) {
 
 func TestAuthMiddleware_QueryBootstrapSetsCookieAndRedirects(t *testing.T) {
 	h := AuthMiddleware("secret", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, "ok")
+		if _, err := io.WriteString(w, "ok"); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
 	}), AuthOptions{AllowQueryBootstrap: true})
 
 	first := httptest.NewRecorder()

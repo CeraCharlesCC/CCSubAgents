@@ -85,11 +85,11 @@ func TestApplySettingsEdit_AppendsWithoutOverwriting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read settings file: %v", err)
 	}
-	if root["editor.fontSize"].(float64) != 14 {
+	if mustFloat64(t, root["editor.fontSize"], "editor.fontSize") != 14 {
 		t.Fatalf("expected editor.fontSize preserved")
 	}
 
-	locations := root["chat.agentFilesLocations"].(map[string]any)
+	locations := mustMap(t, root["chat.agentFilesLocations"], "chat.agentFilesLocations")
 	if len(locations) != 2 {
 		t.Fatalf("expected 2 paths, got %d", len(locations))
 	}
@@ -148,7 +148,7 @@ func TestApplySettingsEdit_MigratesTrackedPreviousPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read settings file: %v", err)
 	}
-	locations := root["chat.agentFilesLocations"].(map[string]any)
+	locations := mustMap(t, root["chat.agentFilesLocations"], "chat.agentFilesLocations")
 	if locations["~/.local/share/ccsubagents/agents"] != true || locations["/existing"] != true {
 		t.Fatalf("unexpected locations: %#v", locations)
 	}
@@ -195,7 +195,7 @@ func TestApplySettingsEdit_CrossTargetFallbackIgnoresConcretePathMismatch(t *tes
 	if err != nil {
 		t.Fatalf("read target settings file: %v", err)
 	}
-	locations := root["chat.agentFilesLocations"].(map[string]any)
+	locations := mustMap(t, root["chat.agentFilesLocations"], "chat.agentFilesLocations")
 	if locations["/legacy/path"] != true {
 		t.Fatalf("expected legacy path preserved for mismatched tracked file: %#v", locations)
 	}
@@ -232,7 +232,7 @@ func TestApplyMCPEdit_PreservesExistingServersAndInputs(t *testing.T) {
 		t.Fatalf("read mcp file: %v", err)
 	}
 
-	servers := root["servers"].(map[string]any)
+	servers := mustMap(t, root["servers"], "servers")
 	if _, ok := servers["foo"]; !ok {
 		t.Fatalf("expected existing server preserved")
 	}
@@ -240,11 +240,11 @@ func TestApplyMCPEdit_PreservesExistingServersAndInputs(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected artifact-mcp server object")
 	}
-	if artifactServer["command"].(string) != "/usr/local/bin/local-artifact-mcp" {
+	if mustString(t, artifactServer["command"], "artifact-mcp.command") != "/usr/local/bin/local-artifact-mcp" {
 		t.Fatalf("unexpected artifact-mcp command: %#v", artifactServer)
 	}
 
-	if _, ok := root["inputs"].(map[string]any)["token"]; !ok {
+	if _, ok := mustMap(t, root["inputs"], "inputs")["token"]; !ok {
 		t.Fatalf("expected inputs preserved")
 	}
 }
@@ -337,7 +337,7 @@ func TestRevertSettingsEdit_RemovesOnlyTrackedValue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read settings file: %v", err)
 	}
-	locations := root["chat.agentFilesLocations"].(map[string]any)
+	locations := mustMap(t, root["chat.agentFilesLocations"], "chat.agentFilesLocations")
 	if len(locations) != 2 || locations["/existing"] != true || locations["/other"] != true {
 		t.Fatalf("unexpected map after revert: %#v", locations)
 	}
@@ -367,7 +367,7 @@ func TestApplySettingsEdit_UsesTopLevelObjectFormat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read settings file: %v", err)
 	}
-	locations := root["chat.agentFilesLocations"].(map[string]any)
+	locations := mustMap(t, root["chat.agentFilesLocations"], "chat.agentFilesLocations")
 	if len(locations) != 1 || locations["/managed/agents"] != true {
 		t.Fatalf("unexpected top-level object: %#v", locations)
 	}
@@ -381,8 +381,11 @@ func TestRevertMCPEdit_RestoresPreviousOrRemovesTrackedServer(t *testing.T) {
 			t.Fatalf("seed mcp file: %v", err)
 		}
 
-		prev, _ := json.Marshal(map[string]any{"command": "old"})
-		err := config.RevertMCPEdit(state.MCPEdit{File: path, Key: config.MCPServerKey, Touched: true, HadPrevious: true, Previous: prev}, stateFilePerm)
+		prev, err := json.Marshal(map[string]any{"command": "old"})
+		if err != nil {
+			t.Fatalf("marshal previous server: %v", err)
+		}
+		err = config.RevertMCPEdit(state.MCPEdit{File: path, Key: config.MCPServerKey, Touched: true, HadPrevious: true, Previous: prev}, stateFilePerm)
 		if err != nil {
 			t.Fatalf("revert mcp edit: %v", err)
 		}
@@ -391,8 +394,8 @@ func TestRevertMCPEdit_RestoresPreviousOrRemovesTrackedServer(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read mcp file: %v", err)
 		}
-		servers := root["servers"].(map[string]any)
-		if servers[config.MCPServerKey].(map[string]any)["command"].(string) != "old" {
+		servers := mustMap(t, root["servers"], "servers")
+		if mustString(t, mustMap(t, servers[config.MCPServerKey], "artifact server")["command"], "artifact server.command") != "old" {
 			t.Fatalf("expected restored previous value")
 		}
 	})
@@ -413,7 +416,7 @@ func TestRevertMCPEdit_RestoresPreviousOrRemovesTrackedServer(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read mcp file: %v", err)
 		}
-		servers := root["servers"].(map[string]any)
+		servers := mustMap(t, root["servers"], "servers")
 		if _, ok := servers[config.MCPServerKey]; ok {
 			t.Fatalf("expected inserted server to be removed")
 		}
@@ -1535,7 +1538,7 @@ func TestUninstall_BothTargetMigrationRevertsPerTargetMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read stable settings: %v", err)
 	}
-	stableLocations := stableSettingsRoot[config.SettingsAgentPathKey].(map[string]any)
+	stableLocations := mustMap(t, stableSettingsRoot[config.SettingsAgentPathKey], config.SettingsAgentPathKey)
 	if stableLocations["/stable-keep"] != true {
 		t.Fatalf("expected stable keep path to remain: %#v", stableLocations)
 	}
@@ -1547,7 +1550,7 @@ func TestUninstall_BothTargetMigrationRevertsPerTargetMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read insiders settings: %v", err)
 	}
-	insidersLocations := insidersSettingsRoot[config.SettingsAgentPathKey].(map[string]any)
+	insidersLocations := mustMap(t, insidersSettingsRoot[config.SettingsAgentPathKey], config.SettingsAgentPathKey)
 	if insidersLocations["/insiders-keep"] != true || insidersLocations[agentPath] != true {
 		t.Fatalf("expected insiders locations preserved: %#v", insidersLocations)
 	}
@@ -1556,7 +1559,7 @@ func TestUninstall_BothTargetMigrationRevertsPerTargetMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read stable mcp: %v", err)
 	}
-	stableServers := stableMCPRoot["servers"].(map[string]any)
+	stableServers := mustMap(t, stableMCPRoot["servers"], "servers")
 	if _, exists := stableServers[config.MCPServerKey]; exists {
 		t.Fatalf("expected managed server removed from stable mcp: %#v", stableServers)
 	}
@@ -1565,7 +1568,7 @@ func TestUninstall_BothTargetMigrationRevertsPerTargetMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read insiders mcp: %v", err)
 	}
-	insidersServers := insidersMCPRoot["servers"].(map[string]any)
+	insidersServers := mustMap(t, insidersMCPRoot["servers"], "servers")
 	restored, ok := insidersServers[config.MCPServerKey].(map[string]any)
 	if !ok {
 		t.Fatalf("expected insiders managed server restored: %#v", insidersServers)

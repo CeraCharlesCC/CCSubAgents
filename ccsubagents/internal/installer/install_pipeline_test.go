@@ -115,7 +115,11 @@ func TestDownloadRequiredAssets_FallsBackToLocalArtifactRelease(t *testing.T) {
 	if err != nil {
 		t.Fatalf("downloadRequiredAssets returned error: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if removeErr := os.RemoveAll(tmpDir); removeErr != nil {
+			t.Fatalf("remove temp dir: %v", removeErr)
+		}
+	}()
 
 	if companionRequests != 1 {
 		t.Fatalf("expected exactly 1 companion-release request, got %d", companionRequests)
@@ -205,7 +209,7 @@ func TestVerifyAttestationsOrReport_AttestationFailureAddsSkipGuidance(t *testin
 	}
 
 	for _, want := range []string{
-		"Error: attestation verification failed for agents.zip",
+		"attestation verification failed for agents.zip",
 		"To skip verification: ccsubagents install --scope=local --skip-attestations-check",
 		"(not recommended for production use)",
 	} {

@@ -2,7 +2,6 @@ package doctor
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -37,39 +36,63 @@ func Run(ctx context.Context, opts Options) (issues int, err error) {
 
 	resolved := paths.Resolve(opts.Home, opts.CWD, getenv)
 	daemonStateDir := paths.ResolveDaemonStateDir(opts.Home, getenv)
-	fmt.Fprintf(out, "paths.config=%s (%s)\n", resolved.ConfigDir.Value, resolved.ConfigDir.Source)
-	fmt.Fprintf(out, "paths.state=%s (%s)\n", resolved.StateDir.Value, resolved.StateDir.Source)
-	fmt.Fprintf(out, "paths.log=%s (%s)\n", resolved.LogDir.Value, resolved.LogDir.Source)
-	fmt.Fprintf(out, "paths.blob=%s (%s)\n", resolved.BlobDir.Value, resolved.BlobDir.Source)
-	fmt.Fprintf(out, "daemon.state=%s\n", daemonStateDir)
+	if err := writef(out, "paths.config=%s (%s)\n", resolved.ConfigDir.Value, resolved.ConfigDir.Source); err != nil {
+		return issues, err
+	}
+	if err := writef(out, "paths.state=%s (%s)\n", resolved.StateDir.Value, resolved.StateDir.Source); err != nil {
+		return issues, err
+	}
+	if err := writef(out, "paths.log=%s (%s)\n", resolved.LogDir.Value, resolved.LogDir.Source); err != nil {
+		return issues, err
+	}
+	if err := writef(out, "paths.blob=%s (%s)\n", resolved.BlobDir.Value, resolved.BlobDir.Source); err != nil {
+		return issues, err
+	}
+	if err := writef(out, "daemon.state=%s\n", daemonStateDir); err != nil {
+		return issues, err
+	}
 
 	for _, bin := range []string{"local-artifact-mcp", "local-artifact-web", "ccsubagentsd"} {
 		path, findErr := lookPath(bin)
 		if findErr != nil {
 			issues++
-			fmt.Fprintf(out, "missing binary: %s\n", bin)
+			if err := writef(out, "missing binary: %s\n", bin); err != nil {
+				return issues, err
+			}
 			continue
 		}
-		fmt.Fprintf(out, "binary.%s=%s\n", bin, path)
+		if err := writef(out, "binary.%s=%s\n", bin, path); err != nil {
+			return issues, err
+		}
 	}
 
 	tokenPath := filepath.Join(daemonStateDir, "daemon", "daemon.token")
 	if info, statErr := os.Stat(tokenPath); statErr != nil {
 		issues++
-		fmt.Fprintf(out, "daemon.token=missing (%v)\n", statErr)
+		if err := writef(out, "daemon.token=missing (%v)\n", statErr); err != nil {
+			return issues, err
+		}
 	} else {
-		fmt.Fprintf(out, "daemon.token=%s mode=%#o\n", tokenPath, info.Mode().Perm())
+		if err := writef(out, "daemon.token=%s mode=%#o\n", tokenPath, info.Mode().Perm()); err != nil {
+			return issues, err
+		}
 	}
 
 	client, clientErr := daemonclient.NewDefaultClient(daemonStateDir, getenv)
 	if clientErr != nil {
 		issues++
-		fmt.Fprintf(out, "daemon.client=unavailable (%v)\n", clientErr)
+		if err := writef(out, "daemon.client=unavailable (%v)\n", clientErr); err != nil {
+			return issues, err
+		}
 	} else if err := client.Health(ctx); err != nil {
 		issues++
-		fmt.Fprintf(out, "daemon.health=unavailable (%v)\n", err)
+		if writeErr := writef(out, "daemon.health=unavailable (%v)\n", err); writeErr != nil {
+			return issues, writeErr
+		}
 	} else {
-		fmt.Fprintln(out, "daemon.health=ok")
+		if err := writeln(out, "daemon.health=ok"); err != nil {
+			return issues, err
+		}
 	}
 
 	entries, readErr := os.ReadDir(filepath.Join(resolved.StateDir.Value, "tx"))
@@ -77,7 +100,9 @@ func Run(ctx context.Context, opts Options) (issues int, err error) {
 		for _, entry := range entries {
 			if strings.HasSuffix(entry.Name(), "-active.json") {
 				issues++
-				fmt.Fprintf(out, "transaction.active=%s\n", filepath.Join(resolved.StateDir.Value, "tx", entry.Name()))
+				if err := writef(out, "transaction.active=%s\n", filepath.Join(resolved.StateDir.Value, "tx", entry.Name())); err != nil {
+					return issues, err
+				}
 			}
 		}
 	}

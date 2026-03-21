@@ -47,7 +47,7 @@ func mainExitCode() int {
 	if err == nil || errors.Is(err, context.Canceled) {
 		return 0
 	}
-	fmt.Fprintln(os.Stderr, err)
+	writeln(os.Stderr, err)
 	return 1
 }
 
@@ -69,7 +69,7 @@ func run() error {
 	}
 	defer func() {
 		if unregisterErr := unregisterMCPPID(); unregisterErr != nil {
-			fmt.Fprintln(os.Stderr, "warning: failed to unregister mcp pid:", unregisterErr)
+			writeln(os.Stderr, "warning: failed to unregister mcp pid:", unregisterErr)
 		}
 	}()
 
@@ -108,14 +108,14 @@ func runWithAutostartedWebChild(autostartWeb bool, stderr io.Writer, runFn func(
 		var err error
 		webChild, err = startLocalArtifactWebFn(stderr)
 		if err != nil {
-			fmt.Fprintln(stderr, "warning: failed to autostart local-artifact-web:", err)
+			writeln(stderr, "warning: failed to autostart local-artifact-web:", err)
 		}
 	}
 
 	if webChild != nil {
 		defer func() {
 			if stopErr := stopChildProcessFn(webChild, 2*time.Second); stopErr != nil {
-				fmt.Fprintln(stderr, "warning: failed to stop local-artifact-web:", stopErr)
+				writeln(stderr, "warning: failed to stop local-artifact-web:", stopErr)
 			}
 		}()
 	}
@@ -206,7 +206,10 @@ func startCCSubagentsd(stderr io.Writer, storeRoot, stateDir, token string) erro
 		return fmt.Errorf("resolve executable path: %w", err)
 	}
 
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("resolve home directory: %w", err)
+	}
 	daemonPath, err := ccsubagentsdPath(exePath, home, runtime.GOOS, os.Getenv)
 	if err != nil {
 		return err
@@ -230,7 +233,7 @@ func startCCSubagentsd(stderr io.Writer, storeRoot, stateDir, token string) erro
 	}
 	go func() {
 		if waitErr := cmd.Wait(); waitErr != nil {
-			fmt.Fprintln(stderr, "ccsubagentsd exited:", waitErr)
+			writeln(stderr, "ccsubagentsd exited:", waitErr)
 		}
 	}()
 	return nil
@@ -260,7 +263,7 @@ func startLocalArtifactWeb(stderr io.Writer) (*childProcess, error) {
 	go func() {
 		waitErr := cmd.Wait()
 		if waitErr != nil && !child.stopRequested.Load() {
-			fmt.Fprintln(stderr, "local-artifact-web exited:", waitErr)
+			writeln(stderr, "local-artifact-web exited:", waitErr)
 		}
 		exited <- waitErr
 		close(exited)

@@ -103,11 +103,8 @@ func TestToolTodo_WriteWithRefSelectorResolvesBaseName(t *testing.T) {
 	if rpcErr != nil {
 		t.Fatalf("base save rpc error: %+v", rpcErr)
 	}
-	baseResp := requireToolOK(t, baseRespAny.(toolResult))
-	baseOut, ok := baseResp.StructuredContent.(saveOut)
-	if !ok {
-		t.Fatalf("expected saveOut structured content, got %T", baseResp.StructuredContent)
-	}
+	baseResp := requireToolOK(t, requireToolResult(t, baseRespAny))
+	baseOut := requireSaveOut(t, baseResp.StructuredContent)
 
 	for _, toolName := range todoToolNames {
 		toolName := toolName
@@ -320,7 +317,7 @@ func TestToolTodo_ReadMalformedStoredTODOJSONReturnsError(t *testing.T) {
 	if rpcErr != nil {
 		t.Fatalf("save blob rpc error: %+v", rpcErr)
 	}
-	saveResp := saveRespAny.(toolResult)
+	saveResp := requireToolResult(t, saveRespAny)
 	if saveResp.IsError {
 		t.Fatalf("save blob unexpectedly returned tool error: %+v", saveResp)
 	}
@@ -405,7 +402,7 @@ func TestToolsList_ExposesTodoDefinitionWithStrictNestedSchemas(t *testing.T) {
 	if rpcErr != nil {
 		t.Fatalf("tools/list error: %+v", rpcErr)
 	}
-	tools := toolsResp.(map[string]any)["tools"].([]toolDef)
+	tools := requireToolDefs(t, requireMap(t, toolsResp, "tools/list response")["tools"])
 
 	var todo toolDef
 	found := false
@@ -423,11 +420,11 @@ func TestToolsList_ExposesTodoDefinitionWithStrictNestedSchemas(t *testing.T) {
 	if todo.InputSchema["additionalProperties"] != false {
 		t.Fatalf("expected strict top-level input schema, got %+v", todo.InputSchema)
 	}
-	artifactProp := todo.InputSchema["properties"].(map[string]any)["artifact"].(map[string]any)
+	artifactProp := requireMap(t, requireMap(t, todo.InputSchema["properties"], "todo input properties")["artifact"], "artifact property")
 	if artifactProp["additionalProperties"] != false {
 		t.Fatalf("expected strict artifact selector schema, got %+v", artifactProp)
 	}
-	itemSchema := todo.InputSchema["properties"].(map[string]any)["todoList"].(map[string]any)["items"].(map[string]any)
+	itemSchema := requireMap(t, requireMap(t, requireMap(t, todo.InputSchema["properties"], "todo input properties")["todoList"], "todoList property")["items"], "todo item schema")
 	if itemSchema["additionalProperties"] != false {
 		t.Fatalf("expected strict todo item schema, got %+v", itemSchema)
 	}

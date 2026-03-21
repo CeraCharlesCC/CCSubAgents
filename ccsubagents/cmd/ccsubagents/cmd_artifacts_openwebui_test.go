@@ -50,7 +50,9 @@ func withWorkingDir(t *testing.T, dir string) {
 		t.Fatalf("chdir: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = os.Chdir(current)
+		if err := os.Chdir(current); err != nil {
+			t.Fatalf("restore cwd: %v", err)
+		}
 	})
 }
 

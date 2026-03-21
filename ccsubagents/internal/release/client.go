@@ -170,7 +170,10 @@ func (c *Client) readErrorSnippet(resp *http.Response) string {
 	if resp == nil || resp.Body == nil {
 		return ""
 	}
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
+	if err != nil {
+		return ""
+	}
 	return strings.TrimSpace(string(body))
 }
 
@@ -184,7 +187,7 @@ func (c *Client) FetchLatest(ctx context.Context) (Response, error) {
 	if err != nil {
 		return Response{}, fmt.Errorf("request releases: %w", err)
 	}
-	defer resp.Body.Close()
+	defer closeResponseBody(resp)
 
 	if resp.StatusCode != http.StatusOK {
 		return Response{}, fmt.Errorf("request releases failed: status=%d body=%s", resp.StatusCode, c.readErrorSnippet(resp))
@@ -248,7 +251,7 @@ func (c *Client) fetchByExactTag(ctx context.Context, tag string) (Response, err
 	if err != nil {
 		return Response{}, fmt.Errorf("request release tag %s: %w", tag, err)
 	}
-	defer resp.Body.Close()
+	defer closeResponseBody(resp)
 
 	if resp.StatusCode == http.StatusNotFound {
 		return Response{}, &ReleaseNotFoundError{Tag: tag}
@@ -279,7 +282,7 @@ func (c *Client) DownloadFile(ctx context.Context, url, destPath string, perm os
 	if err != nil {
 		return fmt.Errorf("download request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer closeResponseBody(resp)
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("download request failed: status=%d body=%s", resp.StatusCode, c.readErrorSnippet(resp))
@@ -289,12 +292,30 @@ func (c *Client) DownloadFile(ctx context.Context, url, destPath string, perm os
 	if err != nil {
 		return fmt.Errorf("create destination file: %w", err)
 	}
-	defer f.Close()
+	defer closeFile(f)
 
 	if _, err := io.Copy(f, resp.Body); err != nil {
 		return fmt.Errorf("copy response to destination: %w", err)
 	}
 	return nil
+}
+
+func closeResponseBody(resp *http.Response) {
+	if resp == nil || resp.Body == nil {
+		return
+	}
+	if err := resp.Body.Close(); err != nil {
+		_ = err
+	}
+}
+
+func closeFile(f *os.File) {
+	if f == nil {
+		return
+	}
+	if err := f.Close(); err != nil {
+		_ = err
+	}
 }
 
 func (c *Client) VerifyDownloadedAssets(ctx context.Context, downloaded map[string]string, detailf func(string, ...any)) error {

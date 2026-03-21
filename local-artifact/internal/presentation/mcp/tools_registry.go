@@ -101,10 +101,6 @@ func (s *Server) handleToolsList(_ json.RawMessage) (any, *jsonRPCError) {
 }
 
 func (s *Server) handleToolsCall(ctx context.Context, params json.RawMessage) (any, *jsonRPCError) {
-	if !s.isInitialized() {
-		// Be lenient: some clients call tools before notifications/initialized.
-	}
-
 	var p callToolParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return toolError("invalid params"), nil

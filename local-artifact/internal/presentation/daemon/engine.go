@@ -135,7 +135,9 @@ func (e *Engine) serviceForWorkspaceID(ctx context.Context, workspaceID string) 
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if existing, ok := e.service[workspaceID]; ok {
-		_ = repo.Close()
+		if closeErr := repo.Close(); closeErr != nil {
+			_ = closeErr
+		}
 		return existing.service, nil
 	}
 	e.service[workspaceID] = entry

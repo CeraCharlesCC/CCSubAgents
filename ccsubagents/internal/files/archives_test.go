@@ -105,7 +105,7 @@ func TestWriteZipEntry_RejectsOversizedEntryAndRemovesPartialFile(t *testing.T) 
 	if err != nil {
 		t.Fatalf("open zip: %v", err)
 	}
-	defer r.Close()
+	defer closeIgnore(r)
 
 	if len(r.File) != 1 {
 		t.Fatalf("expected exactly one archive entry, got %d", len(r.File))

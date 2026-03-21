@@ -139,7 +139,9 @@ func (s *Store) Get(ctx context.Context, sel artifacts.Selector) (artifacts.Arti
 				if idxErr == nil {
 					delete(idx.Names, resolvedByName)
 					idx.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-					_ = s.saveIndexLocked(idx)
+					if saveErr := s.saveIndexLocked(idx); saveErr != nil {
+						_ = saveErr
+					}
 				}
 			}
 			return artifacts.Artifact{}, nil, artifacts.ErrNotFound
@@ -160,7 +162,9 @@ func (s *Store) Get(ctx context.Context, sel artifacts.Selector) (artifacts.Arti
 				if idxErr == nil {
 					delete(idx.Names, resolvedByName)
 					idx.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-					_ = s.saveIndexLocked(idx)
+					if saveErr := s.saveIndexLocked(idx); saveErr != nil {
+						_ = saveErr
+					}
 				}
 			}
 			return artifacts.Artifact{}, nil, artifacts.ErrNotFound
@@ -445,19 +449,19 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
 	}
 	tmpName := tmp.Name()
 	defer func() {
-		_ = os.Remove(tmpName)
+		removeIfExists(tmpName)
 	}()
 
 	if err := tmp.Chmod(perm); err != nil {
-		_ = tmp.Close()
+		closeIgnore(tmp)
 		return err
 	}
 	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
+		closeIgnore(tmp)
 		return err
 	}
 	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
+		closeIgnore(tmp)
 		return err
 	}
 	if err := tmp.Close(); err != nil {
@@ -468,8 +472,10 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
 	}
 	// Best-effort fsync directory after rename so the directory entry update is durable.
 	if d, err := os.Open(dir); err == nil {
-		_ = d.Sync()
-		_ = d.Close()
+		if syncErr := d.Sync(); syncErr != nil {
+			_ = syncErr
+		}
+		closeIgnore(d)
 	}
 	return nil
 }

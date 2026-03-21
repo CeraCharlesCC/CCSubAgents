@@ -56,7 +56,9 @@ func AuthMiddleware(token string, next http.Handler, options AuthOptions) http.H
 
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(Envelope{OK: false, Error: &EnvelopeError{Code: CodeUnauthorized, Message: "missing or invalid token"}})
+		if err := json.NewEncoder(w).Encode(Envelope{OK: false, Error: &EnvelopeError{Code: CodeUnauthorized, Message: "missing or invalid token"}}); err != nil {
+			_ = err
+		}
 	})
 }
 

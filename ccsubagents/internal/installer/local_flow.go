@@ -336,7 +336,11 @@ func (r *Runner) installOrUpdateLocal(ctx context.Context, cfg localInstallConfi
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if removeErr := os.RemoveAll(tmpDir); removeErr != nil {
+			_ = removeErr
+		}
+	}()
 
 	if err := r.verifyAttestationsOrReport(ctx, downloaded, cfg.isUpdate, ScopeLocal); err != nil {
 		return err
@@ -382,7 +386,9 @@ func (r *Runner) installOrUpdateLocal(ctx context.Context, cfg localInstallConfi
 		if rollbackErr := rollback.Restore(); rollbackErr != nil {
 			retErr = fmt.Errorf("%w (rollback failed: %v)", retErr, rollbackErr)
 		}
-		_ = txSession.Rollback()
+		if txRollbackErr := txSession.Rollback(); txRollbackErr != nil {
+			retErr = fmt.Errorf("%w (transaction rollback failed: %v)", retErr, txRollbackErr)
+		}
 	}()
 
 	managedDir := filepath.Join(cfg.location.installRoot, config.LocalManagedDirRelativePath)

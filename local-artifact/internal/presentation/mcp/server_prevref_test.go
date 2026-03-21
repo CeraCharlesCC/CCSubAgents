@@ -15,11 +15,11 @@ func TestServerSaveResolveListAndGetPrevRefVersioning(t *testing.T) {
 	if rpcErr != nil {
 		t.Fatalf("first save rpc error: %+v", rpcErr)
 	}
-	firstResp := firstRespAny.(toolResult)
+	firstResp := requireToolResult(t, firstRespAny)
 	if firstResp.IsError {
 		t.Fatalf("first save unexpectedly returned tool error: %+v", firstResp)
 	}
-	firstOut := firstResp.StructuredContent.(saveOut)
+	firstOut := requireSaveOut(t, firstResp.StructuredContent)
 	if firstOut.PrevRef != "" {
 		t.Fatalf("expected first prevRef empty, got %q", firstOut.PrevRef)
 	}
@@ -28,11 +28,11 @@ func TestServerSaveResolveListAndGetPrevRefVersioning(t *testing.T) {
 	if rpcErr != nil {
 		t.Fatalf("second save rpc error: %+v", rpcErr)
 	}
-	secondResp := secondRespAny.(toolResult)
+	secondResp := requireToolResult(t, secondRespAny)
 	if secondResp.IsError {
 		t.Fatalf("second save unexpectedly returned tool error: %+v", secondResp)
 	}
-	secondOut := secondResp.StructuredContent.(saveOut)
+	secondOut := requireSaveOut(t, secondResp.StructuredContent)
 	if secondOut.PrevRef != firstOut.Ref {
 		t.Fatalf("expected second prevRef=%q, got %q", firstOut.Ref, secondOut.PrevRef)
 	}
@@ -41,11 +41,11 @@ func TestServerSaveResolveListAndGetPrevRefVersioning(t *testing.T) {
 	if rpcErr != nil {
 		t.Fatalf("resolve rpc error: %+v", rpcErr)
 	}
-	resolveResp := resolveRespAny.(toolResult)
+	resolveResp := requireToolResult(t, resolveRespAny)
 	if resolveResp.IsError {
 		t.Fatalf("resolve unexpectedly returned tool error: %+v", resolveResp)
 	}
-	resolveOut := resolveResp.StructuredContent.(map[string]any)
+	resolveOut := requireMap(t, resolveResp.StructuredContent, "resolve structured content")
 	if resolveOut["ref"] != secondOut.Ref {
 		t.Fatalf("expected resolve ref=%q, got %#v", secondOut.Ref, resolveOut["ref"])
 	}
@@ -54,11 +54,11 @@ func TestServerSaveResolveListAndGetPrevRefVersioning(t *testing.T) {
 	if rpcErr != nil {
 		t.Fatalf("get old by ref rpc error: %+v", rpcErr)
 	}
-	oldGetResp := oldGetRespAny.(toolResult)
+	oldGetResp := requireToolResult(t, oldGetRespAny)
 	if oldGetResp.IsError {
 		t.Fatalf("get old by ref unexpectedly returned tool error: %+v", oldGetResp)
 	}
-	oldGetOut := oldGetResp.StructuredContent.(saveOut)
+	oldGetOut := requireSaveOut(t, oldGetResp.StructuredContent)
 	if oldGetOut.Ref != firstOut.Ref {
 		t.Fatalf("expected old get ref=%q, got %q", firstOut.Ref, oldGetOut.Ref)
 	}
@@ -67,11 +67,11 @@ func TestServerSaveResolveListAndGetPrevRefVersioning(t *testing.T) {
 	if rpcErr != nil {
 		t.Fatalf("list rpc error: %+v", rpcErr)
 	}
-	listResp := listRespAny.(toolResult)
+	listResp := requireToolResult(t, listRespAny)
 	if listResp.IsError {
 		t.Fatalf("list unexpectedly returned tool error: %+v", listResp)
 	}
-	listOut := listResp.StructuredContent.(map[string]any)
+	listOut := requireMap(t, listResp.StructuredContent, "list structured content")
 	items, ok := listOut["items"].([]saveOut)
 	if !ok {
 		t.Fatalf("expected list items []saveOut, got %T", listOut["items"])
@@ -105,7 +105,7 @@ func TestServerSaveTextRejectsEmptyOrWhitespaceText(t *testing.T) {
 			if rpcErr != nil {
 				t.Fatalf("save text rpc error: %+v", rpcErr)
 			}
-			resp := respAny.(toolResult)
+			resp := requireToolResult(t, respAny)
 			if !resp.IsError {
 				t.Fatalf("expected tool error for %s text", tc.name)
 			}

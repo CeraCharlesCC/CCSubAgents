@@ -363,6 +363,9 @@ func localMCPCommandConfigured(path string) (bool, error) {
 	if !ok {
 		return false, nil
 	}
-	command, _ := server["command"].(string)
+	command, ok := server["command"].(string)
+	if !ok {
+		return false, nil
+	}
 	return strings.TrimSpace(command) == LocalMCPCommand(runtime.GOOS), nil
 }

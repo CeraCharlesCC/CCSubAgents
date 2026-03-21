@@ -57,18 +57,18 @@ func createLock(lockPath string) (func(), error) {
 	}
 	payload, marshalErr := json.Marshal(lockFile{PID: os.Getpid(), CreatedAt: time.Now().UTC().Format(time.RFC3339)})
 	if marshalErr != nil {
-		_ = f.Close()
-		_ = os.Remove(lockPath)
+		closeIgnore(f)
+		removeIfExists(lockPath)
 		return nil, marshalErr
 	}
 	if _, writeErr := f.Write(append(payload, '\n')); writeErr != nil {
-		_ = f.Close()
-		_ = os.Remove(lockPath)
+		closeIgnore(f)
+		removeIfExists(lockPath)
 		return nil, writeErr
 	}
 	return func() {
-		_ = f.Close()
-		_ = os.Remove(lockPath)
+		closeIgnore(f)
+		removeIfExists(lockPath)
 	}, nil
 }
 
@@ -90,7 +90,9 @@ func recoverStaleLock(lockPath string, now time.Time) (bool, error) {
 	}
 
 	lock := lockFile{}
-	_ = json.Unmarshal(b, &lock)
+	if err := json.Unmarshal(b, &lock); err != nil {
+		lock = lockFile{}
+	}
 
 	if lock.PID > 0 {
 		if processExists(lock.PID) {

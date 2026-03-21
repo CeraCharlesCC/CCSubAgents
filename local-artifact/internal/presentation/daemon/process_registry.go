@@ -106,16 +106,16 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	cleanup := true
 	defer func() {
 		if cleanup {
-			_ = os.Remove(tmpPath)
+			removeIfExists(tmpPath)
 		}
 	}()
 
 	if err := tmpFile.Chmod(perm); err != nil {
-		_ = tmpFile.Close()
+		closeIgnore(tmpFile)
 		return err
 	}
 	if _, err := tmpFile.Write(data); err != nil {
-		_ = tmpFile.Close()
+		closeIgnore(tmpFile)
 		return err
 	}
 	if err := tmpFile.Close(); err != nil {

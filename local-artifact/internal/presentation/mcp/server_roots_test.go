@@ -72,8 +72,12 @@ func newProtocolHarness(t *testing.T, baseStoreRoot string) *protocolHarness {
 
 func (h *protocolHarness) close() {
 	h.cancel()
-	_ = h.inW.Close()
-	_ = h.outR.Close()
+	if err := h.inW.Close(); err != nil {
+		h.t.Fatalf("close input writer: %v", err)
+	}
+	if err := h.outR.Close(); err != nil {
+		h.t.Fatalf("close output reader: %v", err)
+	}
 	select {
 	case <-h.serveErr:
 	case <-time.After(protocolShutdownTimeout):
@@ -191,7 +195,11 @@ func readActiveArtifactNames(t *testing.T, dbPath string) map[string]struct{} {
 	if err != nil {
 		t.Fatalf("open db %s: %v", dbPath, err)
 	}
-	t.Cleanup(func() { _ = db.Close() })
+	t.Cleanup(func() {
+		if closeErr := db.Close(); closeErr != nil {
+			t.Fatalf("close db: %v", closeErr)
+		}
+	})
 
 	rows, err := db.Query(`SELECT name FROM artifacts WHERE deleted = 0;`)
 	if err != nil {
@@ -200,7 +208,11 @@ func readActiveArtifactNames(t *testing.T, dbPath string) map[string]struct{} {
 		}
 		t.Fatalf("query artifacts in %s: %v", dbPath, err)
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			t.Fatalf("close rows: %v", closeErr)
+		}
+	}()
 
 	out := map[string]struct{}{}
 	for rows.Next() {

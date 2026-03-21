@@ -18,7 +18,9 @@ type initializeParams struct {
 func (s *Server) handleInitialize(params json.RawMessage) (any, *jsonRPCError) {
 	var p initializeParams
 	if len(params) > 0 {
-		_ = json.Unmarshal(params, &p)
+		if err := json.Unmarshal(params, &p); err != nil {
+			p = initializeParams{}
+		}
 	}
 
 	s.sessionMu.Lock()

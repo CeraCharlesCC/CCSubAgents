@@ -28,12 +28,16 @@ type artifactsContext struct {
 
 func runArtifacts(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "Usage: ccsubagents artifacts <ls|get|put|openwebui>")
+		if err := writeln(stderr, "Usage: ccsubagents artifacts <ls|get|put|openwebui>"); err != nil {
+			return 1
+		}
 		return 2
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		if writeErr := writeln(stderr, err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 	stateDir := paths.ResolveDaemonStateDir(home, os.Getenv)
@@ -63,7 +67,9 @@ func runArtifacts(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	case "put":
 		return runArtifactsPut(ctx, args[1:], stdin, stdout, stderr)
 	default:
-		fmt.Fprintf(stderr, "unknown artifacts subcommand %q\n", sub)
+		if err := writef(stderr, "unknown artifacts subcommand %q\n", sub); err != nil {
+			return 1
+		}
 		return 2
 	}
 }
@@ -86,12 +92,16 @@ func runArtifactsOpenWebUI(ctx artifactsContext, args []string, stdout, stderr i
 	_ = args
 	cwd, err := os.Getwd()
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		if writeErr := writeln(stderr, err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 	settings, err := config.LoadMergedInstallSettings(ctx.home, cwd)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		if writeErr := writeln(stderr, err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -103,16 +113,22 @@ func runArtifactsOpenWebUI(ctx artifactsContext, args []string, stdout, stderr i
 	}
 
 	if settings.NoAuth {
-		fmt.Fprintf(stdout, "http://%s/\n", addr)
+		if err := writef(stdout, "http://%s/\n", addr); err != nil {
+			return 1
+		}
 		return 0
 	}
 
 	token := daemonclient.ResolveDaemonToken(ctx.stateDir, os.Getenv)
 	if token == "" {
-		fmt.Fprintf(stdout, "http://%s/\n", addr)
+		if err := writef(stdout, "http://%s/\n", addr); err != nil {
+			return 1
+		}
 		return 0
 	}
-	fmt.Fprintf(stdout, "http://%s/?token=%s\n", addr, url.QueryEscape(token))
+	if err := writef(stdout, "http://%s/?token=%s\n", addr, url.QueryEscape(token)); err != nil {
+		return 1
+	}
 	return 0
 }
 
@@ -122,12 +138,16 @@ func runArtifactsLS(ctx artifactsContext, args []string, stdout, stderr io.Write
 	limit := fs.Int("limit", 100, "max results")
 	workspaceID := addWorkspaceFlag(fs)
 	if err := fs.Parse(args); err != nil {
-		fmt.Fprintln(stderr, err)
+		if writeErr := writeln(stderr, err); writeErr != nil {
+			return 1
+		}
 		return 2
 	}
 	client, err := ctx.getClient()
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		if writeErr := writeln(stderr, err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 	res, err := client.List(context.Background(), daemonclient.ListRequest{
@@ -136,11 +156,15 @@ func runArtifactsLS(ctx artifactsContext, args []string, stdout, stderr io.Write
 		Limit:     *limit,
 	})
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		if writeErr := writeln(stderr, err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 	for _, item := range res.Items {
-		fmt.Fprintf(stdout, "%s\t%s\n", item.Name, item.Ref)
+		if err := writef(stdout, "%s\t%s\n", item.Name, item.Ref); err != nil {
+			return 1
+		}
 	}
 	return 0
 }
@@ -151,16 +175,22 @@ func runArtifactsGet(ctx artifactsContext, args []string, stdin io.Reader, stdou
 	outPath := fs.String("out", "-", "output path or - for stdout")
 	workspaceID := addWorkspaceFlag(fs)
 	if err := fs.Parse(args); err != nil {
-		fmt.Fprintln(stderr, err)
+		if writeErr := writeln(stderr, err); writeErr != nil {
+			return 1
+		}
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "Usage: ccsubagents artifacts get <name|ref> [--out PATH|-]")
+		if err := writeln(stderr, "Usage: ccsubagents artifacts get <name|ref> [--out PATH|-]"); err != nil {
+			return 1
+		}
 		return 2
 	}
 	client, err := ctx.getClient()
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		if writeErr := writeln(stderr, err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 	id := strings.TrimSpace(fs.Arg(0))
@@ -173,27 +203,39 @@ func runArtifactsGet(ctx artifactsContext, args []string, stdin io.Reader, stdou
 		Selector:  sel,
 	})
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		if writeErr := writeln(stderr, err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 	payload, err := base64.StdEncoding.DecodeString(res.DataBase64)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		if writeErr := writeln(stderr, err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 	if *outPath == "-" {
-		_, _ = stdout.Write(payload)
+		if err := writeAll(stdout, payload); err != nil {
+			return 1
+		}
 		return 0
 	}
 	if err := os.MkdirAll(filepath.Dir(*outPath), 0o755); err != nil {
-		fmt.Fprintln(stderr, err)
+		if writeErr := writeln(stderr, err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 	if err := os.WriteFile(*outPath, payload, 0o600); err != nil {
-		fmt.Fprintln(stderr, err)
+		if writeErr := writeln(stderr, err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
-	fmt.Fprintf(stdout, "wrote %s\n", *outPath)
+	if err := writef(stdout, "wrote %s\n", *outPath); err != nil {
+		return 1
+	}
 	return 0
 }
 
@@ -204,28 +246,38 @@ func runArtifactsPut(ctx artifactsContext, args []string, stdin io.Reader, stdou
 	workspaceID := addWorkspaceFlag(fs)
 	expectedPrevRef := fs.String("expected-prev-ref", "", "optimistic concurrency ref")
 	if err := fs.Parse(args); err != nil {
-		fmt.Fprintln(stderr, err)
+		if writeErr := writeln(stderr, err); writeErr != nil {
+			return 1
+		}
 		return 2
 	}
 	if fs.NArg() != 2 {
-		fmt.Fprintln(stderr, "Usage: ccsubagents artifacts put <name> <path|-> [flags]")
+		if err := writeln(stderr, "Usage: ccsubagents artifacts put <name> <path|-> [flags]"); err != nil {
+			return 1
+		}
 		return 2
 	}
 	name := strings.TrimSpace(fs.Arg(0))
 	path := strings.TrimSpace(fs.Arg(1))
 	if name == "" {
-		fmt.Fprintln(stderr, "artifact name is required")
+		if err := writeln(stderr, "artifact name is required"); err != nil {
+			return 1
+		}
 		return 2
 	}
 	client, err := ctx.getClient()
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		if writeErr := writeln(stderr, err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
 	data, err := readPutData(stdin, path)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		if writeErr := writeln(stderr, err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 	typeHint := strings.TrimSpace(*mimeType)
@@ -247,10 +299,14 @@ func runArtifactsPut(ctx artifactsContext, args []string, stdin io.Reader, stdou
 			ExpectedPrevRef: strings.TrimSpace(*expectedPrevRef),
 		})
 		if err != nil {
-			fmt.Fprintln(stderr, err)
+			if writeErr := writeln(stderr, err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
-		fmt.Fprintf(stdout, "%s\n", saved.Ref)
+		if err := writef(stdout, "%s\n", saved.Ref); err != nil {
+			return 1
+		}
 		return 0
 	}
 	saved, err := client.SaveBlob(context.Background(), daemonclient.SaveBlobRequest{
@@ -262,10 +318,14 @@ func runArtifactsPut(ctx artifactsContext, args []string, stdin io.Reader, stdou
 		ExpectedPrevRef: strings.TrimSpace(*expectedPrevRef),
 	})
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		if writeErr := writeln(stderr, err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
-	fmt.Fprintf(stdout, "%s\n", saved.Ref)
+	if err := writef(stdout, "%s\n", saved.Ref); err != nil {
+		return 1
+	}
 	return 0
 }
 

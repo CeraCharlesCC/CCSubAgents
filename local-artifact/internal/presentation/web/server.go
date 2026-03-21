@@ -6,7 +6,6 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -114,7 +113,7 @@ func (s *Server) Serve(ctx context.Context, addr string) error {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = httpServer.Shutdown(shutdownCtx)
+		shutdownHTTPServer(httpServer, shutdownCtx)
 		return ctx.Err()
 	case err := <-errCh:
 		if err == nil || err == http.ErrServerClosed {
@@ -393,7 +392,7 @@ func (s *Server) handleInsert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.MultipartForm != nil {
-		defer r.MultipartForm.RemoveAll()
+		defer removeMultipartForm(r.MultipartForm)
 	}
 
 	subspace, prefix, sortMode, limitRaw := formRedirectContext(r.Form)
@@ -418,7 +417,7 @@ func (s *Server) handleInsert(w http.ResponseWriter, r *http.Request) {
 	hasFile := false
 	if err == nil {
 		hasFile = true
-		defer file.Close()
+		defer closeIgnore(file)
 	} else if !errors.Is(err, http.ErrMissingFile) {
 		http.Redirect(w, r, redirectBase+"&err="+url.QueryEscape("invalid upload file"), http.StatusSeeOther)
 		return
@@ -541,7 +540,7 @@ func (s *Server) handleAPIContent(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Artifact-Name", artifact.Name)
 	w.Header().Set("X-Artifact-MimeType", artifact.MimeType)
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(payload)
+	writePayload(w, payload)
 }
 
 func (s *Server) handleAPIList(w http.ResponseWriter, r *http.Request) {
@@ -1196,7 +1195,9 @@ func (s *Server) serviceForSubspace(selector string) (*artifacts.Service, error)
 		if workspaceID == globalSubspaceSelector {
 			workspaceID = workspaces.GlobalWorkspaceID
 		}
-		_ = s.registry.EnsureWorkspace(context.Background(), workspaceID, roots, "web")
+		if err := s.registry.EnsureWorkspace(context.Background(), workspaceID, roots, "web"); err != nil {
+			_ = err
+		}
 	}
 	s.serviceByKey[selector] = svc
 	s.closeByKey[selector] = repo.Close
@@ -1303,7 +1304,7 @@ func renderIndex(w http.ResponseWriter, r *http.Request, data pageData) {
 func writeJSON(w http.ResponseWriter, code int, payload any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(payload)
+	encodeJSON(w, payload)
 }
 
 func writeMethodNotAllowed(w http.ResponseWriter, allowed ...string) {

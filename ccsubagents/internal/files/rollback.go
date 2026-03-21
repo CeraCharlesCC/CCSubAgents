@@ -174,14 +174,14 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 		return fmt.Errorf("create temp file for %s: %w", path, err)
 	}
 	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
+	defer removeIfExists(tmpPath)
 
 	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
+		closeIgnore(tmp)
 		return fmt.Errorf("write temp file for %s: %w", path, err)
 	}
 	if err := tmp.Chmod(perm); err != nil {
-		_ = tmp.Close()
+		closeIgnore(tmp)
 		return fmt.Errorf("chmod temp file for %s: %w", path, err)
 	}
 	if err := tmp.Close(); err != nil {

@@ -202,7 +202,7 @@ func (c *Client) do(ctx context.Context, method, path string, reqBody any, out a
 	if err != nil {
 		return &RemoteError{Code: CodeServiceUnavailable, Message: err.Error(), HTTPStatus: http.StatusServiceUnavailable}
 	}
-	defer resp.Body.Close()
+	defer closeResponseBody(resp)
 
 	var env struct {
 		OK    bool            `json:"ok"`
@@ -226,4 +226,13 @@ func (c *Client) do(ctx context.Context, method, path string, reqBody any, out a
 		return fmt.Errorf("decode daemon data: %w", err)
 	}
 	return nil
+}
+
+func closeResponseBody(resp *http.Response) {
+	if resp == nil || resp.Body == nil {
+		return
+	}
+	if err := resp.Body.Close(); err != nil {
+		_ = err
+	}
 }

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
 	"io"
 	"os"
 
@@ -16,26 +15,36 @@ func runDoctor(args []string, stdout, stderr io.Writer) int {
 	help := fs.Bool("help", false, "show help")
 	fs.BoolVar(help, "h", false, "show help")
 	if err := fs.Parse(args); err != nil {
-		fmt.Fprintln(stderr, err)
+		if writeErr := writeln(stderr, err); writeErr != nil {
+			return 1
+		}
 		return 2
 	}
 	if *help {
-		fmt.Fprintln(stdout, "Usage: ccsubagents doctor")
+		if err := writeln(stdout, "Usage: ccsubagents doctor"); err != nil {
+			return 1
+		}
 		return 0
 	}
 	if fs.NArg() > 0 {
-		fmt.Fprintf(stderr, "unexpected arguments: %v\n", fs.Args())
+		if err := writef(stderr, "unexpected arguments: %v\n", fs.Args()); err != nil {
+			return 1
+		}
 		return 2
 	}
 
 	home, err := os.UserHomeDir()
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		if writeErr := writeln(stderr, err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		if writeErr := writeln(stderr, err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -45,7 +54,9 @@ func runDoctor(args []string, stdout, stderr io.Writer) int {
 		Out:  stdout,
 	})
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		if writeErr := writeln(stderr, err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 	if issues > 0 {

@@ -19,7 +19,9 @@ func newDaemonBackedServerAtRoot(t *testing.T, storeRoot string) *Server {
 		t.Fatalf("new daemon engine: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = engine.Close()
+		if closeErr := engine.Close(); closeErr != nil {
+			t.Fatalf("close daemon engine: %v", closeErr)
+		}
 	})
 
 	h := httptest.NewServer(daemonapi.NewServer(engine, "mcp-test").Routes())

@@ -36,9 +36,8 @@ func (s *Server) writeJSON(v any) error {
 }
 
 func (s *Server) deliverResponse(resp jsonRPCResponse) {
-	key := string(resp.ID)
 	s.pendingMu.Lock()
-	ch, ok := s.pending[key]
+	ch, ok := s.pending[string(resp.ID)]
 	s.pendingMu.Unlock()
 	if !ok {
 		return

@@ -17,7 +17,9 @@ func newArtifactRepo(t *testing.T) *ArtifactRepository {
 		t.Fatalf("new repo: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = repo.Close()
+		if closeErr := repo.Close(); closeErr != nil {
+			t.Fatalf("close repo: %v", closeErr)
+		}
 	})
 	return repo
 }

@@ -11,14 +11,23 @@ import (
 )
 
 func (r *Runner) Run(ctx context.Context, command Command, scope Scope) error {
+	r.statusErr = nil
+
+	var err error
 	switch scope {
 	case ScopeGlobal:
-		return r.runGlobal(ctx, command)
+		err = r.runGlobal(ctx, command)
 	case ScopeLocal:
-		return r.runLocal(ctx, command)
+		err = r.runLocal(ctx, command)
 	default:
 		return fmt.Errorf("unknown scope %q (expected: local, global)", scope)
 	}
+
+	if err != nil {
+		return err
+	}
+
+	return r.statusErr
 }
 
 func (r *Runner) runGlobal(ctx context.Context, command Command) error {

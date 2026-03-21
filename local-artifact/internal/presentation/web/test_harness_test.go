@@ -30,7 +30,9 @@ func newWebHarnessAtRoot(t *testing.T, root string) *webHarness {
 	t.Helper()
 	s := New(root)
 	t.Cleanup(func() {
-		_ = s.Close()
+		if closeErr := s.Close(); closeErr != nil {
+			t.Fatalf("close server: %v", closeErr)
+		}
 	})
 	return &webHarness{
 		t: t,
@@ -169,18 +171,13 @@ func decodeJSON[T any](t *testing.T, rr *httptest.ResponseRecorder) T {
 	return out
 }
 
-func assertJSONErrorEq(t *testing.T, rr *httptest.ResponseRecorder, wantStatus int, wantErr string) {
+func requireErrorString(t *testing.T, payload map[string]any) string {
 	t.Helper()
-	assertStatus(t, rr, wantStatus)
-	var payload struct {
-		Error string `json:"error"`
+	value, ok := payload["error"].(string)
+	if !ok {
+		t.Fatalf("error field type = %T, want string", payload["error"])
 	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("decode json error response: %v\nbody=%s", err, rr.Body.String())
-	}
-	if payload.Error != wantErr {
-		t.Fatalf("error=%q want=%q", payload.Error, wantErr)
-	}
+	return value
 }
 
 func cloneValues(values url.Values) url.Values {
