@@ -14,7 +14,7 @@ tools:
     'search/usages',
     'web',
     'artifact-mcp/get_artifact',
-    'artifact-mcp/get_artifact_list',
+    'artifact-mcp/edit_artifact_text',
     'artifact-mcp/save_artifact_text',
   ]
 model: [GPT-5.4 (copilot), GPT-5.3-Codex (copilot)]

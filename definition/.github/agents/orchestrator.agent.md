@@ -21,6 +21,7 @@ tools:
     'todo',
     'vscode/askQuestions',
     'artifact-mcp/delete_artifact',
+    'artifact-mcp/edit_artifact_text',
     'artifact-mcp/get_artifact',
     'artifact-mcp/get_artifact_list',
     'artifact-mcp/resolve_artifact',
