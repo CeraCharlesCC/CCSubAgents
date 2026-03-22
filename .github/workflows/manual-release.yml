@@ -36,6 +36,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
+          goflags=(-trimpath -buildvcs=false)
+          goldflags=(-s -w)
 
           targets=(
             "linux/amd64"
@@ -53,12 +55,12 @@ jobs:
               ext=".exe"
             fi
 
-            (cd ccsubagents && CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -o "$GITHUB_WORKSPACE/dist/ccsubagents_${goos}_${goarch}${ext}" ./cmd/ccsubagents)
+            (cd ccsubagents && CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build "${goflags[@]}" -ldflags="${goldflags[*]}" -o "$GITHUB_WORKSPACE/dist/ccsubagents_${goos}_${goarch}${ext}" ./cmd/ccsubagents)
 
             bundle_dir="$(mktemp -d)"
-            (cd local-artifact && CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -o "$bundle_dir/ccsubagentsd${ext}" ./cmd/ccsubagentsd)
-            (cd local-artifact && CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -o "$bundle_dir/local-artifact-mcp${ext}" ./cmd/local-artifact-mcp)
-            (cd local-artifact && CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -o "$bundle_dir/local-artifact-web${ext}" ./cmd/local-artifact-web)
+            (cd local-artifact && CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build "${goflags[@]}" -ldflags="${goldflags[*]}" -o "$bundle_dir/ccsubagentsd${ext}" ./cmd/ccsubagentsd)
+            (cd local-artifact && CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build "${goflags[@]}" -ldflags="${goldflags[*]}" -o "$bundle_dir/local-artifact-mcp${ext}" ./cmd/local-artifact-mcp)
+            (cd local-artifact && CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build "${goflags[@]}" -ldflags="${goldflags[*]}" -o "$bundle_dir/local-artifact-web${ext}" ./cmd/local-artifact-web)
             (cd "$bundle_dir" && zip -j "$GITHUB_WORKSPACE/dist/local-artifact_${goos}_${goarch}.zip" "ccsubagentsd${ext}" "local-artifact-mcp${ext}" "local-artifact-web${ext}")
             rm -rf "$bundle_dir"
           done
