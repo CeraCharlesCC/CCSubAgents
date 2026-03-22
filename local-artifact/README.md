@@ -158,7 +158,7 @@ Update one TODO item's status by zero-based array `index`:
 - `get_artifact` requires **exactly one of** `name` or `ref`.
 - `delete_artifact` requires **exactly one of** `name` or `ref`.
 
-Both tools keep their stable machine-readable metadata in `structuredContent`; success content is intentionally minimal and should not be scraped for artifact selectors or URIs.
+Both tools keep their stable machine-readable metadata in `structuredContent`. `get_artifact` also returns a `resource_link` in success content for client compatibility, but callers should still treat `structuredContent` as the stable machine-readable source for selectors and URIs.
 
 ## Build (in /local-artifact/)
 

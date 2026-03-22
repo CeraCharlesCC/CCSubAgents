@@ -62,6 +62,21 @@ func requireNoContentType(t *testing.T, resp toolResult, wantAbsent string) {
 	}
 }
 
+func requireHasContentType(t *testing.T, resp toolResult, wantType string) map[string]any {
+	t.Helper()
+	for _, entry := range resp.Content {
+		contentMap, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		if gotType, _ := contentMap["type"].(string); gotType == wantType {
+			return contentMap
+		}
+	}
+	t.Fatalf("expected content to include type %q, got %+v", wantType, resp.Content)
+	return nil
+}
+
 func contentContains(result toolResult, needle string) bool {
 	for _, entry := range result.Content {
 		contentMap, ok := entry.(map[string]any)

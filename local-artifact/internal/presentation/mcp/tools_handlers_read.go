@@ -101,7 +101,7 @@ func (s *Server) toolGet(ctx context.Context, argsRaw json.RawMessage) (any, *js
 		}
 	}
 
-	content := make([]any, 0, 1)
+	content := make([]any, 0, 2)
 	switch mode {
 	case modeText:
 		content = append(content, textContent(string(data)))
@@ -116,6 +116,8 @@ func (s *Server) toolGet(ctx context.Context, argsRaw json.RawMessage) (any, *js
 	default:
 		return toolError("mode must be one of " + modeAuto + "|" + modeText + "|" + modeResource + "|" + modeImage + "|" + modeMeta), nil
 	}
+
+	content = append(content, resourceLink(a.Name, meta.URIByName, a.MimeType, a.SizeBytes))
 
 	return toolResult{Content: content, StructuredContent: meta}, nil
 }

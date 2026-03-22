@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestArtifactTools_SuccessContentOmitsRedundantResourceLinks(t *testing.T) {
+func TestArtifactTools_SuccessContentKeepsGetArtifactResourceLinks(t *testing.T) {
 	ctx := context.Background()
 	s := newDaemonBackedServer(t)
 
@@ -31,18 +31,24 @@ func TestArtifactTools_SuccessContentOmitsRedundantResourceLinks(t *testing.T) {
 		"mode": modeText,
 	}))
 	requireContentTextEq(t, getTextResp, "hello\n")
-	requireNoContentType(t, getTextResp, "resource_link")
-	if len(getTextResp.Content) != 1 {
-		t.Fatalf("expected text-mode get to return only payload content, got %+v", getTextResp.Content)
+	getTextLink := requireHasContentType(t, getTextResp, "resource_link")
+	if getTextLink["uri"] == "" {
+		t.Fatalf("expected text-mode get resource_link uri, got %+v", getTextLink)
+	}
+	if len(getTextResp.Content) != 2 {
+		t.Fatalf("expected text-mode get to return payload content plus resource_link, got %+v", getTextResp.Content)
 	}
 
 	getResourceResp := requireToolOK(t, callToolsCall(t, s, ctx, toolArtifactGet, map[string]any{
 		"name": "plan/content-save-blob",
 		"mode": modeResource,
 	}))
-	requireNoContentType(t, getResourceResp, "resource_link")
-	if len(getResourceResp.Content) != 1 {
-		t.Fatalf("expected resource-mode get to return only embedded resource content, got %+v", getResourceResp.Content)
+	getResourceLink := requireHasContentType(t, getResourceResp, "resource_link")
+	if getResourceLink["uri"] == "" {
+		t.Fatalf("expected resource-mode get resource_link uri, got %+v", getResourceLink)
+	}
+	if len(getResourceResp.Content) != 2 {
+		t.Fatalf("expected resource-mode get to return embedded resource plus resource_link, got %+v", getResourceResp.Content)
 	}
 	firstResource, ok := getResourceResp.Content[0].(map[string]any)
 	if !ok || firstResource["type"] != "resource" {
