@@ -4,7 +4,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	daemonapi "github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/presentation/daemon"
+	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/presentation/daemon"
+	daemonapi "github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/presentation/daemonapi"
 )
 
 func newDaemonBackedServer(t *testing.T) *Server {
@@ -14,7 +15,7 @@ func newDaemonBackedServer(t *testing.T) *Server {
 
 func newDaemonBackedServerAtRoot(t *testing.T, storeRoot string) *Server {
 	t.Helper()
-	engine, err := daemonapi.NewEngine(storeRoot)
+	engine, err := daemon.NewEngine(storeRoot)
 	if err != nil {
 		t.Fatalf("new daemon engine: %v", err)
 	}
@@ -24,7 +25,7 @@ func newDaemonBackedServerAtRoot(t *testing.T, storeRoot string) *Server {
 		}
 	})
 
-	h := httptest.NewServer(daemonapi.NewServer(engine, "mcp-test").Routes())
+	h := httptest.NewServer(daemon.NewServer(engine, "mcp-test").Routes())
 	t.Cleanup(h.Close)
 
 	client := daemonapi.NewHTTPClient(h.URL, "")

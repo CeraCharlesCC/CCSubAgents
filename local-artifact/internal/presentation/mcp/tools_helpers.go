@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/core/artifacts"
-	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/presentation/daemon"
+	daemon "github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/presentation/daemonapi"
 )
 
 func toolError(msg string) toolResult {

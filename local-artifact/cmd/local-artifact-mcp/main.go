@@ -16,7 +16,7 @@ import (
 
 	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/config"
 	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/core/workspaces"
-	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/presentation/daemon"
+	daemon "github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/presentation/daemonapi"
 	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/presentation/mcp"
 )
 

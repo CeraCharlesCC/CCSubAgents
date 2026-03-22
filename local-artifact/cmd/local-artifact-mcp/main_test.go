@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/core/workspaces"
-	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/presentation/daemon"
+	daemon "github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/presentation/daemonapi"
 )
 
 func TestLocalArtifactWebPath(t *testing.T) {

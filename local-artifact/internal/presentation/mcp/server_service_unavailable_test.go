@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/presentation/daemon"
+	daemon "github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/presentation/daemonapi"
 )
 
 func TestHandleToolsCall_WorkspaceServiceInitFailureReturnsTypedToolError(t *testing.T) {

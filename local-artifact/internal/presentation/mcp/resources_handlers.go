@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/core/artifacts"
-	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/presentation/daemon"
+	daemon "github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/presentation/daemonapi"
 )
 
 func (s *Server) handleResourcesList(ctx context.Context, _ json.RawMessage) (any, *jsonRPCError) {

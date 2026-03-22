@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/core/artifacts"
-	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/presentation/daemon"
+	daemon "github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/presentation/daemonapi"
 )
 
 var textEditToolNames = []string{toolArtifactEditText, "artifact.edit_text"}

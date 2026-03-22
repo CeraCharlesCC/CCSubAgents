@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/presentation/daemon"
+	daemon "github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/presentation/daemonapi"
 )
 
 func TestToolErrorFromErr_DaemonUnauthorized(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"errors"
 
 	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/core/workspaces"
-	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/presentation/daemon"
+	daemon "github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/presentation/daemonapi"
 )
 
 type initializeParams struct {

@@ -15,7 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/core/artifacts"
-	"github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/presentation/daemon"
+	daemon "github.com/CeraCharlesCC/CCSubAgents/local-artifact/internal/presentation/daemonapi"
 )
 
 type textEditArgs struct {
