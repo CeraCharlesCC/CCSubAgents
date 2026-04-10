@@ -129,9 +129,13 @@ func TestToolsList_ExposesGetAndDeleteSelectorOneOf(t *testing.T) {
 		if tool.InputSchema["additionalProperties"] != false {
 			t.Fatalf("expected strict %s input schema, got %+v", toolName, tool.InputSchema)
 		}
-		oneOf, ok := tool.InputSchema["oneOf"].([]map[string]any)
-		if !ok || len(oneOf) != 2 {
-			t.Fatalf("expected %s selector schema oneOf with two selectors, got %+v", toolName, tool.InputSchema["oneOf"])
+		for _, keyword := range []string{"oneOf", "anyOf", "allOf", "enum", "not"} {
+			if _, exists := tool.InputSchema[keyword]; exists {
+				t.Fatalf("expected %s top-level input schema to avoid %q, got %+v", toolName, keyword, tool.InputSchema)
+			}
+		}
+		if _, ok := tool.InputSchema["if"].(map[string]any); !ok {
+			t.Fatalf("expected %s top-level input schema to include conditional selector validation, got %+v", toolName, tool.InputSchema)
 		}
 	}
 }

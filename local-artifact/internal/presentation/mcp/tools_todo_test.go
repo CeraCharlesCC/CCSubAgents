@@ -766,6 +766,14 @@ func TestToolsList_ExposesTodoDefinitionWithStrictNestedSchemas(t *testing.T) {
 	if todo.InputSchema["additionalProperties"] != false {
 		t.Fatalf("expected strict top-level input schema, got %+v", todo.InputSchema)
 	}
+	for _, keyword := range []string{"oneOf", "anyOf", "allOf", "enum", "not"} {
+		if _, exists := todo.InputSchema[keyword]; exists {
+			t.Fatalf("expected todo top-level input schema to avoid %q, got %+v", keyword, todo.InputSchema)
+		}
+	}
+	if _, ok := todo.InputSchema["if"].(map[string]any); !ok {
+		t.Fatalf("expected todo top-level input schema to include conditional validation, got %+v", todo.InputSchema)
+	}
 	artifactProp := requireMap(t, requireMap(t, todo.InputSchema["properties"], "todo input properties")["artifact"], "artifact property")
 	if artifactProp["additionalProperties"] != false {
 		t.Fatalf("expected strict artifact selector schema, got %+v", artifactProp)

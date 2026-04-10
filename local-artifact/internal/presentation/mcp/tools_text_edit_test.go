@@ -533,6 +533,14 @@ func TestToolsList_ExposesTextEditDefinitionWithStrictNestedSchemas(t *testing.T
 	if edit.InputSchema["additionalProperties"] != false {
 		t.Fatalf("expected strict top-level input schema, got %+v", edit.InputSchema)
 	}
+	for _, keyword := range []string{"oneOf", "anyOf", "allOf", "enum", "not"} {
+		if _, exists := edit.InputSchema[keyword]; exists {
+			t.Fatalf("expected edit top-level input schema to avoid %q, got %+v", keyword, edit.InputSchema)
+		}
+	}
+	if _, ok := edit.InputSchema["if"].(map[string]any); !ok {
+		t.Fatalf("expected edit top-level input schema to include conditional validation, got %+v", edit.InputSchema)
+	}
 	artifactProp := requireMap(t, requireMap(t, edit.InputSchema["properties"], "edit input properties")["artifact"], "artifact property")
 	if artifactProp["additionalProperties"] != false {
 		t.Fatalf("expected strict artifact selector schema, got %+v", artifactProp)

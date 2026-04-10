@@ -126,7 +126,7 @@ func toolDefinitions() []toolDef {
 			Name:        toolArtifactGet,
 			Title:       "Get artifact",
 			Description: "Fetch an artifact by exactly one of ref or name. For binary, returns embedded resource (base64) unless mode=image.",
-			InputSchema: withExactlyOneOf(
+			InputSchema: withExactlyOneOfTopLevel(
 				objectSchema(
 					map[string]any{
 						"ref":  stringProp("Artifact ref."),
@@ -168,7 +168,7 @@ func toolDefinitions() []toolDef {
 			Name:        toolArtifactDelete,
 			Title:       "Delete artifact",
 			Description: "Delete an artifact by exactly one of name or ref. If ref is provided, all names pointing to that ref are removed.",
-			InputSchema: withExactlyOneOf(
+			InputSchema: withExactlyOneOfTopLevel(
 				objectSchema(
 					map[string]any{
 						"ref":  stringProp("Artifact ref to delete."),
@@ -217,6 +217,27 @@ func withExactlyOneOf(schema map[string]any, fields ...string) map[string]any {
 	return schema
 }
 
+func withExactlyOneOfTopLevel(schema map[string]any, fields ...string) map[string]any {
+	if len(fields) != 2 {
+		return withExactlyOneOf(schema, fields...)
+	}
+	schema["if"] = map[string]any{
+		"required": []string{fields[0]},
+	}
+	schema["then"] = map[string]any{
+		"not": map[string]any{
+			"required": []string{fields[1]},
+		},
+	}
+	schema["else"] = map[string]any{
+		"required": []string{fields[1]},
+		"not": map[string]any{
+			"required": []string{fields[0]},
+		},
+	}
+	return schema
+}
+
 func stringProp(description string) map[string]any {
 	prop := map[string]any{"type": "string"}
 	if description != "" {
@@ -262,20 +283,24 @@ func textEditInputSchema() map[string]any {
 		},
 		"operation", "artifact",
 	)
-	schema["allOf"] = []map[string]any{
-		{
-			"if": map[string]any{"properties": map[string]any{"operation": map[string]any{"const": "append"}}},
-			"then": map[string]any{
-				"required": []string{"text"},
-				"not":      map[string]any{"required": []string{"patch"}},
+	schema["if"] = map[string]any{
+		"properties": map[string]any{
+			"operation": map[string]any{"const": "append"},
+		},
+	}
+	schema["then"] = map[string]any{
+		"required": []string{"text"},
+		"not":      map[string]any{"required": []string{"patch"}},
+	}
+	schema["else"] = map[string]any{
+		"if": map[string]any{
+			"properties": map[string]any{
+				"operation": map[string]any{"const": "patch"},
 			},
 		},
-		{
-			"if": map[string]any{"properties": map[string]any{"operation": map[string]any{"const": "patch"}}},
-			"then": map[string]any{
-				"required": []string{"patch"},
-				"not":      map[string]any{"required": []string{"text"}},
-			},
+		"then": map[string]any{
+			"required": []string{"patch"},
+			"not":      map[string]any{"required": []string{"text"}},
 		},
 	}
 	return schema
@@ -324,37 +349,38 @@ func todoInputSchema() map[string]any {
 		},
 		"operation", "artifact",
 	)
-	schema["allOf"] = []map[string]any{
-		{
-			"if": map[string]any{"properties": map[string]any{"operation": map[string]any{"const": "read"}}},
-			"then": map[string]any{
-				"not": map[string]any{
-					"anyOf": []map[string]any{
-						{"required": []string{"todoList"}},
-						{"required": []string{"target"}},
-						{"required": []string{"status"}},
-					},
+	schema["if"] = map[string]any{
+		"properties": map[string]any{
+			"operation": map[string]any{"const": "read"},
+		},
+	}
+	schema["then"] = map[string]any{
+		"not": map[string]any{
+			"anyOf": []map[string]any{
+				{"required": []string{"todoList"}},
+				{"required": []string{"target"}},
+				{"required": []string{"status"}},
+			},
+		},
+	}
+	schema["else"] = map[string]any{
+		"if": map[string]any{
+			"properties": map[string]any{
+				"operation": map[string]any{"const": "write"},
+			},
+		},
+		"then": map[string]any{
+			"required": []string{"todoList"},
+			"not": map[string]any{
+				"anyOf": []map[string]any{
+					{"required": []string{"target"}},
+					{"required": []string{"status"}},
 				},
 			},
 		},
-		{
-			"if": map[string]any{"properties": map[string]any{"operation": map[string]any{"const": "write"}}},
-			"then": map[string]any{
-				"required": []string{"todoList"},
-				"not": map[string]any{
-					"anyOf": []map[string]any{
-						{"required": []string{"target"}},
-						{"required": []string{"status"}},
-					},
-				},
-			},
-		},
-		{
-			"if": map[string]any{"properties": map[string]any{"operation": map[string]any{"const": "update"}}},
-			"then": map[string]any{
-				"required": []string{"target", "status"},
-				"not":      map[string]any{"required": []string{"todoList"}},
-			},
+		"else": map[string]any{
+			"required": []string{"target", "status"},
+			"not":      map[string]any{"required": []string{"todoList"}},
 		},
 	}
 	return schema
