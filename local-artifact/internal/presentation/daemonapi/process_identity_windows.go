@@ -9,7 +9,11 @@ import (
 )
 
 func processStartID(pid int) (string, error) {
-	handle, err := syscall.OpenProcess(syscall.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
+	if pid <= 0 {
+		return "", fmt.Errorf("invalid pid %d", pid)
+	}
+
+	handle, err := syscall.OpenProcess(syscall.PROCESS_QUERY_INFORMATION, false, uint32(pid))
 	if err != nil {
 		return "", err
 	}
@@ -20,5 +24,6 @@ func processStartID(pid int) (string, error) {
 		return "", err
 	}
 
-	return strconv.FormatUint(uint64(creation.Nanoseconds()), 10), nil
+	startID := (uint64(creation.HighDateTime) << 32) | uint64(creation.LowDateTime)
+	return strconv.FormatUint(startID, 10), nil
 }
