@@ -1,4 +1,5 @@
-
+> [!IMPORTANT]
+> This repository is no longer maintained due to a critical change in GitHub Copilot (shifting from a request-based model to a token-based one).
 
 # What is this repository?
 
